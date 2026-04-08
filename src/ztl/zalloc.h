@@ -1,14 +1,27 @@
 #pragma once
 #include "zlock.h"
+#include <assert.h>
+
 #include <windows.h>
+#include <cstdint>
 
-template <typename T>
-T* zaddressof(T& t);
+#define ZALLOC_GLOBAL \
+    void* operator new(size_t uSize) { return ZAllocEx<ZAllocAnonSelector>::s_Alloc(uSize); } \
+    void* operator new[](size_t uSize) { return ZAllocEx<ZAllocAnonSelector>::s_Alloc(uSize); } \
+    void operator delete(void* p) { return ZAllocEx<ZAllocAnonSelector>::s_Free(p); } \
+    void operator delete[](void* p) { return ZAllocEx<ZAllocAnonSelector>::s_Free(p); }
 
-template <size_t S0, size_t S1, size_t S2, size_t S3>
+#define ZALLOCEX(T, ADDRESS) \
+    ZAllocEx<T>* ZAllocEx<T>::_s_pAlloc = reinterpret_cast<ZAllocEx<T>*>(ADDRESS);
+
+#define ZRECYCLABLE(T, ADDRESS) \
+    ZRecyclableAvBuffer<ZRefCountedDummy<T>, 0x10, T>*& ZRecyclableAvBuffer<ZRefCountedDummy<T>, 0x10, T>::s_pInstance = *reinterpret_cast<ZRecyclableAvBuffer<ZRefCountedDummy<T>, 0x10, T>**>(ADDRESS);
+
+
+template <int32_t S0, int32_t S1, int32_t S2, int32_t S3>
 class ZAllocAbstractSelector {
 protected:
-    static int SelectBufferIndex(size_t uSize) {
+    static int32_t SelectBufferIndex(uint32_t uSize) {
         if (uSize > S1) {
             if (uSize <= S2) {
                 return 2;
@@ -19,7 +32,7 @@ protected:
             return uSize > S0 ? 1 : 0;
         }
     }
-    static size_t GetBlockSize(int nIndex, int& nAllocBlocks) {
+    static uint32_t GetBlockSize(int32_t nIndex, int32_t& nAllocBlocks) {
         switch (nIndex) {
         case 0:
             nAllocBlocks = 64;
@@ -57,32 +70,33 @@ class ZAllocStrSelector<wchar_t> : protected ZAllocAbstractSelector<0x2E, 0x4E, 
 
 class ZAllocHelper {
 public:
-    explicit ZAllocHelper(int nDummy) {
+    explicit ZAllocHelper(int32_t nDummy) {
+        ;
     }
 };
 
 
 class ZAllocBase {
 public:
-    static void* _AllocRaw(size_t uSize) {
+    static void* _AllocRaw(uint32_t uSize) {
         HANDLE hHeap = GetProcessHeap();
-        auto pAlloc = static_cast<size_t*>(HeapAlloc(hHeap, 0, uSize + sizeof(size_t)));
+        auto pAlloc = static_cast<uint32_t*>(HeapAlloc(hHeap, 0, uSize + sizeof(uint32_t)));
         *pAlloc = uSize;
         return pAlloc + 1;
     }
     static void _FreeRaw(void* p) {
         HANDLE hHeap = GetProcessHeap();
-        HeapFree(hHeap, 0, static_cast<size_t*>(p) - 1);
+        HeapFree(hHeap, 0, static_cast<uint32_t*>(p) - 1);
     }
-    static void* _AllocRawBlocks(size_t uBlockSize, size_t u) {
-        size_t uAllocSize = uBlockSize + sizeof(size_t);
-        auto pAlloc = static_cast<size_t*>(_AllocRaw(u * uAllocSize + sizeof(size_t)));
+    static void* _AllocRawBlocks(uint32_t uBlockSize, uint32_t u) {
+        uint32_t uAllocSize = uBlockSize + sizeof(uint32_t);
+        auto pAlloc = static_cast<uint32_t*>(_AllocRaw(u * uAllocSize + sizeof(uint32_t)));
         *pAlloc++ = 0;
         *pAlloc = uBlockSize;
-        size_t* pBlock = pAlloc + 1;
-        for (size_t nRemain = u - 1; nRemain > 0; --nRemain) {
+        uint32_t* pBlock = pAlloc + 1;
+        for (uint32_t nRemain = u - 1; nRemain > 0; --nRemain) {
             *pBlock = reinterpret_cast<uintptr_t>(pBlock) + uAllocSize;
-            pBlock = reinterpret_cast<size_t*>(*pBlock);
+            pBlock = reinterpret_cast<uint32_t*>(*pBlock);
             *(pBlock - 1) = uBlockSize;
         }
         *pBlock = 0;
@@ -92,17 +106,17 @@ public:
         if (!p) {
             return;
         }
-        _FreeRaw(static_cast<size_t*>(p) - 2);
+        _FreeRaw(static_cast<uint32_t*>(p) - 2);
     }
-    static size_t _MemSize(void* p) {
-        size_t uSize = *(static_cast<size_t*>(p) - 1);
+    static uint32_t _MemSize(void* p) {
+        uint32_t uSize = *(static_cast<uint32_t*>(p) - 1);
         if (uSize & 0x80000000) {
             uSize = ~uSize;
         }
         return uSize;
     }
     static void*& _NextHeadBlock(void* p) {
-        return *reinterpret_cast<void**>(static_cast<size_t*>(p) - 2);
+        return *reinterpret_cast<void**>(static_cast<uint32_t*>(p) - 2);
     }
 };
 
@@ -116,26 +130,26 @@ private:
 
 public:
     ~ZAllocEx() {
-        for (size_t i = 0; i < 4; ++i) {
+        for (auto i = 0; i < 4; ++i) {
             void* pNext = m_apBlockHead[i];
             while (pNext) {
                 void* pFree = pNext;
-                pNext = ZAllocBase::_NextHeadBlock(pNext);
-                ZAllocBase::_FreeRawBlocks(pFree);
+                pNext = _NextHeadBlock(pNext);
+                _FreeRawBlocks(pFree);
             }
         }
     }
-    void* Alloc(size_t uSize) {
-        int nIndex = T::SelectBufferIndex(uSize);
+    void* Alloc(uint32_t uSize) {
+        int32_t nIndex = T::SelectBufferIndex(uSize);
         if (nIndex < 0) {
-            return ZAllocBase::_AllocRaw(uSize);
+            return _AllocRaw(uSize);
         }
-        int nAllocBlocks;
-        size_t uBlockSize = T::GetBlockSize(nIndex, nAllocBlocks);
+        int32_t nAllocBlocks;
+        uint32_t uBlockSize = T::GetBlockSize(nIndex, nAllocBlocks);
         ZSynchronizedHelper<ZFatalSection> _sync(m_lock);
         if (!m_apBuff[nIndex]) {
-            void* pBlock = ZAllocBase::_AllocRawBlocks(uBlockSize, nAllocBlocks);
-            *reinterpret_cast<void**>(static_cast<size_t*>(pBlock) - 2) = m_apBlockHead[nIndex];
+            void* pBlock = _AllocRawBlocks(uBlockSize, nAllocBlocks);
+            *reinterpret_cast<void**>(static_cast<uint32_t*>(pBlock) - 2) = m_apBlockHead[nIndex];
             m_apBlockHead[nIndex] = pBlock;
             m_apBuff[nIndex] = pBlock;
         }
@@ -147,16 +161,18 @@ public:
         if (!p) {
             return;
         }
-        int nIndex = T::SelectBufferIndex(_MemSize(p));
+        int32_t nIndex = T::SelectBufferIndex(_MemSize(p));
         if (nIndex < 0) {
-            ZAllocBase::_FreeRaw(p);
+            _FreeRaw(p);
             return;
         }
         ZSynchronizedHelper<ZFatalSection> _sync(m_lock);
         *reinterpret_cast<void**>(p) = m_apBuff[nIndex];
         m_apBuff[nIndex] = p;
     }
-    static void* s_Alloc(size_t uSize) {
+
+
+    static void* s_Alloc(uint32_t uSize) {
         return _s_pAlloc->Alloc(uSize);
     }
     static void s_Free(void* p) {
@@ -167,7 +183,7 @@ static_assert(sizeof(ZAllocEx<ZAllocAnonSelector>) == 0x2C);
 
 
 class ZRefCounted {
-public:
+public: // changed from private to simplify implementation
     union {
         volatile long _m_nRef;
         ZRefCounted* _m_pNext;
@@ -212,7 +228,7 @@ static_assert(sizeof(ZRecyclableStatic) == 0x4);
 class ZFakeStatAvBuff {
 };
 
-
+#pragma once
 template <typename T, size_t SIZE, typename U>
 class ZRecyclableAvBuffer : public ZRecyclableStatic::CallBack {
 public:
@@ -245,10 +261,10 @@ protected:
     virtual ~ZRecyclable() = default;
 
 public:
-    void* operator new(size_t uSize) {
+    void* operator new(uint32_t uSize) {
         return ZRecyclableAvBuffer<T, SIZE, U>::s_pInstance->raw_new();
     }
-    void* operator new[](size_t uSize) {
+    void* operator new[](uint32_t uSize) {
         return ZRecyclableAvBuffer<T, SIZE, U>::s_pInstance->raw_new();
     }
     void operator delete(void* p) noexcept {
@@ -263,36 +279,19 @@ public:
 template <typename T>
 class ZRefCountedDummy : public ZRefCounted, public ZRecyclable<ZRefCountedDummy<T>, 0x10, T> {
 public:
-    T t;
+    T t; // changed from private to simplify implemnentation
 
     virtual ~ZRefCountedDummy() override = default;
-    static ZRefCountedDummy<T>* From(const T* pT) {
-        return reinterpret_cast<ZRefCountedDummy<T>*>(reinterpret_cast<uintptr_t>(pT) - offsetof(ZRefCountedDummy<T>, t));
+
+    static ZRefCountedDummy<T>* From(void* p) {
+        return reinterpret_cast<ZRefCountedDummy<T>*>(reinterpret_cast<uintptr_t>(p) - sizeof(ZRefCounted) - sizeof(ZRecyclable<ZRefCountedDummy<T>, 0x10, T>));
     }
 };
+static_assert(sizeof(ZRecyclable<ZRefCountedDummy<int>, 0x10, int>) == 0x4);
+static_assert(sizeof(ZRefCountedDummy<int>) == 0x10 + sizeof(int));
 
 
 class ZRefCountedAccessorBase {
-protected:
-    static ZRefCounted* _Set1(ZRefCounted* p) {
-        InterlockedExchange(&p->_m_nRef, 1);
-        return p;
-    }
-    static void _Delete(ZRefCounted* p) {
-        delete p;
-    }
-    static long _AddRef(ZRefCounted* p) {
-        return InterlockedIncrement(&p->_m_nRef);
-    }
-    static long _Release(ZRefCounted* p) {
-        return InterlockedDecrement(&p->_m_nRef);
-    }
-    static ZRefCounted*& _GetPrev(ZRefCounted* p) {
-        return p->_m_pPrev;
-    }
-    static ZRefCounted*& _GetNext(ZRefCounted* p) {
-        return p->_m_pNext;
-    }
 };
 
 template <typename T>
@@ -305,18 +304,19 @@ private:
     T* p;
 
 public:
+
     ~ZRef() {
         _Release();
     }
     explicit ZRef(const ZAllocHelper& _ALLOC) : p(nullptr) {
         _Alloc();
     }
-    ZRef(T* pT, bool bAddRef = true) : p(pT) {
+    ZRef(T* pT, int32_t bAddRef = true) : p(pT) {
         if (bAddRef) {
             _AddRef();
         }
     }
-    ZRef(const ZRef<T>& r, bool bAddRef = true) : p(r.p) {
+    ZRef(const ZRef<T>& r, int32_t bAddRef = true) : p(r.p) {
         if (bAddRef) {
             _AddRef();
         }
@@ -326,7 +326,7 @@ public:
     operator bool() const {
         return p != nullptr;
     }
-    int operator!() const {
+    int32_t operator!() const {
         return p == nullptr;
     }
     operator T*() const {
@@ -360,16 +360,16 @@ private:
         p = _AllocRaw(p);
     }
     void _AddRef() {
-        if (p) {
+        if (p){
             _AddRefRaw(p);
         }
     }
     void _AddRefRaw(void* __formal) {
         auto pDummy = ZRefCountedDummy<T>::From(p);
-        ZRefCountedAccessorBase::_AddRef(pDummy);
+        InterlockedIncrement(&pDummy->_m_nRef);
     }
     void _AddRefRaw(ZRefCounted* __formal) {
-        ZRefCountedAccessorBase::_AddRef(p);
+        InterlockedIncrement(&p->_m_nRef);
     }
     void _Release() {
         if (p) {
@@ -379,26 +379,26 @@ private:
     }
     void _ReleaseRaw(void* __formal) {
         auto pDummy = ZRefCountedDummy<T>::From(p);
-        if (ZRefCountedAccessorBase::_Release(pDummy) == 0) {
-            ZRefCountedAccessorBase::_AddRef(pDummy);
-            ZRefCountedAccessorBase::_Delete(pDummy);
+        if (!InterlockedDecrement(&pDummy->_m_nRef)) {
+            InterlockedIncrement(&pDummy->_m_nRef);
+            delete pDummy;
         }
     }
     void _ReleaseRaw(ZRefCounted* __formal) {
-        if (ZRefCountedAccessorBase::_Release(p) == 0) {
-            ZRefCountedAccessorBase::_AddRef(p);
-            ZRefCountedAccessorBase::_Delete(p);
+        if (!InterlockedDecrement(&p->_m_nRef)) {
+            InterlockedIncrement(&p->_m_nRef);
+            delete p;
         }
     }
 
     static T* _AllocRaw(void* __formal) {
         auto pDummy = new ZRefCountedDummy<T>();
-        ZRefCountedAccessorBase::_Set1(pDummy);
-        return zaddressof(pDummy->t);
+        pDummy->_m_nRef = 1;
+        return &pDummy->t;
     }
     static T* _AllocRaw(ZRefCounted* __formal) {
         auto p = new T();
-        ZRefCountedAccessorBase::_Set1(p);
+        p->_m_nRef = 1;
         return p;
     }
 };

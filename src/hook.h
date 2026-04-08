@@ -55,10 +55,16 @@ void AttachMobHpTagMod();
 void AttachToolTipMod();
 void AttachIconIconMod();
 void AttachTempStatMod();
+void AttachSkillEdits();
+void AttachOtherHooks();
+void InitExpOverride();
+void PacketHooks();
+
 
 inline void AttachClientHooks() {
+    //AllocConsole();
     AttachClientBypass();
-    AttachClientInlink();
+    //AttachClientInlink();
     AttachStringPoolMod();
     AttachResManMod();
     AttachAvatarDataMod();
@@ -68,6 +74,10 @@ inline void AttachClientHooks() {
     AttachToolTipMod();
     AttachIconIconMod();
     AttachTempStatMod();
+    AttachSkillEdits();
+    AttachOtherHooks();
+    InitExpOverride();
+    PacketHooks();
 }
 
 
@@ -109,12 +119,12 @@ void PatchStr(T pAddress, const char* sValue) {
     PatchMemory(TO_PVOID(pAddress), TO_PVOID(sValue), strlen(sValue));
 }
 
-template <typename T, typename U>
-void PatchNop(T pAddress, U pDestination) {
-    size_t uSize = TO_UINTPTR(pDestination) - TO_UINTPTR(pAddress);
-    void* pValue = malloc(uSize);
-    memset(pValue, 0x90, uSize);
-    PatchMemory(TO_PVOID(pAddress), pValue, uSize);
+template <typename T>
+void PatchNop(T pAddress, size_t uCount) {
+    void* pValue = malloc(uCount);
+    if (!pValue) return;
+    memset(pValue, 0x90, uCount);
+    PatchMemory(TO_PVOID(pAddress), pValue, uCount);
     free(pValue);
 }
 
@@ -133,7 +143,7 @@ void PatchCall(T pAddress, U pDestination, size_t uSize = 5) {
     Patch1(pAddress, 0xE8);
     Patch4(pAddress + 1, TO_UINTPTR(pDestination) - TO_UINTPTR(pAddress) - 5);
     if (uSize > 5) {
-        PatchNop(pAddress + 5, pAddress + uSize);
+        PatchNop(pAddress + 5, uSize - 5);
     }
 }
 

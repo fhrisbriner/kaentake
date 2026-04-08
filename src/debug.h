@@ -10,3 +10,5 @@
 void DebugMessage(const char* sFormat, ...);
 
 void ErrorMessage(const char* sFormat, ...);
+
+void LogCrashReport(unsigned long dwError, const char* pszContext);

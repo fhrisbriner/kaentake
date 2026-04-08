@@ -1,24 +1,16 @@
 #pragma once
 #include "zalloc.h"
-
-
-template <typename T>
-T* construct(T* p);
-
-template <typename T>
-void destruct(T* p);
-
-template <typename T>
-T* zaddressof(T& t);
+#include "ztl.h"
+#include <cstdint>
+#include <memory>
 
 
 template <typename T>
 class ZArray {
-private:
+public:
     T* a;
 
-public:
-    explicit ZArray(size_t u, const ZAllocHelper& _ALLOC = ZAllocHelper(0)) : a(nullptr) {
+    explicit ZArray(uint32_t u, const ZAllocHelper& _ALLOC = ZAllocHelper(0)) : a(nullptr) {
         _Alloc(u, _ALLOC);
     }
     ZArray() : a(nullptr) {
@@ -39,74 +31,74 @@ public:
         return a;
     }
 
-    size_t GetCount() const {
+    uint32_t GetCount() const {
         if (!a) {
             return 0;
         }
         return _GetCount();
     }
-    int IsEmpty() const {
+    int32_t IsEmpty() const {
         return !a || GetCount() == 0;
     }
-    size_t GetCapacity() const {
+    uint32_t GetCapacity() const {
         if (!a) {
             return 0;
         }
-        size_t uCapacity = ZAllocBase::_MemSize(reinterpret_cast<size_t*>(a) - 1);
-        return (uCapacity - sizeof(size_t)) / sizeof(T);
+        uint32_t uCapacity = ZAllocBase::_MemSize(reinterpret_cast<uint32_t*>(a) - 1);
+        return (uCapacity - sizeof(uint32_t)) / sizeof(T);
     };
 
-    T* Alloc(size_t u, const ZAllocHelper& _ALLOC = ZAllocHelper(0)) {
+    T* Alloc(uint32_t u, const ZAllocHelper& _ALLOC = ZAllocHelper(0)) {
         return _Alloc(u, _ALLOC);
     }
-    T* Realloc(size_t u, int nMode, const ZAllocHelper& _ALLOC = ZAllocHelper(0)) {
+    T* Realloc(uint32_t u, int32_t nMode, const ZAllocHelper& _ALLOC = ZAllocHelper(0)) {
         return _Realloc(u, nMode, _ALLOC);
     }
     void RemoveAll() {
         if (a) {
-            _Destroy(a, zaddressof(a[GetCount()]));
-            ZAllocEx<ZAllocAnonSelector>::s_Free(reinterpret_cast<size_t*>(a) - 1);
+            _Destroy(a, std::addressof(a[GetCount()]));
+            ZAllocEx<ZAllocAnonSelector>::s_Free(reinterpret_cast<uint32_t*>(a) - 1);
             a = nullptr;
         }
     }
 
 private:
-    T* _Alloc(size_t u, const ZAllocHelper& _ALLOC) {
+    T* _Alloc(uint32_t u, const ZAllocHelper& _ALLOC) {
         RemoveAll();
         if (u == 0) {
             return nullptr;
         }
-        auto p = static_cast<size_t*>(ZAllocEx<ZAllocAnonSelector>::s_Alloc(sizeof(T) * u + sizeof(size_t))) + 1;
+        auto p = static_cast<uint32_t*>(ZAllocEx<ZAllocAnonSelector>::s_Alloc(sizeof(T) * u + sizeof(uint32_t))) + 1;
         a = reinterpret_cast<T*>(p);
         _GetCount() = u;
-        _Construct(a, zaddressof(a[u]));
+        _Construct(a, std::addressof(a[u]));
         return a;
     }
-    T* _Realloc(size_t u, int nMode, const ZAllocHelper& _ALLOC) {
-        size_t uCount = GetCount();
+    T* _Realloc(uint32_t u, int32_t nMode, const ZAllocHelper& _ALLOC) {
+        uint32_t uCount = GetCount();
         if (u > uCount) {
             if (u > GetCapacity()) {
-                auto p = static_cast<size_t*>(ZAllocEx<ZAllocAnonSelector>::s_Alloc(sizeof(T) * u + sizeof(size_t))) + 1;
+                auto p = static_cast<uint32_t*>(ZAllocEx<ZAllocAnonSelector>::s_Alloc(sizeof(T) * u + sizeof(uint32_t))) + 1;
                 if (a) {
                     if ((nMode & 1) == 0) {
                         memcpy(p, a, uCount * sizeof(T));
                     }
-                    ZAllocEx<ZAllocAnonSelector>::s_Free(reinterpret_cast<size_t*>(a) - 1);
+                    ZAllocEx<ZAllocAnonSelector>::s_Free(reinterpret_cast<uint32_t*>(a) - 1);
                 }
                 a = reinterpret_cast<T*>(p);
             } else if ((nMode & 2) == 0) {
-                _Construct(zaddressof(a[uCount]), zaddressof(a[u]));
+                _Construct(std::addressof(a[uCount]), std::addressof(a[u]));
             }
         } else {
-            _Destroy(zaddressof(a[u]), zaddressof(a[uCount]));
+            _Destroy(std::addressof(a[u]), std::addressof(a[uCount]));
         }
         if (a) {
             _GetCount() = u;
         }
         return a;
     }
-    size_t& _GetCount() const {
-        return *(reinterpret_cast<size_t*>(a) - 1);
+    uint32_t& _GetCount() const {
+        return *(reinterpret_cast<uint32_t*>(a) - 1);
     }
 
     static void _Construct(T* b, T* e) {
@@ -121,11 +113,13 @@ private:
     }
 };
 
+static_assert(sizeof(ZArray<int32_t>) == 0x4);
+
 
 template <typename T>
 class ZList : private ZRefCountedAccessor<T>, private ZRefCountedAccessor<ZRefCountedDummy<T>> {
-private:
-    size_t _m_uCount;
+public:
+    uint32_t _m_uCount;
     T* _m_pHead;
     T* _m_pTail;
 
@@ -135,10 +129,11 @@ public:
     }
     ZList() : _m_uCount(0), _m_pHead(nullptr), _m_pTail(nullptr) {
     }
-    size_t GetCount() const {
+
+    uint32_t GetCount() const {
         return _m_uCount;
     }
-    int IsEmpty() const {
+    int32_t IsEmpty() const {
         return _m_uCount == 0;
     }
     T* GetHeadPosition() const {
@@ -146,6 +141,18 @@ public:
     }
     T* GetTailPosition() const {
         return _m_pTail;
+    }
+    const T& GetHead() const {
+        return *_m_pHead;
+    }
+    T& GetHead() {
+        return *_m_pHead;
+    }
+    const T& GetTail() const {
+        return *_m_pTail;
+    }
+    T& GetTail() {
+        return *_m_pTail;
     }
     void AddTail(const ZList<T>& l) {
         auto p = l._m_pHead;
@@ -175,13 +182,7 @@ public:
         _m_pHead = nullptr;
         _m_uCount = 0;
     }
-    T* FindIndex(size_t uIndex) {
-        auto p = _m_pHead;
-        for (size_t i = 0; i < uIndex; ++i) {
-            p = _GetNext(p);
-        }
-        return p;
-    }
+
     static T& GetNext(T*& pos) {
         T& result = *pos;
         pos = pos ? _GetNext(pos) : nullptr;
@@ -193,13 +194,34 @@ public:
         return result;
     }
 
+    // Remove the node at pos (pointer returned by GetHeadPosition/GetNext etc.)
+    void RemoveAt(T* pos) {
+        T* pPrev = _GetPrev(pos);
+        T* pNext = _GetNext(pos);
+        // Splice out of doubly-linked list
+        if (pPrev) {
+            auto* pPrevDummy = ZRefCountedDummy<T>::From((void*)pPrev);
+            pPrevDummy->_m_pNext = pNext ? ZRefCountedDummy<T>::From((void*)pNext) : nullptr;
+        } else {
+            _m_pHead = pNext;
+        }
+        if (pNext) {
+            auto* pNextDummy = ZRefCountedDummy<T>::From((void*)pNext);
+            pNextDummy->_m_pPrev = pPrev ? ZRefCountedDummy<T>::From((void*)pPrev) : nullptr;
+        } else {
+            _m_pTail = pPrev;
+        }
+        _Delete(pos);
+        --_m_uCount;
+    }
+
 private:
     T* _New(void* pPrev, void* pNext) {
         auto pDummy = new ZRefCountedDummy<T>();
-        pDummy->_m_pPrev = pPrev ? ZRefCountedDummy<T>::From(reinterpret_cast<T*>(pPrev)) : nullptr;
-        pDummy->_m_pNext = pNext ? ZRefCountedDummy<T>::From(reinterpret_cast<T*>(pNext)) : nullptr;
+        pDummy->_m_pPrev = pPrev ? ZRefCountedDummy<T>::From(pPrev) : nullptr;
+        pDummy->_m_pNext = pNext ? ZRefCountedDummy<T>::From(pNext) : nullptr;
         ++_m_uCount;
-        return zaddressof(pDummy->t);
+        return std::addressof(pDummy->t);
     }
     T* _New(ZRefCounted* pPrev, ZRefCounted* pNext) {
         auto p = new T();
@@ -209,38 +231,38 @@ private:
         return p;
     }
     void _Delete(void* p) {
-        auto pDummy = ZRefCountedDummy<T>::From(reinterpret_cast<T*>(p));
-        ZRefCountedAccessorBase::_Delete(pDummy);
+        delete ZRefCountedDummy<T>::From(p);
     }
     void _Delete(ZRefCounted* p) {
-        ZRefCountedAccessorBase::_Delete(p);
+        delete p;
     }
+
     static T* _GetNext(void* p) {
-        auto pDummy = ZRefCountedDummy<T>::From(reinterpret_cast<T*>(p));
-        auto pNext = ZRefCountedAccessor::_GetNext(pDummy);
-        return pNext ? zaddressof(static_cast<ZRefCountedDummy<T>*>(pNext)->t) : nullptr;
+        auto pDummy = static_cast<ZRefCountedDummy<T>*>(ZRefCountedDummy<T>::From(p)->_m_pNext);
+        return pDummy ? std::addressof(pDummy->t) : nullptr;
     }
     static T* _GetNext(ZRefCounted* p) {
-        return ZRefCountedAccessor::_GetNext(p);
+        return p->_m_pNext;
     }
     static void _SetNext(void* p, void* pNext) {
-        ZRefCountedDummy<T>::From(reinterpret_cast<T*>(p))->_m_pNext = ZRefCountedDummy<T>::From(reinterpret_cast<T*>(pNext));
+        ZRefCountedDummy<T>::From(p)->_m_pNext = ZRefCountedDummy<T>::From(pNext);
     }
     static void _SetNext(ZRefCounted* p, ZRefCounted* pNext) {
         p->_m_pNext = pNext;
     }
     static T* _GetPrev(void* p) {
-        auto pDummy = ZRefCountedDummy<T>::From(reinterpret_cast<T*>(p));
-        auto pPrev = ZRefCountedAccessor::_GetPrev(pDummy);
-        return pPrev ? zaddressof(static_cast<ZRefCountedDummy<T>*>(pPrev)->t) : nullptr;
+        auto pDummy = static_cast<ZRefCountedDummy<T>*>(ZRefCountedDummy<T>::From(p)->_m_pPrev);
+        return pDummy ? std::addressof(pDummy->t) : nullptr;
     }
     static T* _GetPrev(ZRefCounted* p) {
-        return ZRefCountedAccessor::_GetPrev(p);
+        return p->_m_pPrev;
     }
     static void _SetPrev(void* p, void* pPrev) {
-        ZRefCountedDummy<T>::From(reinterpret_cast<T*>(p))->_m_pPrev = ZRefCountedDummy<T>::From(reinterpret_cast<T*>(pPrev));
+        ZRefCountedDummy<T>::From(p)->_m_pPrev = ZRefCountedDummy<T>::From(pPrev);
     }
     static void _SetPrev(ZRefCounted* p, ZRefCounted* pPrev) {
         p->_m_pPrev = pPrev;
     }
 };
+
+static_assert(sizeof(ZList<ZRefCounted>) == 0x14);

@@ -1,6 +1,10 @@
 #pragma once
 #include "ztl/ztl.h"
 
+#define CHECK_HR(_hr) \
+_com_util::CheckError(_hr)
+
+
 inline IWzGr2DPtr& get_gr() {
     return *reinterpret_cast<IWzGr2DPtr*>(0x00BF14EC);
 }

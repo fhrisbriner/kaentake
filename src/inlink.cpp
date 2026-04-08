@@ -17,7 +17,7 @@ public:
         Ztl_variant_t vInlink = this->property->item[L"_inlink"];
         if (V_VT(&vInlink) == VT_BSTR) {
             ZXString<wchar_t> sFilePath(pArchive->absoluteUOL);
-            sFilePath.ReleaseBuffer(sFilePath.Find(L".img") + 5);
+            //sFilePath.ReleaseBuffer(sFilePath.Find(L".img") + 5);
             sFilePath.Cat(V_BSTR(&vInlink));
             this->property->item[L"_inlink"] = static_cast<const wchar_t*>(sFilePath);
         }

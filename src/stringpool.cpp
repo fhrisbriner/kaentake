@@ -49,5 +49,5 @@ void EncodeString(int nIdx, const char* sSource, char* sDestination) {
 
 
 void AttachStringPoolMod() {
-    REPLACE_STRING(1163, "Kaentake");
+    REPLACE_STRING(1163, "Maple Night");
 }

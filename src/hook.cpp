@@ -145,7 +145,8 @@ void* GetAddressByPattern(const char* sModuleName, const char* sPattern) {
 
 void PatchMemory(void* pAddress, void* pValue, size_t uSize) {
     DWORD flOldProtect;
-    VirtualProtect(pAddress, uSize, PAGE_EXECUTE_READWRITE, &flOldProtect);
+    if (!VirtualProtect(pAddress, uSize, PAGE_EXECUTE_READWRITE, &flOldProtect))
+        return;
     memcpy(pAddress, pValue, uSize);
     VirtualProtect(pAddress, uSize, flOldProtect, &flOldProtect);
 }

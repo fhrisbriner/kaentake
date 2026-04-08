@@ -1,61 +1,44 @@
 #pragma once
 #include "zalloc.h"
 #include <windows.h>
+#include <cstdint>
 #include <string>
 
 
-namespace ZStrUtil {
-
 template <typename T>
-size_t Len(const T* s);
+size_t length(const T* s);
 
 template <>
-inline size_t Len<char>(const char* s) {
+inline size_t length<char>(const char* s) {
     return strlen(s);
 }
 
 template <>
-inline size_t Len<wchar_t>(const wchar_t* s) {
+inline size_t length<wchar_t>(const wchar_t* s) {
     return wcslen(s);
 }
 
 
 template <typename T>
-const T* Str(const T* sSource, const T* sPattern);
+int format(T* sBuffer, size_t uSize, const T* sFormat, va_list argList);
 
 template <>
-inline const char* Str<char>(const char* sSource, const char* sPattern) {
-    return strstr(sSource, sPattern);
-}
-
-template <>
-inline const wchar_t* Str<wchar_t>(const wchar_t* sSource, const wchar_t* sPattern) {
-    return wcsstr(sSource, sPattern);
-}
-
-
-template <typename T>
-int Format(T* sBuffer, size_t uSize, const T* sFormat, va_list argList);
-
-template <>
-inline int ZStrUtil::Format<char>(char* sBuffer, size_t uSize, const char* sFormat, va_list argList) {
+inline int format<char>(char* sBuffer, size_t uSize, const char* sFormat, va_list argList) {
     return _vsnprintf_s(sBuffer, uSize, _TRUNCATE, sFormat, argList);
 }
 
 template <>
-inline int ZStrUtil::Format<wchar_t>(wchar_t* sBuffer, size_t uSize, const wchar_t* sFormat, va_list argList) {
+inline int format<wchar_t>(wchar_t* sBuffer, size_t uSize, const wchar_t* sFormat, va_list argList) {
     return _vsnwprintf_s(sBuffer, uSize, _TRUNCATE, sFormat, argList);
 }
-
-} // namespace ZStrUtil
 
 
 template <typename T>
 class ZXString {
     struct _ZXStringData {
         volatile long nRef;
-        int nCap;
-        int nByteLen;
+        int32_t nCap;
+        int32_t nByteLen;
 
         T* pStr() {
             return reinterpret_cast<T*>(&this[1]);
@@ -64,15 +47,16 @@ class ZXString {
     static_assert(sizeof(_ZXStringData) == 0xC);
 
 protected:
-    T* _m_pStr;
 
 public:
+    T* _m_pStr;
+
     ~ZXString() {
         if (_m_pStr) {
             _Release(_GetData());
         }
     }
-    ZXString(const T* s, int n = -1) : _m_pStr(nullptr) {
+    ZXString(const T* s, int32_t n = -1) : _m_pStr(nullptr) {
         Assign(s, n);
     }
     ZXString(const ZXString<T>& s) : _m_pStr(nullptr) {
@@ -102,13 +86,13 @@ public:
         return *this;
     }
     ZXString<T>& operator=(const T* s) {
-        Assign(s, ZStrUtil::Len<T>(s));
+        Assign(s, length<T>(s));
         return *this;
     }
 
-    void Assign(const T* s, int n = -1) {
+    void Assign(const T* s, int32_t n = -1) {
         if (s) {
-            int nLength = n == -1 ? ZStrUtil::Len<T>(s) : n;
+            int32_t nLength = n == -1 ? length<T>(s) : n;
             T* pBuffer = GetBuffer(nLength, 0);
             memcpy(pBuffer, s, nLength * sizeof(T));
             ReleaseBuffer(nLength);
@@ -117,18 +101,18 @@ public:
             _m_pStr = nullptr;
         }
     }
-    int GetLength() const {
+    int32_t GetLength() const {
         if (_m_pStr) {
             return _GetData()->nByteLen / sizeof(T);
         } else {
             return 0;
         }
     }
-    int IsEmpty() const {
+    int32_t IsEmpty() const {
         return !_m_pStr || !_m_pStr[0];
     }
-    T* GetBuffer(int nMinLength, int bRetain) {
-        int nCap = 0;
+    T* GetBuffer(int32_t nMinLength, int32_t bRetain) {
+        int32_t nCap = 0;
         auto pData = _m_pStr ? _GetData() : nullptr;
         if (pData) {
             if (pData->nRef <= 1 && pData->nCap >= nMinLength) {
@@ -155,11 +139,11 @@ public:
         }
         return _m_pStr;
     }
-    void ReleaseBuffer(int nLength) {
+    void ReleaseBuffer(int32_t nLength) {
         auto pData = _GetData();
         pData->nRef = 1;
         if (nLength == -1) {
-            pData->nByteLen = ZStrUtil::Len<T>(pData->pStr()) * sizeof(T);
+            pData->nByteLen = length<T>(pData->pStr()) * sizeof(T);
         } else {
             _m_pStr[nLength] = 0;
             pData->nByteLen = nLength * sizeof(T);
@@ -197,51 +181,43 @@ public:
         }
     }
     ZXString<T>& Cat(const T* s) {
-        return _Cat(s, ZStrUtil::Len<T>(s));
+        return _Cat(s, length<T>(s));
     }
-    int Find(const T* s, int nStart = 0) {
-        if (!_m_pStr) {
-            if (!s || !*s) {
-                return 0;
-            }
-            return -1;
-        }
-        if (s && *s) {
-            auto p = ZStrUtil::Str(&_m_pStr[nStart], s);
-            if (p) {
-                return p - _m_pStr;
-            }
-            return -1;
-        }
-        return GetLength();
+
+    void Clear() {
+        auto pData = _m_pStr ? _GetData() : nullptr;
+        _Release(pData);
     }
 
 protected:
     _ZXStringData* _GetData() const {
         return reinterpret_cast<_ZXStringData*>(_m_pStr) - 1;
     }
+    _ZXStringData* _GetData() {
+        return reinterpret_cast<_ZXStringData*>(_m_pStr) - 1;
+    }
     void _FormatV(const T* sFormat, va_list argList) {
         int result = -1;
         ZXString<T> s;
-        for (int i = 16; i <= 1024; i *= 2) {
+        for (int32_t i = 16; i <= 1024; i *= 2) {
             if (result >= 0) {
                 break;
             }
             T* sBuffer = s.GetBuffer(i, 0);
-            result = ZStrUtil::Format<T>(sBuffer, i, sFormat, argList);
+            result = format<T>(sBuffer, i, sFormat, argList);
             s.ReleaseBuffer(result < 0 ? 0 : result);
         }
         *this = s;
     }
-    ZXString<T>& _Cat(const T* s, int n) {
+    ZXString<T>& _Cat(const T* s, int32_t n) {
         if (n) {
             if (IsEmpty()) {
                 T* sBuffer = GetBuffer(n, 0);
                 memcpy(sBuffer, s, n * sizeof(T));
                 ReleaseBuffer(n);
             } else {
-                int nReq = GetLength() + n;
-                int nCap = _GetData()->nCap;
+                int32_t nReq = GetLength() + n;
+                int32_t nCap = _GetData()->nCap;
                 while (nCap < nReq) {
                     nCap *= 2;
                 }
@@ -258,15 +234,15 @@ protected:
             _Free(pData);
         }
     }
-    static _ZXStringData* _Alloc(int nCap) {
+    static _ZXStringData* _Alloc(int32_t nCap) {
         auto pData = static_cast<_ZXStringData*>(ZAllocEx<ZAllocStrSelector<T>>::s_Alloc(sizeof(T) * (nCap + 1) + sizeof(_ZXStringData)));
         pData->nCap = nCap;
         return pData;
     }
+
     static void _Free(_ZXStringData* pFree) {
         ZAllocEx<ZAllocStrSelector<T>>::s_Free(pFree);
     }
 };
 
 static_assert(sizeof(ZXString<char>) == 0x4);
-static_assert(sizeof(ZXString<wchar_t>) == 0x4);

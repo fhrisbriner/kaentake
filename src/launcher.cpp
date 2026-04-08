@@ -11,8 +11,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ZeroMemory(&pi, sizeof(pi));
     si.cb = sizeof(STARTUPINFOA);
 
-    if (!DetourCreateProcessWithDllExA("MapleStory.exe", lpCmdLine, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi, "kaentake.dll", NULL)) {
+    if (!DetourCreateProcessWithDllExA("MapleStory.exe", lpCmdLine, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi, "MapleNight.dll", NULL)) {
         DWORD dwError = GetLastError();
+        LogCrashReport(dwError, "DetourCreateProcessWithDllExA(MapleStory.exe, MapleNight.dll)");
         LPSTR sErrorMessage = nullptr;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, dwError, 0, (LPSTR)&sErrorMessage, 0, nullptr);
         ErrorMessage("Could not start MapleStory.exe [%d]\n%s", dwError, sErrorMessage);
