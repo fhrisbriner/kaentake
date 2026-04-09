@@ -2475,6 +2475,60 @@ int(__fastcall CMapLoadable__SetFieldMagLevel_t)(void* thisptr, void* edx) {
     return 0;
 }
 
+class SKILLENTRY {
+public:
+    int skillId;
+    ZXString<char> skillName;
+    ZXString<char> description;
+    int skillType;
+};
+
+typedef SKILLENTRY* (__fastcall* SkillInfo__GetSkill_t)(PVOID pThis, PVOID edx, int nSkillID);
+static auto SkillInfo__GetSkill = reinterpret_cast<SkillInfo__GetSkill_t>(0x0075C755);
+
+class SkillInfo {
+public:
+    static SkillInfo* GetInstance()
+    {
+        return *reinterpret_cast<SkillInfo**>(0x00BE78DC);
+    }
+
+    SKILLENTRY* GetSkill(int nSkillID) {
+        return SkillInfo__GetSkill(GetInstance(), NULL, nSkillID);
+    }
+};
+
+struct CUIToolTip;
+
+typedef void(__thiscall* CUIToolTip__DrawItemTitle_t)(CUIToolTip* pThis, int y, const char* sText, _bstr_t* bEquip);
+static auto CUIToolTip__DrawItemTitle = reinterpret_cast<CUIToolTip__DrawItemTitle_t>(0x008F49BC);
+
+static void __fastcall DrawItemTitleHook(CUIToolTip* pThis, void* edx, int y, const char* sText, _bstr_t* bEquip) {
+    if (sText && strchr(sText, '_')) {
+        int skillID = 0;
+        int amount = 0;
+
+        if (sscanf_s(sText, "%d_%d", &skillID, &amount) == 2) {
+            SkillInfo* pSkillInfo = SkillInfo::GetInstance();
+            SKILLENTRY* pSkill = pSkillInfo ? pSkillInfo->GetSkill(skillID) : nullptr;
+
+            if (pSkill && pSkill->skillName._m_pStr) {
+                char szBuf[256];
+                sprintf_s(
+                    szBuf,
+                    sizeof(szBuf),
+                    "+%d to %s",
+                    amount,
+                    pSkill->skillName._m_pStr
+                );
+
+                return CUIToolTip__DrawItemTitle(pThis, y, szBuf, bEquip);
+            }
+        }
+    }
+    return CUIToolTip__DrawItemTitle(pThis, y, sText, bEquip);
+}
+
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
     Patch1(0x00620F2B + 1, 0x1F);
@@ -2537,6 +2591,38 @@ void AttachOtherHooks() {
     CodeCave(UpdateIncHpToShort, UpdateHpStructure, 8);
 
 
+
+    //Bowman Action Bypass
+    Patch1(0x0078EA69, 0xE9);
+    Patch1(0x0078EA69 + 1, 0x81);
+    Patch1(0x0078EA69 + 2, 0x01);
+    Patch1(0x0078EA69 + 3, 0x00);
+    Patch1(0x0078EA69 + 4, 0x00);
+    Patch1(0x0078EA69 + 5, 0x00);
+    Patch1(0x0078EA69 + 6, 0x90);
+
+    //CritBypass
+    PatchNop(0x007650B3, 29);
+
+    //uiStat stuff
+    Patch1(0x008C35C9 + 1, 0x2C); // weapon def
+    Patch1(0x008C374A + 1, 0x1A); // weapon def
+    Patch1(0x008C39E9 + 1, 0x62); // weapon def
+    Patch1(0x008C3B9C + 1, 0x50); // weapon def
+    Patch1(0x008C3D4F + 1, 0x3E); // weapon def
+    Patch1(0x008C3F8E + 1, 0x74); // weapon def
+    PatchNop(0x00668C04, 5);
+
+    CodeCave((void*)NW_Multi, nwthrow, 0);
+    Patch1(0x0078EDB1 + 1, 0x84);
+    CodeCave((void*)Claw_5, 0x0078EDB1, 1);
+    Patch1(0x0076511E, 0xEB);
+    Patch1(0x009F7A9B + 1, 0);
+
+    CodeCave(DamCalc, madcalcjmpout, 1);
+
+
+    ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(is_skill_need_master_level, masteryskill);
     ATTACH_HOOK(get_job_name_hook, get_job_name);
