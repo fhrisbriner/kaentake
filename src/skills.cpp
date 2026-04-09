@@ -2400,6 +2400,11 @@ __declspec(naked) void FireArrowBullet() {
     }
 }
 
+auto is_shoot_action = (int(__cdecl*)(int))0x004566F5;
+int (__cdecl is_shoot_action_hook)(int nAction) {
+    return 1;
+}
+
 auto hook_is_correct_upgrade = (int(__cdecl*)(int, int))0x004F5497;
 int(__cdecl is_correct_upgrade_equip)(int nUItemID, int nEItemID) {
     int v2;
@@ -2572,7 +2577,7 @@ void AttachOtherHooks() {
     //
     // // crit BYPASS
     //
-    // PatchNop(0x007650B3, 29);
+    PatchNop(0x007650B3, 29);
     // // Bowman Action Bypass
     Patch1(0x0078EA69, 0xE9);
     Patch1(0x0078EA69 + 1, 0x81);
@@ -2635,6 +2640,7 @@ void AttachOtherHooks() {
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
     ATTACH_HOOK(is_skill_need_master_level, masteryskill);
     ATTACH_HOOK(get_job_name_hook, get_job_name);
+    ATTACH_HOOK(is_shoot_action, is_shoot_action_hook);
 
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
