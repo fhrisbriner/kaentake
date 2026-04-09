@@ -579,8 +579,6 @@ Pattern ParsePattern(const char* pattern) {
 }
 
 
-
-
 unsigned int FindAoB(const char* patternStr, DWORD start, DWORD end, int skip) {
     Pattern pat = ParsePattern(patternStr);
 
@@ -617,13 +615,13 @@ void WriteDouble(const DWORD dwOriginAddress, const double dwValue) {
 }
 
 void Patch1Array(const DWORD dwOriginAddress, unsigned char* ucValue, const int ucValueSize) {
-        for (int i = 0; i < ucValueSize; i++) {
-            const DWORD newAddr = dwOriginAddress + i;
-            DWORD dwOldProtect;
-            VirtualProtect((LPVOID)newAddr, sizeof(unsigned char), PAGE_EXECUTE_READWRITE, &dwOldProtect);
-            *(unsigned char*)newAddr = ucValue[i];
-            VirtualProtect((LPVOID)newAddr, sizeof(unsigned char), dwOldProtect, &dwOldProtect);
-        }
+    for (int i = 0; i < ucValueSize; i++) {
+        const DWORD newAddr = dwOriginAddress + i;
+        DWORD dwOldProtect;
+        VirtualProtect((LPVOID)newAddr, sizeof(unsigned char), PAGE_EXECUTE_READWRITE, &dwOldProtect);
+        *(unsigned char*)newAddr = ucValue[i];
+        VirtualProtect((LPVOID)newAddr, sizeof(unsigned char), dwOldProtect, &dwOldProtect);
+    }
 }
 
 bool IsSkipped(DWORD addr, const int skipAddresses[], int skipCount) {
@@ -668,22 +666,22 @@ void ReplaceValueSimple(const char* AoB, int value) {
 
 void FillBytes(const DWORD dwOriginAddress, const unsigned char ucValue, const int nCount) {
     DWORD dwOldProtect;
-    if (!VirtualProtect((LPVOID) dwOriginAddress, nCount, PAGE_EXECUTE_READWRITE, &dwOldProtect))
+    if (!VirtualProtect((LPVOID)dwOriginAddress, nCount, PAGE_EXECUTE_READWRITE, &dwOldProtect))
         return;
-    memset((void *) dwOriginAddress, ucValue, nCount);
-    VirtualProtect((LPVOID) dwOriginAddress, nCount, dwOldProtect, &dwOldProtect);
+    memset((void*)dwOriginAddress, ucValue, nCount);
+    VirtualProtect((LPVOID)dwOriginAddress, nCount, dwOldProtect, &dwOldProtect);
 }
 
 
-void CodeCave(void *ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCount) {
+void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCount) {
     // nNOPCount must be >= 5 to fit jmp (1 byte) + offset (4 bytes), or 0 to skip NOPing
     if (nNOPCount > 0 && nNOPCount < 5)
         return;
-    if (nNOPCount) FillBytes(dwOriginAddress, 0x90, nNOPCount);
+    if (nNOPCount)
+        FillBytes(dwOriginAddress, 0x90, nNOPCount);
     Patch1(dwOriginAddress, 0xe9); // jmp instruction
-    Patch4(dwOriginAddress + 1, (int) (((int) ptrCodeCave - (int) dwOriginAddress) - 5));
+    Patch4(dwOriginAddress + 1, (int)(((int)ptrCodeCave - (int)dwOriginAddress) - 5));
 }
-
 
 
 void fixCZak() {
@@ -728,22 +726,22 @@ void skillHacks() {
     // ReplaceValue("ED 23 4E 00", 1101016, skipArray, 4);
     // ReplaceValue("5E 93 E6 00", 1201016, skipArray, 4); // spark
     // ReplaceValue("4A 1C 23 00", 2201010, skipArray, 4);
-    Patch4(0x0094B4EC + 1, 1411003);                    // switch addy
-    //ReplaceValue("30 FD 13 00", 1210010, skipArray, 4); // elemental resistance
-    Patch4(0x00765A61 + 1, 121);                        // skill root check
+    Patch4(0x0094B4EC + 1, 1411003); // switch addy
+    // ReplaceValue("30 FD 13 00", 1210010, skipArray, 4); // elemental resistance
+    Patch4(0x00765A61 + 1, 121); // skill root check
     Patch1(0x008C4077 + 2, 0x0);
     Patch1(0x008C407D, 0x0);
     Patch1(0x007AFDE1, 0x0);
-    Patch1(0x0095CE05 + 2, 0x97);                       // achilles
-    Patch4(0x0095CE32 + 1, 1510005);                    // achilles
-    Patch4(0x007657EC + 1, 2410001);                    // il amplification
-    Patch4(0x007657CF + 1, 241);                        // il amplification
-    Patch4(0x007657EC + 1, 2410001);                    // il amplification
-    Patch4(0x00765815 + 1, 251);                        // paladin amplification
-    Patch4(0x00765832 + 1, 2510000);                    // paladin amplification
-   // ReplaceValue("8F A1 12 00", 1511003, skipArray, 4); // rush
-    Patch1(0x009584F6 + 2, 0x51);                       // eavsion boost skill WA
-    Patch1(0x00958523 + 2, 0x52);                       // eavsion boost skill WA
+    Patch1(0x0095CE05 + 2, 0x97);    // achilles
+    Patch4(0x0095CE32 + 1, 1510005); // achilles
+    Patch4(0x007657EC + 1, 2410001); // il amplification
+    Patch4(0x007657CF + 1, 241);     // il amplification
+    Patch4(0x007657EC + 1, 2410001); // il amplification
+    Patch4(0x00765815 + 1, 251);     // paladin amplification
+    Patch4(0x00765832 + 1, 2510000); // paladin amplification
+                                     // ReplaceValue("8F A1 12 00", 1511003, skipArray, 4); // rush
+    Patch1(0x009584F6 + 2, 0x51);    // eavsion boost skill WA
+    Patch1(0x00958523 + 2, 0x52);    // eavsion boost skill WA
 }
 
 
@@ -1051,136 +1049,134 @@ void doSpearPA() {
     }
 }
 
-typedef const char* (__cdecl* get_job_name_t)(int jobId);
+typedef const char*(__cdecl* get_job_name_t)(int jobId);
 static auto get_job_name_hook = reinterpret_cast<get_job_name_t>(0x004A77EF);
 
-const char* __cdecl get_job_name(int nJob)
-{
-	switch (nJob)
-	{
-	case 0:
-		return "Beginner";
-	case 100:
-		return "Warrior";
-	case 200:
-		return "Wizard";
-	case 300:
-		return "Archer";
-	case 400:
-		return "Rogue";
-	case 500:
-		return "Pirate";
-	case 110:
-		return "Knight";
-	case 111:
-		return "Crusader";
-	case 112:
-		return "Hero";
-	case 140:
-		return "Knight";
-	case 141:
-		return "Duelist";
-	case 142:
-		return "Swordlord";
-	case 120:
-		return "Crusher";
-	case 121:
-		return "Lancer";
-	case 122:
-		return "Dragon Knight";
-	case 150:
-		return "Crusher";
-	case 151:
-		return "Barbarian";
-	case 152:
-		return "Berserker";
-	case 210:
-		return "Elementalist";
-	case 211:
-		return "F/P Magician";
-	case 212:
-		return "Archmagician F/P";
-	case 220:
-		return "Cleric";
-	case 221:
-		return "Priest";
-	case 222:
-		return "Bishop";
-	case 240:
-		return "Elementalist";
-	case 241:
-		return "I/L Magician";
-	case 242:
-		return "Archmagician I/L";
-	case 250:
-		return "Cleric";
-	case 251:
-		return "Holy Knight";
-	case 252:
-		return "Paladin";
-	case 310:
-		return "Hunter";
-	case 311:
-		return "Ranger";
-	case 312:
-		return "Bowmaster";
-	case 320:
-		return "Crossbowman";
-	case 321:
-		return "Sniper";
-	case 322:
-		return "Marksman";
-	case 340:
-		return "Hunter";
-	case 341:
-		return "Wind Archer";
-	case 342:
-		return "Stormshot";
-	case 350:
-		return "Crossbowman";
-	case 351:
-		return "Sentinel";
-	case 352:
-		return "Boltslinger";
-	case 410:
-		return "Assassin";
-	case 411:
-		return "Hermit";
-	case 412:
-		return "Nightlord";
-	case 420:
-		return "Bandit";
-	case 421:
-		return "Chief Bandit";
-	case 422:
-		return "Shadower";
-	case 440:
-		return "Assassin";
-	case 441:
-		return "Ninja";
-	case 442:
-		return "Reaper";
-	case 450:
-		return "Bandit";
-	case 451:
-		return "Smuggler";
-	case 452:
-		return "Mesomaster";
-	case 7121:
-		return "Maverick";
-	case 7200:
-		return "Pugilist";
-	case 7210:
-		return "Ravager";
-	case 7211:
-		return "Tidemaster";
-	case 7220:
-		return "Boxer";
-	case 7221:
-		return "Champion";
-	default:
-		return get_job_name_hook(nJob);
-	}
+const char* __cdecl get_job_name(int nJob) {
+    switch (nJob) {
+    case 0:
+        return "Beginner";
+    case 100:
+        return "Warrior";
+    case 200:
+        return "Wizard";
+    case 300:
+        return "Archer";
+    case 400:
+        return "Rogue";
+    case 500:
+        return "Pirate";
+    case 110:
+        return "Knight";
+    case 111:
+        return "Crusader";
+    case 112:
+        return "Hero";
+    case 140:
+        return "Knight";
+    case 141:
+        return "Duelist";
+    case 142:
+        return "Swordlord";
+    case 120:
+        return "Crusher";
+    case 121:
+        return "Lancer";
+    case 122:
+        return "Dragon Knight";
+    case 150:
+        return "Crusher";
+    case 151:
+        return "Barbarian";
+    case 152:
+        return "Berserker";
+    case 210:
+        return "Elementalist";
+    case 211:
+        return "F/P Magician";
+    case 212:
+        return "Archmagician F/P";
+    case 220:
+        return "Cleric";
+    case 221:
+        return "Priest";
+    case 222:
+        return "Bishop";
+    case 240:
+        return "Elementalist";
+    case 241:
+        return "I/L Magician";
+    case 242:
+        return "Archmagician I/L";
+    case 250:
+        return "Cleric";
+    case 251:
+        return "Holy Knight";
+    case 252:
+        return "Paladin";
+    case 310:
+        return "Hunter";
+    case 311:
+        return "Ranger";
+    case 312:
+        return "Bowmaster";
+    case 320:
+        return "Crossbowman";
+    case 321:
+        return "Sniper";
+    case 322:
+        return "Marksman";
+    case 340:
+        return "Hunter";
+    case 341:
+        return "Wind Archer";
+    case 342:
+        return "Stormshot";
+    case 350:
+        return "Crossbowman";
+    case 351:
+        return "Sentinel";
+    case 352:
+        return "Boltslinger";
+    case 410:
+        return "Assassin";
+    case 411:
+        return "Hermit";
+    case 412:
+        return "Nightlord";
+    case 420:
+        return "Bandit";
+    case 421:
+        return "Chief Bandit";
+    case 422:
+        return "Shadower";
+    case 440:
+        return "Assassin";
+    case 441:
+        return "Ninja";
+    case 442:
+        return "Reaper";
+    case 450:
+        return "Bandit";
+    case 451:
+        return "Smuggler";
+    case 452:
+        return "Mesomaster";
+    case 7121:
+        return "Maverick";
+    case 7200:
+        return "Pugilist";
+    case 7210:
+        return "Ravager";
+    case 7211:
+        return "Tidemaster";
+    case 7220:
+        return "Boxer";
+    case 7221:
+        return "Champion";
+    default:
+        return get_job_name_hook(nJob);
+    }
 }
 
 
@@ -2017,7 +2013,7 @@ int __fastcall getDEX_hook(void* thisptr) {
 
 auto getSpeed = (int(__thiscall*)(void*))0x008C457C;
 
-int __fastcall getSpeed_hook(void* thisptr) {
+int __fastcall getSpeed_hook(void* thisptr, void* edx) {
     if (speed != getSpeed(thisptr)) {
         DEBUG_MESSAGE("Speed changed from %d to %d", speed, getSpeed(thisptr));
         speed = getSpeed(thisptr);
@@ -2168,8 +2164,8 @@ int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, void* bs, void* ss,
 void AttachSkillEdits() {
     // ATTACH_HOOK(MesoFormula, mesoFormulaHook);
     ATTACH_HOOK(getPAD, getPAD_hook);
-    // ATTACH_HOOK(getLUK, getLUK_hook);
-    // ATTACH_HOOK(getINT, getINT_hook);
+    ATTACH_HOOK(getLUK, getLUK_hook);
+    ATTACH_HOOK(getINT, getINT_hook);
     ATTACH_HOOK(getDEX, getDEX_hook);
     ATTACH_HOOK(getSpeed, getSpeed_hook);
     ATTACH_HOOK(hook_bstr_t, bstrt);
@@ -2181,22 +2177,23 @@ void AttachSkillEdits() {
     // // ATTACH_HOOK(tOnResolveMoveAction, tOnResolveMoveAction);
     // // ATTACH_HOOK(tget_flipX, tget_flipX);
     // ATTACH_HOOK(tOnSkillKeyDownEnd, tOnSkillKeyDownEnd);
-     //ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
+    // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
-    ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
+    //ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
     ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
-    ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
+    //ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
     ATTACH_HOOK(ztlSecureFuse_check, ztlfuse);
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
-    //
+    ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
+    ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     ATTACH_HOOK(jobCode, jobCode_hook);
     CodeCave(please, 0x00791C41, 4);
     CodeCave(FlashJumpAll, 0x0096BF0B, 0);
-    //PatchNop(0x0096C073, 6);
+    // PatchNop(0x0096C073, 6);
     CodeCave(DamCalc, madcalcjmpout, 1);
     skillHacks();
     changeMagicAttacks();
@@ -2293,7 +2290,7 @@ void replace() {
     std::vector<DWORD> foundAddresses;
 
     DWORD start = 0x00400000;
-    DWORD end   = 0x007AAAAA;
+    DWORD end = 0x007AAAAA;
 
     for (DWORD i = start; i < end - pat.bytes.size(); i++) {
         bool found = true;
@@ -2408,50 +2405,41 @@ int(__cdecl is_correct_upgrade_equip)(int nUItemID, int nEItemID) {
     int v2;
     int v3;
 
-    if (nUItemID / 10000 == 204 && nEItemID / 1000000 == 1)
-    {
+    if (nUItemID / 10000 == 204 && nEItemID / 1000000 == 1) {
         v2 = nUItemID / 100;
-        if ((nUItemID / 100 == 20490 || v2 == 20491 && (nUItemID < 2049105 || nUItemID > 2049110))
-                && nEItemID / 100000 != 18)
-        {
+        if ((nUItemID / 100 == 20490 || v2 == 20491 && (nUItemID < 2049105 || nUItemID > 2049110)) && nEItemID / 100000 != 18) {
             return 1;
         }
 
         v3 = (nEItemID / 10000) % 100;
 
         // 2040000�2040099: Weapons excluding wands (37) and staffs (38)
-        if (v2 == 20400)
-        {
+        if (v2 == 20400) {
             return (v3 >= 30 && v3 <= 49 && v3 != 37 && v3 != 38);
         }
 
         // 2040100�2040199: Wands and Staffs
-        if (v2 == 20401)
-        {
+        if (v2 == 20401) {
             return (v3 == 37 || v3 == 38);
         }
 
         // 2040200�2040299: Hat, Top, Bottom, Shoes, Gloves
-        if (v2 == 20402)
-        {
+        if (v2 == 20402) {
             return (v3 == 0 || v3 == 4 || v3 == 6 || v3 == 7 || v3 == 8);
         }
 
         // 2040300�2040399: Face, Eye, Earrings, Cape, Ring, Pendant
-        if (v2 == 20403)
-        {
+        if (v2 == 20403) {
             return (v3 == 1 || v3 == 2 || v3 == 3 || v3 == 10 || v3 == 11 || v3 == 12 || v3 == 13 || v3 == 14);
         }
 
         // 2040400�2040499: Overall and Shield
-        if (v2 == 20404)
-        {
+        if (v2 == 20404) {
             return (v3 == 5 || v3 == 9);
         }
 
         // 2049200�2049299: Special case scrolls (e.g. Chaos Scrolls)
-        if (v2 == 20492)
-        {
+        if (v2 == 20492) {
             return (v3 >= 0 && v3 <= 13);
         }
     }
@@ -2465,7 +2453,7 @@ __declspec(naked) void UpdateIncHpToShort() {
     __asm {
         call MakeIncDecHPEffectDecode2
         movzx eax, ax
-        //mov eax, 1000
+                // mov eax, 1000
         jmp dword ptr[UpdateHpStructureRetn]
     }
 }
@@ -2483,13 +2471,12 @@ public:
     int skillType;
 };
 
-typedef SKILLENTRY* (__fastcall* SkillInfo__GetSkill_t)(PVOID pThis, PVOID edx, int nSkillID);
+typedef SKILLENTRY*(__fastcall* SkillInfo__GetSkill_t)(PVOID pThis, PVOID edx, int nSkillID);
 static auto SkillInfo__GetSkill = reinterpret_cast<SkillInfo__GetSkill_t>(0x0075C755);
 
 class SkillInfo {
 public:
-    static SkillInfo* GetInstance()
-    {
+    static SkillInfo* GetInstance() {
         return *reinterpret_cast<SkillInfo**>(0x00BE78DC);
     }
 
@@ -2515,12 +2502,11 @@ static void __fastcall DrawItemTitleHook(CUIToolTip* pThis, void* edx, int y, co
             if (pSkill && pSkill->skillName._m_pStr) {
                 char szBuf[256];
                 sprintf_s(
-                    szBuf,
-                    sizeof(szBuf),
-                    "+%d to %s",
-                    amount,
-                    pSkill->skillName._m_pStr
-                );
+                        szBuf,
+                        sizeof(szBuf),
+                        "+%d to %s",
+                        amount,
+                        pSkill->skillName._m_pStr);
 
                 return CUIToolTip__DrawItemTitle(pThis, y, szBuf, bEquip);
             }
@@ -2531,7 +2517,7 @@ static void __fastcall DrawItemTitleHook(CUIToolTip* pThis, void* edx, int y, co
 
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
-    Patch1(0x00620F2B + 1, 0x1F);
+    Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
     RechargeArrows();
     Patch4(0x0067DD1D + 1, 999999);
     Patch4(0x00793499 + 1, 999999);
@@ -2540,11 +2526,15 @@ void AttachOtherHooks() {
     Patch4(0x0077E215 + 1, 999999);
     Patch4(0x00780620 + 1, 999999);
 
+    // Close Range Attacks
     Patch1(0x009516C2, 0xE9);
     Patch1(0x009516C2 + 1, 0xc8);
     Patch1(0x009516C2 + 2, 0xfc);
     Patch1(0x009516C2 + 3, 0xff);
     Patch1(0x009516C2 + 4, 0xff);
+
+    // Remove If you do not use your AP when you level up POP UP
+    Patch1(0x00A20091, 0xEB);
 
     // Hair ID Fix
     Patch1(0x005C94FC + 2, 7);
@@ -2557,7 +2547,14 @@ void AttachOtherHooks() {
     Patch1(0x009EA030, 0x81);
     Patch1(0x009EA031, 0xFE);
     Patch1(0x009EA032, 0xB4);
-    //Allow usage of pots while in Dark Sight skill
+
+
+    // Maker Skill Instant
+    Patch1(0x826F92 + 2, 0x08);
+    Patch1(0x826F92 + 3, 0x01);
+    Patch1(0x826F92 + 4, 0x00);
+    Patch1(0x826F92 + 5, 0x00);
+    // Allow usage of pots while in Dark Sight skill
     FillBytes(0x0094F6AB, 0x90, 6);
     // Allow double click pots while in Dark Sight skill
     FillBytes(0x004F0311, 0x90, 6);
@@ -2575,7 +2572,7 @@ void AttachOtherHooks() {
     //
     // // crit BYPASS
     //
-    PatchNop(0x007650B3, 29);
+    // PatchNop(0x007650B3, 29);
     // // Bowman Action Bypass
     Patch1(0x0078EA69, 0xE9);
     Patch1(0x0078EA69 + 1, 0x81);
@@ -2590,21 +2587,35 @@ void AttachOtherHooks() {
     CodeCave(FireArrowBullet, dwFireBulletAdd, 5);
     CodeCave(UpdateIncHpToShort, UpdateHpStructure, 8);
 
+    unsigned char Uncap_Array[] = { 0x00, 0x00, 0xC0, 0xFF, 0xFF, 0xFF, 0xDF, 0x41 };
+    Patch1Array(0x00AFE8A0, Uncap_Array, sizeof(Uncap_Array));
+    Patch4(0x008C3304 + 1, 2147483647);
+
+    unsigned char Uncap_Stat_Arr_1[] = { 0xFF, 0xFE, 12 };
+    Patch1Array(0x00780620 + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x0077E055 + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x0077E12F + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x0077E215 + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x0078FF5F + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x0079166C + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x00791CD5 + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1));
+    Patch1Array(0x007806D0 + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1)); // Accuracy uncap
+    Patch1Array(0x00780702 + 1, Uncap_Stat_Arr_1, sizeof(Uncap_Stat_Arr_1)); // Avoidability uncap
+
+    // Speed Cap Removal
+    Patch4(0x00780746, 250);
+    Patch4(0x008c4287, 250);
+    Patch4(0x0094D91F, 250);
+
+    // Enable Teleport mid air -
+    // Ezrosia V2 ()newer ones) FillBytes(0x00957C2D, 0x90, 6);
+    PatchNop(0x00957C2D, 6);
 
 
-    //Bowman Action Bypass
-    Patch1(0x0078EA69, 0xE9);
-    Patch1(0x0078EA69 + 1, 0x81);
-    Patch1(0x0078EA69 + 2, 0x01);
-    Patch1(0x0078EA69 + 3, 0x00);
-    Patch1(0x0078EA69 + 4, 0x00);
-    Patch1(0x0078EA69 + 5, 0x00);
-    Patch1(0x0078EA69 + 6, 0x90);
-
-    //CritBypass
+    // CritBypass
     PatchNop(0x007650B3, 29);
 
-    //uiStat stuff
+    // uiStat stuff
     Patch1(0x008C35C9 + 1, 0x2C); // weapon def
     Patch1(0x008C374A + 1, 0x1A); // weapon def
     Patch1(0x008C39E9 + 1, 0x62); // weapon def
@@ -2621,39 +2632,37 @@ void AttachOtherHooks() {
 
     CodeCave(DamCalc, madcalcjmpout, 1);
 
+    Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
+    ATTACH_HOOK(is_skill_need_master_level, masteryskill);
+    ATTACH_HOOK(get_job_name_hook, get_job_name);
+
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
-    ATTACH_HOOK(is_skill_need_master_level, masteryskill);
-    ATTACH_HOOK(get_job_name_hook, get_job_name);
 }
 
 
-
-struct CharacterDataEx
-{
+struct CharacterDataEx {
 private:
-	inline static CharacterDataEx* m_pInstance = nullptr;
+    inline static CharacterDataEx* m_pInstance = nullptr;
+
 public:
-	LONGLONG m_liExp;
+    LONGLONG m_liExp;
 
-	CharacterDataEx()
-	{
-		/* setting default value as proof of concept. can be removed. */
-		m_liExp = 0;
-	}
+    CharacterDataEx() {
+        /* setting default value as proof of concept. can be removed. */
+        m_liExp = 0;
+    }
 
-	BYTE GetCharLevel();
+    BYTE GetCharLevel();
 
-	static CharacterDataEx* GetInstance()
-	{
-		if (!m_pInstance)
-		{
-			m_pInstance = new CharacterDataEx();
-		}
+    static CharacterDataEx* GetInstance() {
+        if (!m_pInstance) {
+            m_pInstance = new CharacterDataEx();
+        }
 
-		return m_pInstance;
-	}
+        return m_pInstance;
+    }
 };
 
 
@@ -2661,117 +2670,109 @@ inline LONGLONG myArrayForCustomEXP[] = { 1, 15, 44, 96, 188, 312, 550, 731, 969
 
 inline constexpr size_t maxLevelForCustomEXP = sizeof(myArrayForCustomEXP) / sizeof(myArrayForCustomEXP[0]);
 
-inline LONGLONG get_next_level_exp()
-{
-	BYTE lvl = CharacterDataEx::GetInstance()->GetCharLevel();
+inline LONGLONG get_next_level_exp() {
+    BYTE lvl = CharacterDataEx::GetInstance()->GetCharLevel();
 
-	if (lvl >= sizeof(myArrayForCustomEXP) / sizeof(myArrayForCustomEXP[0])) return 0;
+    if (lvl >= sizeof(myArrayForCustomEXP) / sizeof(myArrayForCustomEXP[0]))
+        return 0;
 
-	return myArrayForCustomEXP[lvl];
+    return myArrayForCustomEXP[lvl];
 }
 
-inline BYTE CharacterDataEx::GetCharLevel()
-{
-	auto CUserLocal__GetCharacterLevel = (BYTE(__fastcall*)(PVOID pThis, PVOID edx))0x00949B15;
+inline BYTE CharacterDataEx::GetCharLevel() {
+    auto CUserLocal__GetCharacterLevel = (BYTE(__fastcall*)(PVOID pThis, PVOID edx))0x00949B15;
 
-	PVOID CUserLocal__ms_pInstance = *reinterpret_cast<void**>(0x00BEBF98);
-	if (!CUserLocal__ms_pInstance)
-		return 0;
+    PVOID CUserLocal__ms_pInstance = *reinterpret_cast<void**>(0x00BEBF98);
+    if (!CUserLocal__ms_pInstance)
+        return 0;
 
-	return CUserLocal__GetCharacterLevel(CUserLocal__ms_pInstance, nullptr);
+    return CUserLocal__GetCharacterLevel(CUserLocal__ms_pInstance, nullptr);
 }
 
-inline char* __cdecl itoa_ExpSwap(int value, PCHAR buffer, int radix)
-{
-	_i64toa(CharacterDataEx::GetInstance()->m_liExp, buffer, radix);
+inline char* __cdecl itoa_ExpSwap(int value, PCHAR buffer, int radix) {
+    _i64toa(CharacterDataEx::GetInstance()->m_liExp, buffer, radix);
 
-	// TODO abbreviate large numbers to something like 14.123B or something -- maybe make toggleable through some UI setting??
+    // TODO abbreviate large numbers to something like 14.123B or something -- maybe make toggleable through some UI setting??
 
-	return buffer;
+    return buffer;
 }
 
 /* all arguments passed on the stack despite being a member function */
-inline void __cdecl FormatExpString_Hook(ZXString<char>* pThis, const char* originalstring, int curexp, int nextlevelexp)
-{
-	std::string s = std::to_string(CharacterDataEx::GetInstance()->m_liExp);
-	s.append(" / ");
-	s.append(std::to_string(get_next_level_exp()));
+inline void __cdecl FormatExpString_Hook(ZXString<char>* pThis, const char* originalstring, int curexp, int nextlevelexp) {
+    std::string s = std::to_string(CharacterDataEx::GetInstance()->m_liExp);
+    s.append(" / ");
+    s.append(std::to_string(get_next_level_exp()));
 
-	pThis->Assign(s.c_str());
+    pThis->Assign(s.c_str());
 }
 
-typedef void* (__cdecl* _lpfn_NextLevel_t)(int[]);
+typedef void*(__cdecl* _lpfn_NextLevel_t)(int[]);
 static auto _lpfn_NextLevel = reinterpret_cast<_lpfn_NextLevel_t>(0x0078D166);
 
 
 inline auto CUIStatusBar__SetNumberValue_t = (void(__thiscall*)(void*, int, int, int, int, int, int, int))0x008D850B;
-inline void __fastcall CUIStatusBar__SetNumberValue_Hook(void* pThis, void* edx, int hp, int hpMax, int mp, int mpMax, int exp, int expMax, int tempExp)
-{
-	LONGLONG liExp = CharacterDataEx::GetInstance()->m_liExp;
-	LONGLONG liExpMax = get_next_level_exp();
+inline void __fastcall CUIStatusBar__SetNumberValue_Hook(void* pThis, void* edx, int hp, int hpMax, int mp, int mpMax, int exp, int expMax, int tempExp) {
+    LONGLONG liExp = CharacterDataEx::GetInstance()->m_liExp;
+    LONGLONG liExpMax = get_next_level_exp();
 
-	/* this adjusts the exp bar gauge -- idk how else to do this lmao, we're essentially scaling the exp down until itll fit in the data type */
-		while (liExpMax > INT_MAX || liExp > INT_MAX)
-		{
-			liExp >>= 2;
-			liExpMax >>= 2;
-		}
+    /* this adjusts the exp bar gauge -- idk how else to do this lmao, we're essentially scaling the exp down until itll fit in the data type */
+    while (liExpMax > INT_MAX || liExp > INT_MAX) {
+        liExp >>= 2;
+        liExpMax >>= 2;
+    }
 
-		exp = (int)liExp;
-		expMax = (int)liExpMax;
+    exp = (int)liExp;
+    expMax = (int)liExpMax;
 
-	CUIStatusBar__SetNumberValue_t(pThis, hp, hpMax, mp, mpMax, exp, expMax, tempExp);
+    CUIStatusBar__SetNumberValue_t(pThis, hp, hpMax, mp, mpMax, exp, expMax, tempExp);
 }
 
-inline void* __fastcall _lpfn_NextLevel_Hook(LONGLONG expTable[maxLevelForCustomEXP])	 //your max level is the size of your array
+inline void* __fastcall _lpfn_NextLevel_Hook(LONGLONG expTable[maxLevelForCustomEXP]) // your max level is the size of your array
 {
-	memcpy(expTable, myArrayForCustomEXP, sizeof(myArrayForCustomEXP));	//ty to creator of github.com/PurpleMadness/CustomExpTable
-	expTable[maxLevelForCustomEXP] = 0;	//insert your own formula or predefined array into this part. MUST MATCH server numbers
-	return expTable;					//currently using predefined array
+    memcpy(expTable, myArrayForCustomEXP, sizeof(myArrayForCustomEXP)); // ty to creator of github.com/PurpleMadness/CustomExpTable
+    expTable[maxLevelForCustomEXP] = 0;                                 // insert your own formula or predefined array into this part. MUST MATCH server numbers
+    return expTable;                                                    // currently using predefined array
 }
 
-int __fastcall ExpSwap__Decode4To8(CInPacket* pThis, void* edx)
-{
-	LONGLONG liExp = pThis->Decode<LONGLONG>();
-	CharacterDataEx::GetInstance()->m_liExp = liExp;
-	return liExp < INT_MAX ? (INT)liExp : INT_MAX;
+int __fastcall ExpSwap__Decode4To8(CInPacket* pThis, void* edx) {
+    LONGLONG liExp = pThis->Decode<LONGLONG>();
+    CharacterDataEx::GetInstance()->m_liExp = liExp;
+    return liExp < INT_MAX ? (INT)liExp : INT_MAX;
 }
 
-inline const char* __fastcall ZXString__GetConstCharString(ZXString<char>* pThis, PVOID edx)
-{
-	std::string s = std::to_string(CharacterDataEx::GetInstance()->m_liExp); // need to include string lib
+inline const char* __fastcall ZXString__GetConstCharString(ZXString<char>* pThis, PVOID edx) {
+    std::string s = std::to_string(CharacterDataEx::GetInstance()->m_liExp); // need to include string lib
 
-	pThis->Assign(s.c_str());
+    pThis->Assign(s.c_str());
 
-	return *pThis;
+    return *pThis;
 }
 
 
-void InitExpOverride()
-{
-	//SetHook(true, reinterpret_cast<void**>(&_lpfn_NextLevel), _lpfn_NextLevel_Hook);
-		/* GW_CharacterStat::DecodeChangeStat -> hijack decode4 call and switch to decode8, then return int value */
-	PatchCall(0x004E31B6, ExpSwap__Decode4To8);
+void InitExpOverride() {
+    // SetHook(true, reinterpret_cast<void**>(&_lpfn_NextLevel), _lpfn_NextLevel_Hook);
+    /* GW_CharacterStat::DecodeChangeStat -> hijack decode4 call and switch to decode8, then return int value */
+    PatchCall(0x004E31B6, ExpSwap__Decode4To8);
 
-	/* GW_CharacterStat::Decode -> hijack decode4 call and switch to decode8, then return int value */
-	PatchCall(0x004E2C6E, ExpSwap__Decode4To8);
+    /* GW_CharacterStat::Decode -> hijack decode4 call and switch to decode8, then return int value */
+    PatchCall(0x004E2C6E, ExpSwap__Decode4To8);
 
-	ATTACH_HOOK(CUIStatusBar__SetNumberValue_t, CUIStatusBar__SetNumberValue_Hook);
+    ATTACH_HOOK(CUIStatusBar__SetNumberValue_t, CUIStatusBar__SetNumberValue_Hook);
 
-	/* CWvsContext::OnStatChanged -> jmping over a segment that looks at exp and then makes pet talk if at a certain % -> cbf fixing this */
-	Patch1(0x00A20116, 0xEB);
+    /* CWvsContext::OnStatChanged -> jmping over a segment that looks at exp and then makes pet talk if at a certain % -> cbf fixing this */
+    Patch1(0x00A20116, 0xEB);
 
-	/* CUIStat::OnMouseMove -> hijack displayed exp in tooltip when hovering in stat window */
-	PatchCall(0x008C539D, FormatExpString_Hook);
+    /* CUIStat::OnMouseMove -> hijack displayed exp in tooltip when hovering in stat window */
+    PatchCall(0x008C539D, FormatExpString_Hook);
 
-	/* CUIStat::Draw -> hijack displayed exp in stat window */
-	PatchCall(0x008C602E, ZXString__GetConstCharString);
+    /* CUIStat::Draw -> hijack displayed exp in stat window */
+    PatchCall(0x008C602E, ZXString__GetConstCharString);
 
-	/* CUIStatusBar::ProcessToolTip -> hijack displayed exp in tooltip when hovering exp gauge in stat bar */
-	PatchCall(0x008D78E3, FormatExpString_Hook);
-	PatchCall(0x008D789F, FormatExpString_Hook);
+    /* CUIStatusBar::ProcessToolTip -> hijack displayed exp in tooltip when hovering exp gauge in stat bar */
+    PatchCall(0x008D78E3, FormatExpString_Hook);
+    PatchCall(0x008D789F, FormatExpString_Hook);
 
-	/* CUIStatusBar::SetNumberValue -> hijack displayed exp above exp gauge */
-	Patch1(0x008DA406 + 1, 64); // increase string size allocation -- v207 = alloca(32)
-	PatchCall(0x008DA418, itoa_ExpSwap);
+    /* CUIStatusBar::SetNumberValue -> hijack displayed exp above exp gauge */
+    Patch1(0x008DA406 + 1, 64); // increase string size allocation -- v207 = alloca(32)
+    PatchCall(0x008DA418, itoa_ExpSwap);
 }
