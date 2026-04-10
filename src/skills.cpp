@@ -144,6 +144,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 1201017
+            cmp esi, eax
+            je buff
+
+            mov eax, 1210007
+            cmp esi, eax
+            je buff
+
                 // Duelist
 
             mov eax, 1411003
@@ -412,16 +420,20 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
-                // ninja
+            // ninja
             mov eax, 4411006
             cmp esi, eax
-            je prepare
+            je shoot
 
-            mov eax, 4411008
+            mov eax, 4411006
             cmp esi, eax
-            je prepare
+            je shoot
 
             mov eax, 4411009
+            cmp esi, eax
+            je buff
+
+            mov eax, 4411019
             cmp esi, eax
             je shoot
 
@@ -766,6 +778,9 @@ bool isSkillIDMatched(int nSkillID) {
         // ===== Duelist =====
         1411003, 1411005, 1411006, 1411008,
 
+        // ====== Crusher =====
+        1201017, 1210007,
+
         // ===== Barbarian =====
         1511008, 1511003, 1511007, 1511006,
 
@@ -832,7 +847,7 @@ bool isSkillIDMatched(int nSkillID) {
         4211011, 4211015,
 
         // ===== Ninja =====
-        4411006, 4411008, 4411009,
+        4411006, 4411009, 4411019,
 
         // ===== Bandit 3rd =====
         4511006, 4511013, 4511003, 4511007, 4511001,
