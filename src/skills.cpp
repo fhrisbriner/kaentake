@@ -264,6 +264,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 2111012
+            cmp esi, eax
+            je buff
+
 
                 // Priest
             mov eax, 2211011
@@ -293,7 +297,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 2411011
             cmp esi, eax
-            je magic
+            je prepare
 
             mov eax, 2411012
             cmp esi, eax
@@ -826,7 +830,7 @@ bool isSkillIDMatched(int nSkillID) {
         2501010, 2501011, 2501012, 2501013,
 
         // ===== FP Mage =====
-        2111011, 2111010,
+        2111011, 2111010, 2111012,
 
         // ===== Priest =====
         2211011,
