@@ -172,6 +172,13 @@ void __declspec(naked) doActiveSkills() {
 
                 // Barbarian
 
+            mov eax, 1511006
+            cmp esi, eax
+            je buff
+
+            mov eax, 1511009
+            cmp esi, eax
+            je melee
 
             mov eax, 1511008
             cmp esi, eax
@@ -248,8 +255,22 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+                // F/P Mage
+            mov eax, 2111010
+            cmp esi, eax
+            je prepare
+
+            mov eax, 2111011
+            cmp esi, eax
+            je buff
+
+
                 // Priest
             mov eax, 2211011
+            cmp esi, eax
+            je buff
+
+            mov eax, 2221015
             cmp esi, eax
             je buff
 
@@ -313,6 +334,10 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 3201016
             cmp esi, eax
             je shoot
+
+            mov eax, 3201006
+            cmp esi, eax
+            je buff
 
             mov eax, 3211016
             cmp esi, eax
@@ -459,6 +484,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 5411002
+            cmp esi, eax
+            je melee
+
             mov eax, 5411022
             cmp esi, eax
             je melee
@@ -474,6 +503,11 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 5511002
             cmp esi, eax
             je summons
+
+            mov eax, 5511014
+            cmp esi, eax
+            je summons
+
 
             mov eax, 5211014
             cmp esi, eax
@@ -536,10 +570,6 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 2511006
             cmp esi, eax
             je magic
-
-            mov eax, 1511006
-            cmp esi, eax
-            je buff
 
             mov eax, 4501006
             cmp esi, eax
@@ -779,10 +809,10 @@ bool isSkillIDMatched(int nSkillID) {
         1411003, 1411005, 1411006, 1411008,
 
         // ====== Crusher =====
-        1201017, 1210007,
+        1201017, 1210007, 1201018,
 
         // ===== Barbarian =====
-        1511008, 1511003, 1511007, 1511006,
+        1511008, 1511003, 1511007, 1511006, 1511009,
 
         // ===== Magician =====
         2001010,
@@ -796,6 +826,9 @@ bool isSkillIDMatched(int nSkillID) {
         2501010, 2501011, 2501012, 2501013,
 
         // ===== FP Mage =====
+        2111011, 2111010,
+
+        // ===== Priest =====
         2211011,
         2211012, 2211014, 2211015,
 
@@ -806,7 +839,7 @@ bool isSkillIDMatched(int nSkillID) {
         2511006, 2511004,
 
         // ===== Priest =====
-        2211004,
+        2211004, 2221015,
 
         // ===== Bowman =====
         3001013,
@@ -816,7 +849,7 @@ bool isSkillIDMatched(int nSkillID) {
         3401005, 3401007, 3401012,
 
         // ===== Crossbowman =====
-        3201016,
+        3201016, 3201006,
         3501005, 3501003, 3501016,
 
         // ===== Wind Archer =====
@@ -894,6 +927,11 @@ int get_weapon_type() {
 auto CUIStatusBar__ChatLogAdd = (void*(__thiscall*)(int, const char*, int, int, int, void*))0x008DB070;
 
 bool isCorrectWeapon(int nSkillID) {
+    if (nSkillID >= 4 && nSkillID <= 999999) {
+        if (get_weapon_type() >= 30) {
+            return true;
+        }
+    }
     if (nSkillID >= 1001000 && nSkillID <= 1001007) {
         if (get_weapon_type() <= 44) {
             return true;
@@ -915,7 +953,8 @@ bool isCorrectWeapon(int nSkillID) {
         }
     }
     if (nSkillID >= 1511000 && nSkillID < 2000000) {
-        if (get_weapon_type() - 40 >= 2 && get_weapon_type() >= 40) {
+        if (get_weapon_type() == 40 || get_weapon_type() == 41 || get_weapon_type() == 42) {
+            return true;
         }
     }
     if (nSkillID >= 2001000 && nSkillID < 2510000) {
@@ -1177,18 +1216,30 @@ const char* __cdecl get_job_name(int nJob) {
         return "Smuggler";
     case 452:
         return "Mesomaster";
-    case 7121:
-        return "Maverick";
-    case 7200:
-        return "Pugilist";
-    case 7210:
-        return "Ravager";
-    case 7211:
+    case 510:
+        return "Brawler";
+    case 511:
+        return "Marauder";
+    case 512:
+        return "Buccaneer";
+    case 520:
+        return "Gunslinger";
+    case 521:
+        return "Outlaw";
+    case 522:
+        return "Canoneer";
+    case 540:
+        return "Brawler";
+    case 541:
+        return "Striker";
+    case 542:
         return "Tidemaster";
-    case 7220:
-        return "Boxer";
-    case 7221:
-        return "Champion";
+    case 550:
+        return "Gunslinger";
+    case 551:
+        return "Captain";
+    case 552:
+        return "Corsair";
     default:
         return get_job_name_hook(nJob);
     }
@@ -1312,7 +1363,9 @@ void changeMagicAttacks() {
     Patch4(0x00955D50 + 1, 2211014);
     Patch4(0x00955D5B + 1, 2201013);
     Patch4(0x00955D66 + 1, 2511006);
-    Patch4(0x009563F2 + 3, 2411012);
+    Patch4(0x00955D7C + 1, 2411012);
+    Patch4(0x00955D87 + 1, 2111002);
+
 }
 
 
@@ -1373,6 +1426,46 @@ void moveOffsets(int skillID) {
         doPath = true;
         return;
     }
+    if (skillID == 1411005 && isLeftH) {
+        xPath = 300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 1411005 && !isLeftH) {
+        xPath = -300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 1411006 && isLeftH) {
+        xPath = -300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 1411006 && !isLeftH) {
+        xPath = 300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 1511003 && isLeftH) {
+        xPath = 300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 1511003 && !isLeftH) {
+        xPath = -300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 5411021 && isLeftH) {
+        xPath = 300;
+        doPath = true;
+        return;
+    }
+    if (skillID == 5411021 && !isLeftH) {
+        xPath = -300;
+        doPath = true;
+        return;
+    }
     xPath = 0;
     doPath = false;
     return;
@@ -1396,6 +1489,18 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(void* _This, void* edx, int nSkil
     }
     if (nSkillID == 4211015) {
         Patch4(0x00952F20 + 3, 4211015);
+    }
+    if (nSkillID == 1511003) {
+        Patch4(0x00952F20 + 3, 1511003);
+    }
+    if (nSkillID == 1411005) {
+        Patch4(0x00952F20 + 3, 1411005);
+    }
+    if (nSkillID == 1411006) {
+        Patch4(0x00952F20 + 3, 1411006);
+    }
+    if (nSkillID == 5411021) {
+        Patch4(0x00952F20 + 3, 5411021);
     }
     moveOffsets(nSkillID);
     if (nSkillID == 3001013) {
