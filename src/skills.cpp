@@ -1358,6 +1358,21 @@ int(__cdecl missileSpeed_Hook)(int a1, int a2, int a3) {
     return missileSpeed(a1, a2, a3);
 }
 
+
+// Hook to modify skill ID and offset
+void AttachSkillOffsetMod() {
+    // Change skill ID from 1320006 (0x142446) to 2510000 (0x2639A8)
+    Patch4(0x007A5B69, 0x2639A8);
+
+    // Change offset from edi+65h to edi+69h
+    // First occurrence at 0x007A5B31
+    Patch1(0x007A5B31 + 1, 0x69);
+    // Second occurrence at 0x007A5B86
+    Patch1(0x007A5B86 + 1, 0x69);
+}
+
+
+
 void changeMagicAttacks() {
     Patch4(0x00955D19 + 1, 2101008);
     Patch4(0x00955D24 + 1, 2101007);
@@ -2321,6 +2336,8 @@ void AttachSkillEdits() {
     CodeCave(DamCalc, madcalcjmpout, 1);
     skillHacks();
     changeMagicAttacks();
+    AttachSkillOffsetMod();
+
 }
 
 
@@ -2906,3 +2923,6 @@ void InitExpOverride() {
     Patch1(0x008DA406 + 1, 64); // increase string size allocation -- v207 = alloca(32)
     PatchCall(0x008DA418, itoa_ExpSwap);
 }
+
+
+
