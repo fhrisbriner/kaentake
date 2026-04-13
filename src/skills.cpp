@@ -2330,6 +2330,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     ATTACH_HOOK(jobCode, jobCode_hook);
+    ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     CodeCave(please, 0x00791C41, 4);
     CodeCave(FlashJumpAll, 0x0096BF0B, 0);
     // PatchNop(0x0096C073, 6);
@@ -2779,6 +2780,7 @@ void AttachOtherHooks() {
     CodeCave(DamCalc, madcalcjmpout, 1);
 
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
+    ATTACH_HOOK(setInput, setInput_hook);
     ATTACH_HOOK(is_skill_need_master_level, masteryskill);
     ATTACH_HOOK(get_job_name_hook, get_job_name);
     ATTACH_HOOK(is_shoot_action, is_shoot_action_hook);

@@ -8,7 +8,7 @@
 
 #define CONSTANTS_DEFAULT_HOST     "97.85.136.178"
 #define CONSTANTS_USE_COMMAND_LINE FALSE
-#define CONSTANTS_USE_CONFIG_FILE  FALSE
+#define CONSTANTS_USE_CONFIG_FILE  TRUE
 
 extern char* g_sServerHost;
 extern long g_nServerPort;
