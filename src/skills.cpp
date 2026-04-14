@@ -678,35 +678,62 @@ bool IsSkipped(DWORD addr, const int skipAddresses[], int skipCount) {
     return false;
 }
 
-void ReplaceValue(const char* AoB, int value, const int skipAddresses[], int skipCount) {
-    unsigned int address;
-    int searchIndex = 0;
-    std::vector<DWORD> foundAddresses;
-
-    while ((address = FindAoB(AoB, 0x00700000, 0x00AAAAAA, searchIndex)) != 0) {
-        foundAddresses.push_back((DWORD)address);
-        searchIndex++;
+static bool MatchPatternAt(const Pattern& pat, DWORD addr) {
+    for (size_t j = 0; j < pat.bytes.size(); j++) {
+        if (pat.mask[j] && *(BYTE*)(addr + j) != pat.bytes[j])
+            return false;
     }
+    return true;
+}
 
-    for (DWORD addr : foundAddresses) {
-        if (!IsSkipped(addr, skipAddresses, skipCount)) {
-            Patch4(addr, value);
-        }
+void ReplaceValue(const char* AoB, int value, const int skipAddresses[], int skipCount) {
+    Pattern pat = ParsePattern(AoB);
+    if (pat.bytes.empty())
+        return;
+
+    const DWORD start = 0x00700000;
+    const DWORD end = 0x00AAAAAA;
+    if (pat.bytes.size() >= end - start)
+        return;
+
+    const DWORD last = end - (DWORD)pat.bytes.size();
+    for (DWORD i = start; i < last; i++) {
+        if (MatchPatternAt(pat, i) && !IsSkipped(i, skipAddresses, skipCount))
+            Patch4(i, value);
     }
 }
 
 void ReplaceValueSimple(const char* AoB, int value) {
-    unsigned int address;
-    int searchIndex = 0;
-    std::vector<DWORD> foundAddresses;
+    ReplaceValue(AoB, value, nullptr, 0);
+}
 
-    while ((address = FindAoB(AoB, 0x00700000, 0x00AAAAAA, searchIndex)) != 0) {
-        foundAddresses.push_back((DWORD)address);
-        searchIndex++;
+struct ReplaceEntry {
+    const char* aob;
+    int value;
+    const int* skipAddresses;
+    int skipCount;
+};
+
+void ReplaceValueBatch(const ReplaceEntry* entries, int count, DWORD start, DWORD end) {
+    std::vector<Pattern> patterns;
+    patterns.reserve(count);
+    size_t maxLen = 0;
+    for (int k = 0; k < count; k++) {
+        patterns.push_back(ParsePattern(entries[k].aob));
+        if (patterns.back().bytes.size() > maxLen)
+            maxLen = patterns.back().bytes.size();
     }
+    if (maxLen == 0 || maxLen >= end - start)
+        return;
 
-    for (DWORD addr : foundAddresses) {
-        Patch4(addr, value);
+    const DWORD last = end - (DWORD)maxLen;
+    for (DWORD i = start; i < last; i++) {
+        for (int k = 0; k < count; k++) {
+            if (MatchPatternAt(patterns[k], i) &&
+                !IsSkipped(i, entries[k].skipAddresses, entries[k].skipCount)) {
+                Patch4(i, entries[k].value);
+            }
+        }
     }
 }
 
@@ -730,32 +757,23 @@ void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCoun
 }
 
 
+static const ReplaceEntry kCZakEntries[] = {
+    {"00 47 86 00", 88, nullptr, 0}, {"01 47 86 00", 88, nullptr, 0},
+    {"02 47 86 00", 88, nullptr, 0}, {"03 47 86 00", 88, nullptr, 0},
+    {"04 47 86 00", 88, nullptr, 0}, {"05 47 86 00", 88, nullptr, 0},
+    {"06 47 86 00", 88, nullptr, 0}, {"07 47 86 00", 88, nullptr, 0},
+    {"08 47 86 00", 88, nullptr, 0}, {"09 47 86 00", 88, nullptr, 0},
+    {"0A 47 86 00", 88, nullptr, 0},
+};
+
 void fixCZak() {
-    ReplaceValue("00 47 86 00", 88, 0, 0);
-    ReplaceValue("01 47 86 00", 88, 0, 0);
-    ReplaceValue("02 47 86 00", 88, 0, 0);
-    ReplaceValue("03 47 86 00", 88, 0, 0);
-    ReplaceValue("04 47 86 00", 88, 0, 0);
-    ReplaceValue("05 47 86 00", 88, 0, 0);
-    ReplaceValue("06 47 86 00", 88, 0, 0);
-    ReplaceValue("07 47 86 00", 88, 0, 0);
-    ReplaceValue("08 47 86 00", 88, 0, 0);
-    ReplaceValue("09 47 86 00", 88, 0, 0);
-    ReplaceValue("0A 47 86 00", 88, 0, 0);
+    ReplaceValueBatch(kCZakEntries, sizeof(kCZakEntries) / sizeof(kCZakEntries[0]),
+                      0x00700000, 0x00AAAAAA);
 }
 
 void fixCHT() {
-    ReplaceValue("00 47 86 00", 88, 0, 0);
-    ReplaceValue("01 47 86 00", 88, 0, 0);
-    ReplaceValue("02 47 86 00", 88, 0, 0);
-    ReplaceValue("03 47 86 00", 88, 0, 0);
-    ReplaceValue("04 47 86 00", 88, 0, 0);
-    ReplaceValue("05 47 86 00", 88, 0, 0);
-    ReplaceValue("06 47 86 00", 88, 0, 0);
-    ReplaceValue("07 47 86 00", 88, 0, 0);
-    ReplaceValue("08 47 86 00", 88, 0, 0);
-    ReplaceValue("09 47 86 00", 88, 0, 0);
-    ReplaceValue("0A 47 86 00", 88, 0, 0);
+    ReplaceValueBatch(kCZakEntries, sizeof(kCZakEntries) / sizeof(kCZakEntries[0]),
+                      0x00700000, 0x00AAAAAA);
 }
 
 inline int skipArray[]{
@@ -766,14 +784,16 @@ inline int skipArray[]{
 };
 
 void skillHacks() {
-    // ReplaceValue("CA D5 4D 00", 1411006, skipArray, 4);
-    // ReplaceValue("EE 1A 11 00", 1411005, skipArray, 4);
-    // ReplaceValue("CB F9 41 01", 1411003, skipArray, 4);
-    // ReplaceValue("ED 23 4E 00", 1101016, skipArray, 4);
-    // ReplaceValue("5E 93 E6 00", 1201016, skipArray, 4); // spark
-    // ReplaceValue("4A 1C 23 00", 2201010, skipArray, 4);
+    static const ReplaceEntry kSkillEntries[] = {
+        {"ED 23 4E 00", 1101016, skipArray, 4},
+        {"5E 93 E6 00", 1201016, skipArray, 4}, // spark
+        {"4A 1C 23 00", 2201010, skipArray, 4},
+        {"30 FD 13 00", 1210010, skipArray, 4},
+
+    };
+    ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
+                      0x00700000, 0x00AAAAAA);
     Patch4(0x0094B4EC + 1, 1411003); // switch addy
-    // ReplaceValue("30 FD 13 00", 1210010, skipArray, 4); // elemental resistance
     Patch4(0x00765A61 + 1, 121); // skill root check
     Patch1(0x008C4077 + 2, 0x0);
     Patch1(0x008C407D, 0x0);
@@ -1624,7 +1644,6 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
     if (nSkillID == 1001007 || nSkillID == 3001013) {
         return 1000;
     }
-    // if (nSkillID == )
     return (get_cool_time(nSkillID));
 }
 
@@ -2167,7 +2186,7 @@ auto hook_bstr_t = (void(__thiscall*)(void*, const char*))0x00425ADD;
 
 void(__fastcall bstrt)(void* Level, void* blah, const char* a2) {
     using namespace std;
-    setMAD();
+     setMAD();
     int tMAD = topMAD;
     int bMAD = botMAD;
     int getMad = totmagic;
@@ -2333,11 +2352,15 @@ void AttachSkillEdits() {
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     CodeCave(please, 0x00791C41, 4);
     CodeCave(FlashJumpAll, 0x0096BF0B, 0);
-    // PatchNop(0x0096C073, 6);
+    PatchNop(0x0096C073, 6);
     CodeCave(DamCalc, madcalcjmpout, 1);
     skillHacks();
     changeMagicAttacks();
     AttachSkillOffsetMod();
+    // Instant FA
+    Patch1(0x0095795E, 0x83);
+    Patch1(0x0095795E + 1, 0xC0);
+    Patch1(0x0095795E + 2, 0x00);
 
 }
 
@@ -2777,14 +2800,12 @@ void AttachOtherHooks() {
     Patch1(0x0076511E, 0xEB);
     Patch1(0x009F7A9B + 1, 0);
 
-    CodeCave(DamCalc, madcalcjmpout, 1);
-
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
     ATTACH_HOOK(setInput, setInput_hook);
     ATTACH_HOOK(is_skill_need_master_level, masteryskill);
     ATTACH_HOOK(get_job_name_hook, get_job_name);
     ATTACH_HOOK(is_shoot_action, is_shoot_action_hook);
-
+    ATTACH_HOOK(get_cool_time, get_cool_time_t);
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
