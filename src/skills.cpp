@@ -68,6 +68,7 @@ bool immune = false;
 int myCharacterid = 0;
 bool firstLoad = true;
 bool AttackMove = false;
+int sparkID = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -780,13 +781,29 @@ inline int skipArray[]{
     0x0078E957 + 2,
 };
 
+void replaceSpark() {
+    if (sparkID > 0) {
+        return;
+    }
+    if (jobID < 200) {
+        sparkID = 1201016;
+    } else {
+        sparkID = 4111010;
+    }
+    static const ReplaceEntry kSkillEntries[] = {
+        {"5E 93 E6 00", sparkID, skipArray, 4},
+    };
+    ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
+                       0x00700000, 0x00AAAAAA);
+}
+
 void skillHacks() {
+
     static const ReplaceEntry kSkillEntries[] = {
         {"ED 23 4E 00", 1101016, skipArray, 4},
         {"5E 93 E6 00", 1201016, skipArray, 4}, // spark
         {"4A 1C 23 00", 2201010, skipArray, 4},
         {"30 FD 13 00", 1210010, skipArray, 4},
-
     };
     ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
                       0x00700000, 0x00AAAAAA);
