@@ -747,9 +747,6 @@ void FillBytes(const DWORD dwOriginAddress, const unsigned char ucValue, const i
 
 
 void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCount) {
-    // nNOPCount must be >= 5 to fit jmp (1 byte) + offset (4 bytes), or 0 to skip NOPing
-    if (nNOPCount > 0 && nNOPCount < 5)
-        return;
     if (nNOPCount)
         FillBytes(dwOriginAddress, 0x90, nNOPCount);
     Patch1(dwOriginAddress, 0xe9); // jmp instruction
@@ -2350,10 +2347,10 @@ void AttachSkillEdits() {
     ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
-    CodeCave(please, 0x00791C41, 4);
-    CodeCave(FlashJumpAll, 0x0096BF0B, 0);
+    CodeCave((void*)please, 0x00791C41, 4);
+    CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
-    CodeCave(DamCalc, madcalcjmpout, 1);
+    CodeCave((void*)DamCalc, 0x00791BAE, 1);
     skillHacks();
     changeMagicAttacks();
     AttachSkillOffsetMod();
