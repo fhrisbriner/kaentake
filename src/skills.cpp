@@ -2839,6 +2839,20 @@ void AttachOtherHooks() {
     Patch1(0x009F7A9B + 1, 0);
 
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
+
+    //mwlbhook BYPASS
+    Patch1(0x0095385b, 0xEB);
+    Patch1(0x00955783, 0xEB);
+    Patch1(0x009509DC, 0xEB);
+    Patch1(0x00957F16, 0xEB);
+
+    Patch1(0x0095099A, 0xEB);
+    Patch1(0x0095F1A3, 0xEB);
+    Patch1(0x009571BB, 0xEB);
+    Patch1(0x009571F6, 0xEB);
+
+
+
     ATTACH_HOOK(setInput, setInput_hook);
     ATTACH_HOOK(is_skill_need_master_level, masteryskill);
     ATTACH_HOOK(get_job_name_hook, get_job_name);
