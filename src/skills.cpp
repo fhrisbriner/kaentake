@@ -781,6 +781,29 @@ inline int skipArray[]{
     0x0078E957 + 2,
 };
 
+
+auto isCommandSkill = reinterpret_cast<int(__cdecl*)(int)>(0x00764721);
+int isCommandSkill_hook(int a1) {
+    return 0;
+}
+
+auto requiredComboCount = reinterpret_cast<int(__cdecl*)(int)>(0x00766986);
+int requiredComboCount_hook(int skillID) {
+    if (skillID == 5411022) {
+        return 100;
+    }
+    return 0;
+}
+
+void comboStuff() {
+    Patch1(0x668c04 + 2,0x2D);
+    Patch4(0x77dfc4 + 2, 5410000);
+    Patch4(0x77e1b5 + 2, 5410000);
+    Patch4(0x77e0cf + 2, 5410000);
+    ATTACH_HOOK(isCommandSkill, isCommandSkill_hook);
+    ATTACH_HOOK(requiredComboCount, requiredComboCount_hook);
+}
+
 void replaceSpark() {
     if (sparkID > 0) {
         return;
@@ -823,7 +846,6 @@ void skillHacks() {
     Patch1(0x009584F6 + 2, 0x51);    // eavsion boost skill WA
     Patch1(0x00958523 + 2, 0x52);    // eavsion boost skill WA
 }
-
 
 bool isSkillIDMatched(int nSkillID) {
     static const int skillIDs[] = {
@@ -2375,6 +2397,8 @@ void AttachSkillEdits() {
     Patch1(0x0095795E, 0x83);
     Patch1(0x0095795E + 1, 0xC0);
     Patch1(0x0095795E + 2, 0x00);
+    //
+    comboStuff();
 
 }
 
