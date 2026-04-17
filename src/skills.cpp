@@ -1,5 +1,6 @@
 #include "hook.h"
 #include "WzLib/IWzArchive.h"
+#include "wvs/CUserLocal.h"
 #include "wvs/CWvsContext.h"
 #include "wvs/packet.h"
 
@@ -775,6 +776,8 @@ struct ReplaceEntry {
     int skipCount;
 };
 
+auto CUserLocal__SendSkillCancelRequest = (void(__thiscall*)(CUserLocal*, int))0x0096D873;
+
 void ReplaceValueBatch(const ReplaceEntry* entries, int count, DWORD start, DWORD end) {
     std::vector<Pattern> patterns;
     patterns.reserve(count);
@@ -864,7 +867,7 @@ void comboStuff() {
     Patch4(0x0077dfc4 + 2, 5410000);
     Patch4(0x0077e1b5 + 2, 5410000);
     Patch4(0x0077e0cf + 2, 5410000);
-    PatchNop(0x00668BFE, 2);
+    // PatchNop(0x00668BFE, 2);
     PatchNop(0x00668C02, 2);
     PatchNop(0x00668C07, 2);
     PatchNop(0x00668C0D, 2);
@@ -1595,9 +1598,9 @@ void moveOffsets(int skillID) {
 bool flying = false;
 
 
-auto pDoActiveSkill = (int(__thiscall*)(void*, int, int, int))0x00966F7A;
+auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
-int(__fastcall CUserLocal__DoActiveSkill_Hook)(void* _This, void* edx, int nSkillID, unsigned int nScanCode,
+int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
         int pnConsumeCheck) {
             setMAD();
     if (isCopyCatSkill(nSkillID)) {
@@ -1626,9 +1629,11 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(void* _This, void* edx, int nSkil
         Patch4(0x00952F20 + 3, 5411021);
     }
             DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
-    if (nSkillID == 5411022 && getCurrentComboCount() < 100) {
-
-        return 0;
+    if (nSkillID == 5411022)  {
+        if (getCurrentComboCount() < 100) {
+            return 0;
+        }
+        CUserLocal__SendSkillCancelRequest(_This, 5410000);
     }
     moveOffsets(nSkillID);
     if (nSkillID == 3001013) {
@@ -2044,36 +2049,15 @@ auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))
 int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
     int nWeaponDegree;
     switch (get_weapon_type()) {
-    case 30:
-    case 45:
+    case 32:
+    case 37:
         nWeaponDegree = 4;
         break;
-    case 31:
-        nWeaponDegree = 5;
-        break;
-    case 41:
-    case 43:
+    case 38:
         nWeaponDegree = 7;
         break;
-    case 42:
-        nWeaponDegree = 8;
-        break;
-    case 49:
-        nWeaponDegree = 3;
-        break;
-    case 38:
-    case 46:
-        nWeaponDegree = 10;
-        break;
-    case 33:
-    case 37:
-    case 44:
-    case 18:
-    case 47:
-        nWeaponDegree = 2;
-        break;
     default:
-        nWeaponDegree = 6;
+        nWeaponDegree = a3;
         break;
     }
     return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
@@ -2092,36 +2076,15 @@ void __fastcall ShowSkillEffect(
         tagPOINT* pPtOffset) {
     int nWeaponDegree = 4;
     switch (get_weapon_type()) {
-    case 30:
-    case 45:
+    case 32:
+    case 37:
         nWeaponDegree = 4;
         break;
-    case 31:
-        nWeaponDegree = 5;
-        break;
-    case 41:
-    case 43:
+    case 38:
         nWeaponDegree = 7;
         break;
-    case 42:
-        nWeaponDegree = 8;
-        break;
-    case 49:
-        nWeaponDegree = 3;
-        break;
-    case 38:
-    case 46:
-        nWeaponDegree = 10;
-        break;
-    case 33:
-    case 37:
-    case 44:
-    case 18:
-    case 47:
-        nWeaponDegree = 2;
-        break;
     default:
-        nWeaponDegree = 6;
+        nWeaponDegree = nActionSpeed;
         break;
     }
     return ShowSkillEffect_hook(_this, pSkill, nSLV, nWeaponDegree, bLeft, nLast, pPtOffset);
@@ -2327,7 +2290,6 @@ int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
     return _is_attack_area_set_by_data(nSkillID);
 }
 
-
 void AttachSkillEdits() {
     // ATTACH_HOOK(MesoFormula, mesoFormulaHook);
     ATTACH_HOOK(getPAD, getPAD_hook);
@@ -2353,7 +2315,9 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     // ATTACH_HOOK(jobCode, jobCode_hook);
-    // ATTACH_HOOK(meso_bag_handle, siegeModePacket);
+    ATTACH_HOOK(meso_bag_handle, siegeModePacket);
+    ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);

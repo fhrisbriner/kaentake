@@ -21,6 +21,7 @@ add_library(injector SHARED
         mapfadeobject.h
         ztl/zmap.h
         wvs/CWvsContext.h
+        wvs/CUserLocal.h
 )
 
 target_precompile_headers(injector PRIVATE pch.h)

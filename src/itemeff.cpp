@@ -13,6 +13,7 @@ class CUser {
 public:
     MEMBER_AT(CAvatar, AVATAR_OFFSET, m_CAvatar)
 
+
     inline int LoadLayer(Ztl_bstr_t bsUOL, int bLeft, USERLAYER& l, int* pnRepeatStartIndex) {
         return reinterpret_cast<int(__thiscall*)(CUser*, Ztl_bstr_t, int, USERLAYER&, int*)>(0x00941417)(this, bsUOL, bLeft, l, pnRepeatStartIndex);
     }
