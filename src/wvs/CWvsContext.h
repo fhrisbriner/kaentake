@@ -26,6 +26,7 @@ class SecondaryStat {
 public:
     MEMBER_AT(ZtlSecure<int>, 0x60, m_magic)
     MEMBER_AT(ZtlSecure<int>, 0x6C, m_bonusMagic)
+    MEMBER_AT(ZtlSecure<int>, 0x15C, m_speed)
 };
 
 class CWvsContext : public TSingleton<CWvsContext, 0x00BE7918> {

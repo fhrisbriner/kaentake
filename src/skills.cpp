@@ -38,9 +38,9 @@ int tb = 0;
 int dex = 0;
 int str = 0;
 int __int = 0;
-int speed = 100;
 int luk = 0;
 int pirateCrit;
+int speed = 100;
 int critSkillID = 0;
 int combat1 = 0x0096DABE;
 int combat2 = 0x0096DACE;
@@ -72,6 +72,56 @@ int sparkID = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
+
+int pleasejmpout = 0x00791C6C;
+double int_multiplier = 4.2;
+double Hundred = 100;
+int topMAD = 0;
+int botMAD = 0;
+int totmagic = 0;
+int pad = 0;
+double clMultiplier = 1.25;
+
+int get_weapon_type() {
+    int localplayer = *reinterpret_cast<uintptr_t*>(0x00BEBF98);
+
+    if (localplayer == 0) {
+        return 0;
+    }
+
+    int weapon = *reinterpret_cast<uintptr_t*>(localplayer + 0x4EC);
+
+    return (weapon / 10000) % 100;
+}
+
+void setMAD() {
+    switch (get_weapon_type()) {
+    case 32:
+        int_multiplier = 4.2;
+    case 37:
+        int_multiplier = 4.0;
+        break;
+    case 38:
+        int_multiplier = 4.6;
+        break;
+    default:
+        int_multiplier = 1.0;
+        break;
+    }
+
+    int int_ = CWvsContext::GetInstance()->get_m_basicStat().nINT.Fuse();
+    int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
+    int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    int effectiveMagic = (magic + bonusMagic) - int_;
+    topMAD = (int_ * int_multiplier * effectiveMagic) / 100;
+    totmagic = effectiveMagic;
+    // Log("%7d, %7d", effectiveMagic, totmagic);
+    if (mastery > 0) {
+        botMAD = topMAD * (0.05 * mastery + 0.1);
+    } else {
+        botMAD = topMAD * 0.1;
+    }
+}
 
 void __declspec(naked) doActiveSkills() {
     __asm {
@@ -997,18 +1047,6 @@ void CInPacket_Decode2(CInPacket* pPacket, void* edx) {
 }
 
 
-int get_weapon_type() {
-    int localplayer = *reinterpret_cast<uintptr_t*>(0x00BEBF98);
-
-    if (localplayer == 0) {
-        return 0;
-    }
-
-    int weapon = *reinterpret_cast<uintptr_t*>(localplayer + 0x4EC);
-
-    return (weapon / 10000) % 100;
-}
-
 auto CUIStatusBar__ChatLogAdd = (void*(__thiscall*)(int, const char*, int, int, int, void*))0x008DB070;
 
 bool isCorrectWeapon(int nSkillID) {
@@ -1099,14 +1137,6 @@ bool isCorrectWeapon(int nSkillID) {
         }
     }
     return false;
-}
-
-double rope = 0.0;
-
-void ropeFormula() {
-    rope = 3.0 * (speed / 100.0);
-    Patch4(0x009CC6F9 + 2, 0x00C1CF80); // switch addy
-    WriteDouble(0x00C1CF80, rope);      // Addy speed control
 }
 
 void doSpearPA() {
@@ -1569,6 +1599,7 @@ auto pDoActiveSkill = (int(__thiscall*)(void*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(void* _This, void* edx, int nSkillID, unsigned int nScanCode,
         int pnConsumeCheck) {
+            setMAD();
     if (isCopyCatSkill(nSkillID)) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
@@ -1976,46 +2007,6 @@ void redoMagic() {
     random_number = dist(rng);
 }
 
-int pleasejmpout = 0x00791C6C;
-double int_multiplier = 4.2;
-double Hundred = 100;
-int topMAD = 0;
-int botMAD = 0;
-int totmagic = 0;
-int pad = 0;
-double clMultiplier = 1.25;
-
-void setMAD() {
-    switch (get_weapon_type()) {
-    case 32:
-        int_multiplier = 4.2;
-    case 37:
-        int_multiplier = 4.0;
-        break;
-    case 38:
-        int_multiplier = 4.6;
-        break;
-    default:
-        int_multiplier = 1.0;
-        break;
-    }
-
-    int int_ = CWvsContext::GetInstance()->get_m_basicStat().nINT.Fuse();
-    int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
-    int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
-    int effectiveMagic = (magic + bonusMagic) - int_;
-    topMAD = (int_ * int_multiplier * effectiveMagic) / 100;
-    totmagic = effectiveMagic;
-    // Log("%7d, %7d", effectiveMagic, totmagic);
-    printf("Mastery: %d\n", mastery);
-    if (mastery > 0) {
-        botMAD = topMAD * (0.05 * mastery + 0.1);
-    } else {
-        botMAD = topMAD * 0.1;
-    }
-}
-
-
 void _declspec(naked) please() {
     _asm {
             fild topMAD
@@ -2182,15 +2173,27 @@ int __fastcall getPAD_hook(void* thisptr, void* edx, int a2, int a3) {
     return getPAD(thisptr, a2, a3);
 }
 
+double ropebase = 3.0;
+
+void ropeFormula() {
+    double rope;
+    speed = 100  + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
+    rope = 3.0 * (speed / 100.0);
+    if (rope < 3.0) {
+        rope = 3.0;
+    }
+    if (ropebase != rope) {
+        ropebase = rope;
+        Patch4(0x009CC6F9 + 2, 0x00C1CF80); // switch addy
+        WriteDouble(0x00C1CF80, rope);      // Addy speed control
+    }
+}
+
+
 auto getSpeed = (int(__thiscall*)(void*))0x008C457C;
 
 int __fastcall getSpeed_hook(void* thisptr, void* edx) {
-    if (speed != getSpeed(thisptr)) {
-        DEBUG_MESSAGE("Speed changed from %d to %d", speed, getSpeed(thisptr));
-        speed = getSpeed(thisptr);
-        ropeFormula();
-    }
-    speed = getSpeed(thisptr);
+    ropeFormula();
     return getSpeed(thisptr);
 }
 
@@ -2682,6 +2685,12 @@ static void __fastcall DrawItemTitleHook(CUIToolTip* pThis, void* edx, int y, co
     return CUIToolTip__DrawItemTitle(pThis, y, sText, bEquip);
 }
 
+auto DrawStat = (int(__thiscall*)(void*, void*))0x008C59FF;
+int(__fastcall DrawStat_t)(void* thisptr, void* edx, void* pParam) {
+    setMAD();
+    return DrawStat(thisptr, pParam);
+}
+
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
@@ -2810,6 +2819,7 @@ void AttachOtherHooks() {
     Patch1(0x009571BB, 0xEB);
     Patch1(0x009571F6, 0xEB);
 
+    ATTACH_HOOK(getSpeed, getSpeed_hook);
 
     ATTACH_HOOK(setInput, setInput_hook);
     ATTACH_HOOK(is_skill_need_master_level, masteryskill);
@@ -2819,6 +2829,7 @@ void AttachOtherHooks() {
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
+    ATTACH_HOOK(DrawStat, DrawStat_t);
 }
 
 
