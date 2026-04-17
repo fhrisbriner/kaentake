@@ -2326,9 +2326,9 @@ void AttachSkillEdits() {
     changeMagicAttacks();
     AttachSkillOffsetMod();
     // // Instant FA
-     Patch1(0x0095795E, 0x83);
-     Patch1(0x0095795E + 1, 0xC0);
-     Patch1(0x0095795E + 2, 0x00);
+    Patch1(0x0095795E, 0x83);
+    Patch1(0x0095795E + 1, 0xC0);
+    Patch1(0x0095795E + 2, 0x00);
 
     comboStuff();
 }
@@ -2782,6 +2782,9 @@ void AttachOtherHooks() {
     Patch1(0x0095F1A3, 0xEB);
     Patch1(0x009571BB, 0xEB);
     Patch1(0x009571F6, 0xEB);
+    //sp requirements stuff
+    Patch1(0x8AD203 + 3, 0xA9);
+    Patch1(0x8AD158 + 3, 0x31);
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
