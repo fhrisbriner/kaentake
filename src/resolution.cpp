@@ -13,6 +13,7 @@
 #include "wvs/rtti.h"
 #include "wvs/util.h"
 #include "ztl/ztl.h"
+#include "wvs/CWvsContext.h"
 
 #include <windows.h>
 #include <strsafe.h>
@@ -486,12 +487,6 @@ int CUIStatusBar::GetShortCutIndexByPos_hook(int x, int y) {
     y = y + CWndMan::ms_pOrgStatusBar->y - CWndMan::ms_pOrgQuickSlot->y;
     return CUIStatusBar::GetShortCutIndexByPos(this, x, y);
 }
-
-
-class CWvsContext : public TSingleton<CWvsContext, 0x00BE7918> {
-public:
-    MEMBER_AT(CTemporaryStatView, 0x2EA8, m_temporaryStatView)
-};
 
 class CWvsPhysicalSpace2D : public TSingleton<CWvsPhysicalSpace2D, 0x00BEBFA0> {
 public:

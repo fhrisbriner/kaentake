@@ -6,6 +6,26 @@
 #include <psapi.h>
 
 
+uintptr_t GetImageDelta() {
+    static const uintptr_t delta = []() -> uintptr_t {
+        HMODULE hModule = GetModuleHandleA(nullptr);
+        if (!hModule) return 0;
+        auto pDos = reinterpret_cast<PIMAGE_DOS_HEADER>(hModule);
+        if (pDos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+        auto pNt = reinterpret_cast<PIMAGE_NT_HEADERS>(
+            reinterpret_cast<uintptr_t>(hModule) + pDos->e_lfanew);
+        if (pNt->Signature != IMAGE_NT_SIGNATURE) return 0;
+        uintptr_t uActual = reinterpret_cast<uintptr_t>(hModule);
+        uintptr_t uDefault = static_cast<uintptr_t>(pNt->OptionalHeader.ImageBase);
+        uintptr_t uDelta = uActual - uDefault;
+        LogInfo("Image base: 0x%08X (default 0x%08X), delta 0x%08X",
+            uActual, uDefault, uDelta);
+        return uDelta;
+    }();
+    return delta;
+}
+
+
 namespace {
 
 bool HexCharToByte(char c, unsigned char* b) {

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "hook.h"
+#include "debug.h"
 #include "wvs/tempstat.h"
 #include "wvs/statusbar.h"
 #include "wvs/util.h"
@@ -10,6 +11,11 @@ static IWzPropertyPtr g_pPropMinute;
 static IWzPropertyPtr g_pPropSecond;
 
 void DrawDuration(IWzCanvasPtr pCanvas, int nSeconds, int nX = 0, int nY = 0) {
+    static bool bLoggedFirstCall = false;
+    if (!bLoggedFirstCall) {
+        bLoggedFirstCall = true;
+        LogInfo("DrawDuration: first call, rebased drawnumber target = 0x%08X", REBASE(0x00988345));
+    }
     if (!g_pPropMinute) {
         g_pPropMinute = get_rm()->GetObjectA(L"UI/UIWindowEx.img/SkillCooldownNumber/0").GetUnknown();
     }
@@ -33,13 +39,18 @@ void DrawDuration(IWzCanvasPtr pCanvas, int nSeconds, int nX = 0, int nY = 0) {
     }
     if (nSeconds > 0 && nValue < 999) {
         // draw_number_by_image(pCanvas, nOffsetX, nOffsetY, nValue, pBase, 0);
-        reinterpret_cast<int(__cdecl*)(IWzCanvasPtr, int, int, int, IWzPropertyPtr, int)>(0x00988345)(pCanvas, nX + nOffsetX, nY + nOffsetY, nValue, pBase, 0);
+        reinterpret_cast<int(__cdecl*)(IWzCanvasPtr, int, int, int, IWzPropertyPtr, int)>(REBASE(0x00988345))(pCanvas, nX + nOffsetX, nY + nOffsetY, nValue, pBase, 0);
     }
 }
 
 
 static auto TEMPORARY_STAT__UpdateShadowIndex = 0x007B44F4;
 void __fastcall TEMPORARY_STAT__UpdateShadowIndex_hook(CTemporaryStatView::TEMPORARY_STAT* pThis, void* _EDX) {
+    static bool bLoggedFirstCall = false;
+    if (!bLoggedFirstCall) {
+        bLoggedFirstCall = true;
+        LogInfo("TEMPORARY_STAT__UpdateShadowIndex_hook: first call, pThis=0x%p", pThis);
+    }
     if (pThis->bNoShadow) {
         return;
     }
@@ -80,6 +91,12 @@ struct CUIStatusBar__DrawSkillCooltime_stack {
 };
 
 void __stdcall CUIStatusBar__DrawSkillCooltime_helper(CUIStatusBar__DrawSkillCooltime_stack* p, int nSeconds, int nIndex) {
+    static bool bLoggedFirstCall = false;
+    if (!bLoggedFirstCall) {
+        bLoggedFirstCall = true;
+        LogInfo("CUIStatusBar__DrawSkillCooltime_helper: first call, nSeconds=%d nIndex=%d pCanvas=0x%p",
+            nSeconds, nIndex, p ? p->pCanvas : nullptr);
+    }
     // hijack pnLastIndex (m_aFuncKeyMappedSkillCooltime[i]) to store nSeconds
     if (nIndex < 0 || *p->pnLastIndex == nSeconds) {
         return;
@@ -89,7 +106,7 @@ void __stdcall CUIStatusBar__DrawSkillCooltime_helper(CUIStatusBar__DrawSkillCoo
     DrawDuration(p->pCanvas, nSeconds, p->nCanvasX, p->nCanvasY);
 }
 
-static auto CUIStatusBar__DrawSkillCooltime_ret = 0x008E0990;
+static uintptr_t CUIStatusBar__DrawSkillCooltime_ret = 0x008E0990;
 void __declspec(naked) CUIStatusBar__DrawSkillCooltime_hook() {
     __asm {
         push    esi                                     ; computed shadow index
@@ -103,6 +120,14 @@ void __declspec(naked) CUIStatusBar__DrawSkillCooltime_hook() {
 
 
 void AttachTempStatMod() {
+    LogInfo("AttachTempStatMod: begin (delta=0x%08X)", GetImageDelta());
+    CUIStatusBar__DrawSkillCooltime_ret = REBASE(CUIStatusBar__DrawSkillCooltime_ret);
+    LogInfo("AttachTempStatMod: rebased _ret = 0x%08X", CUIStatusBar__DrawSkillCooltime_ret);
+    LogInfo("AttachTempStatMod: attaching UpdateShadowIndex hook @ 0x%08X (rebased 0x%08X)",
+        TEMPORARY_STAT__UpdateShadowIndex, REBASE(TEMPORARY_STAT__UpdateShadowIndex));
     ATTACH_HOOK(TEMPORARY_STAT__UpdateShadowIndex, TEMPORARY_STAT__UpdateShadowIndex_hook);
+    LogInfo("AttachTempStatMod: hook attached, patching DrawSkillCooltime jmp @ rebased 0x%08X",
+        REBASE(0x008E085B));
     PatchJmp(0x008E085B, &CUIStatusBar__DrawSkillCooltime_hook); // CUIStatusBar::DrawSkillCooltime
+    LogInfo("AttachTempStatMod: done");
 }

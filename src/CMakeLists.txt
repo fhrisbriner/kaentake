@@ -17,6 +17,10 @@ add_library(injector SHARED
         hook.cpp
         skills.cpp
         packet.cpp
+        mapfadeobject.cpp
+        mapfadeobject.h
+        ztl/zmap.h
+        wvs/CWvsContext.h
 )
 
 target_precompile_headers(injector PRIVATE pch.h)

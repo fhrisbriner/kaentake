@@ -1,13 +1,24 @@
 #pragma once
 #include "debug.h"
+#include <cstdint>
 #include <type_traits>
+
+uintptr_t GetImageDelta();
+
+inline uintptr_t Rebase(uintptr_t addr) {
+    return addr + GetImageDelta();
+}
+
+#define REBASE(ADDR) Rebase(static_cast<uintptr_t>(ADDR))
 
 #ifdef _DEBUG
 #define ATTACH_HOOK(TARGET, DETOUR) \
-    AttachHook(reinterpret_cast<void**>(&TARGET), CastHook(&DETOUR)) ? true : (ErrorMessage("Failed to attach detour function \"%s\" at target address : 0x%08X.", #DETOUR, TARGET), false)
+    ((TARGET) = (decltype(TARGET))(Rebase((uintptr_t)(TARGET))), \
+     AttachHook(reinterpret_cast<void**>(&TARGET), CastHook(&DETOUR)) ? true : (ErrorMessage("Failed to attach detour function \"%s\" at target address : 0x%08X.", #DETOUR, TARGET), false))
 #else
 #define ATTACH_HOOK(TARGET, DETOUR) \
-    AttachHook(reinterpret_cast<void**>(&TARGET), CastHook(&DETOUR))
+    ((TARGET) = (decltype(TARGET))(Rebase((uintptr_t)(TARGET))), \
+     AttachHook(reinterpret_cast<void**>(&TARGET), CastHook(&DETOUR)))
 #endif
 
 #define MEMBER_AT(T, OFFSET, NAME) \
@@ -32,7 +43,7 @@
     }
 
 #define MEMBER_HOOK(T, ADDRESS, NAME, ...) \
-    inline static auto NAME = reinterpret_cast<T(__thiscall*)(void*, __VA_ARGS__)>(ADDRESS); \
+    inline static auto NAME = reinterpret_cast<T(__thiscall*)(void*, __VA_ARGS__)>(Rebase(static_cast<uintptr_t>(ADDRESS))); \
     T NAME##_hook(__VA_ARGS__);
 
 #define TO_UINTPTR(VALUE) ((uintptr_t)(VALUE))
@@ -59,25 +70,36 @@ void AttachSkillEdits();
 void AttachOtherHooks();
 void InitExpOverride();
 void PacketHooks();
+void AttachMapObjectFade();
 
+
+#define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
 
 inline void AttachClientHooks() {
-    //AllocConsole();
-    AttachClientBypass();
+    AllocConsole();
+    FILE* fDummy;
+    freopen_s(&fDummy, "CONOUT$", "w", stdout);
+    freopen_s(&fDummy, "CONOUT$", "w", stderr);
+    freopen_s(&fDummy, "CONIN$", "r", stdin);
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    LogInfo("AttachClientHooks: begin, image delta=0x%08X", GetImageDelta());
+    LOGGED_STEP(AttachClientBypass());
     //AttachClientInlink();
-    AttachStringPoolMod();
-    AttachResManMod();
-    AttachAvatarDataMod();
-    AttachItemEffectMod();
-    AttachResolutionMod();
-    AttachMobHpTagMod();
-    AttachToolTipMod();
-    AttachIconIconMod();
-    AttachTempStatMod();
-    AttachSkillEdits();
-    AttachOtherHooks();
-    InitExpOverride();
-    PacketHooks();
+    LOGGED_STEP(AttachStringPoolMod());
+    LOGGED_STEP(AttachResManMod());
+    LOGGED_STEP(AttachAvatarDataMod());
+    LOGGED_STEP(AttachItemEffectMod());
+    LOGGED_STEP(AttachResolutionMod());
+    LOGGED_STEP(AttachMobHpTagMod());
+    LOGGED_STEP(AttachToolTipMod());
+    LOGGED_STEP(AttachIconIconMod());
+    LOGGED_STEP(AttachTempStatMod());
+    LOGGED_STEP(AttachSkillEdits());
+    LOGGED_STEP(AttachOtherHooks());
+    LOGGED_STEP(InitExpOverride());
+    LOGGED_STEP(PacketHooks());
+    LOGGED_STEP(AttachMapObjectFade());
+    LogInfo("AttachClientHooks: all done");
 }
 
 
@@ -106,17 +128,17 @@ void PatchAllByPattern(void* pStart, void* pEnd, const char* sPattern, void* pVa
 
 template <typename T>
 void Patch1(T pAddress, unsigned char uValue) {
-    PatchMemory(TO_PVOID(pAddress), &uValue, sizeof(uValue));
+    PatchMemory(TO_PVOID(Rebase(TO_UINTPTR(pAddress))), &uValue, sizeof(uValue));
 }
 
 template <typename T>
 void Patch4(T pAddress, unsigned int uValue) {
-    PatchMemory(TO_PVOID(pAddress), &uValue, sizeof(uValue));
+    PatchMemory(TO_PVOID(Rebase(TO_UINTPTR(pAddress))), &uValue, sizeof(uValue));
 }
 
 template <typename T>
 void PatchStr(T pAddress, const char* sValue) {
-    PatchMemory(TO_PVOID(pAddress), TO_PVOID(sValue), strlen(sValue));
+    PatchMemory(TO_PVOID(Rebase(TO_UINTPTR(pAddress))), TO_PVOID(sValue), strlen(sValue));
 }
 
 template <typename T>
@@ -124,14 +146,17 @@ void PatchNop(T pAddress, size_t uCount) {
     void* pValue = malloc(uCount);
     if (!pValue) return;
     memset(pValue, 0x90, uCount);
-    PatchMemory(TO_PVOID(pAddress), pValue, uCount);
+    PatchMemory(TO_PVOID(Rebase(TO_UINTPTR(pAddress))), pValue, uCount);
     free(pValue);
 }
 
 template <typename T, typename U>
 void PatchJmp(T pAddress, U pDestination) {
-    Patch1(pAddress, 0xE9);
-    Patch4(pAddress + 1, TO_UINTPTR(pDestination) - TO_UINTPTR(pAddress) - 5);
+    uintptr_t uAddress = Rebase(TO_UINTPTR(pAddress));
+    unsigned char bOp = 0xE9;
+    unsigned int uRel = TO_UINTPTR(pDestination) - uAddress - 5;
+    PatchMemory(TO_PVOID(uAddress), &bOp, sizeof(bOp));
+    PatchMemory(TO_PVOID(uAddress + 1), &uRel, sizeof(uRel));
 }
 
 template <typename T, typename U>
@@ -140,14 +165,23 @@ void PatchCall(T pAddress, U pDestination, size_t uSize = 5) {
         ErrorMessage("Cannot PatchCall at 0x%08X with uSize = %d", TO_UINTPTR(pAddress), uSize);
         return;
     }
-    Patch1(pAddress, 0xE8);
-    Patch4(pAddress + 1, TO_UINTPTR(pDestination) - TO_UINTPTR(pAddress) - 5);
+    uintptr_t uAddress = Rebase(TO_UINTPTR(pAddress));
+    unsigned char bOp = 0xE8;
+    unsigned int uRel = TO_UINTPTR(pDestination) - uAddress - 5;
+    PatchMemory(TO_PVOID(uAddress), &bOp, sizeof(bOp));
+    PatchMemory(TO_PVOID(uAddress + 1), &uRel, sizeof(uRel));
     if (uSize > 5) {
-        PatchNop(pAddress + 5, uSize - 5);
+        void* pNop = malloc(uSize - 5);
+        if (pNop) {
+            memset(pNop, 0x90, uSize - 5);
+            PatchMemory(TO_PVOID(uAddress + 5), pNop, uSize - 5);
+            free(pNop);
+        }
     }
 }
 
 template <typename T>
 void PatchRetZero(T pAddress) {
-    PatchStr(pAddress, "\x33\xC0\xC3");
+    const char sBytes[3] = { '\x33', '\xC0', '\xC3' };
+    PatchMemory(TO_PVOID(Rebase(TO_UINTPTR(pAddress))), TO_PVOID(sBytes), sizeof(sBytes));
 }

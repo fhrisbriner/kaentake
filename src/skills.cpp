@@ -1,5 +1,6 @@
 #include "hook.h"
 #include "WzLib/IWzArchive.h"
+#include "wvs/CWvsContext.h"
 #include "wvs/packet.h"
 
 #include <chrono>
@@ -61,7 +62,6 @@ DWORD newformulaaddr = 0x00BED58C;
 DWORD taxeaddr = 0x00BED90C;
 DWORD oaxeaddr = 0x00BED984;
 DWORD ohsword = 0x00AFE858;
-int jobID = 0;
 int LastMapID = 777777777;
 int MapID = 0;
 bool immune = false;
@@ -450,7 +450,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
-            // ninja
+                // ninja
             mov eax, 4411006
             cmp esi, eax
             je shoot
@@ -607,6 +607,16 @@ struct Pattern {
     std::vector<bool> mask;
 };
 
+int getCurrentComboCount() {
+    int localplayer = *reinterpret_cast<uintptr_t*>(0x00BEBF98);
+    if (localplayer == 0) {
+        return 0;
+    }
+
+    int comboCount = *reinterpret_cast<uintptr_t*>(localplayer + 0x3220);
+    return comboCount;
+}
+
 Pattern ParsePattern(const char* pattern) {
     Pattern pat;
     std::stringstream ss(pattern);
@@ -731,7 +741,7 @@ void ReplaceValueBatch(const ReplaceEntry* entries, int count, DWORD start, DWOR
     for (DWORD i = start; i < last; i++) {
         for (int k = 0; k < count; k++) {
             if (MatchPatternAt(patterns[k], i) &&
-                !IsSkipped(i, entries[k].skipAddresses, entries[k].skipCount)) {
+                    !IsSkipped(i, entries[k].skipAddresses, entries[k].skipCount)) {
                 Patch4(i, entries[k].value);
             }
         }
@@ -756,22 +766,27 @@ void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCoun
 
 
 static const ReplaceEntry kCZakEntries[] = {
-    {"00 47 86 00", 88, nullptr, 0}, {"01 47 86 00", 88, nullptr, 0},
-    {"02 47 86 00", 88, nullptr, 0}, {"03 47 86 00", 88, nullptr, 0},
-    {"04 47 86 00", 88, nullptr, 0}, {"05 47 86 00", 88, nullptr, 0},
-    {"06 47 86 00", 88, nullptr, 0}, {"07 47 86 00", 88, nullptr, 0},
-    {"08 47 86 00", 88, nullptr, 0}, {"09 47 86 00", 88, nullptr, 0},
-    {"0A 47 86 00", 88, nullptr, 0},
+    { "00 47 86 00", 88, nullptr, 0 },
+    { "01 47 86 00", 88, nullptr, 0 },
+    { "02 47 86 00", 88, nullptr, 0 },
+    { "03 47 86 00", 88, nullptr, 0 },
+    { "04 47 86 00", 88, nullptr, 0 },
+    { "05 47 86 00", 88, nullptr, 0 },
+    { "06 47 86 00", 88, nullptr, 0 },
+    { "07 47 86 00", 88, nullptr, 0 },
+    { "08 47 86 00", 88, nullptr, 0 },
+    { "09 47 86 00", 88, nullptr, 0 },
+    { "0A 47 86 00", 88, nullptr, 0 },
 };
 
 void fixCZak() {
     ReplaceValueBatch(kCZakEntries, sizeof(kCZakEntries) / sizeof(kCZakEntries[0]),
-                      0x00700000, 0x00AAAAAA);
+            0x00700000, 0x00AAAAAA);
 }
 
 void fixCHT() {
     ReplaceValueBatch(kCZakEntries, sizeof(kCZakEntries) / sizeof(kCZakEntries[0]),
-                      0x00700000, 0x00AAAAAA);
+            0x00700000, 0x00AAAAAA);
 }
 
 inline int skipArray[]{
@@ -796,15 +811,24 @@ int requiredComboCount_hook(int skillID) {
 }
 
 void comboStuff() {
-    Patch1(0x668c04 + 2,0x2D);
-    Patch4(0x77dfc4 + 2, 5410000);
-    Patch4(0x77e1b5 + 2, 5410000);
-    Patch4(0x77e0cf + 2, 5410000);
+    Patch4(0x0077dfc4 + 2, 5410000);
+    Patch4(0x0077e1b5 + 2, 5410000);
+    Patch4(0x0077e0cf + 2, 5410000);
+    PatchNop(0x00668BFE, 2);
+    PatchNop(0x00668C02, 2);
+    PatchNop(0x00668C07, 2);
+    PatchNop(0x00668C0D, 2);
+    Patch4(0x0094bdc8 + 1, 7000);
+    Patch4(0x00960708 + 1, 7000);
+    Patch4(0x0096095B + 1, 7000);
+
+
     ATTACH_HOOK(isCommandSkill, isCommandSkill_hook);
     ATTACH_HOOK(requiredComboCount, requiredComboCount_hook);
 }
 
 void replaceSpark() {
+    int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (sparkID > 0) {
         return;
     }
@@ -814,24 +838,25 @@ void replaceSpark() {
         sparkID = 4111010;
     }
     static const ReplaceEntry kSkillEntries[] = {
-        {"5E 93 E6 00", sparkID, skipArray, 4},
+        { "5E 93 E6 00", sparkID, skipArray, 4 },
     };
     ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
-                       0x00700000, 0x00AAAAAA);
+            0x00700000, 0x00AAAAAA);
 }
 
 void skillHacks() {
 
-    static const ReplaceEntry kSkillEntries[] = {
-        {"ED 23 4E 00", 1101016, skipArray, 4},
-        {"5E 93 E6 00", 1201016, skipArray, 4}, // spark
-        {"4A 1C 23 00", 2201010, skipArray, 4},
-        {"30 FD 13 00", 1210010, skipArray, 4},
-    };
-    ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
-                      0x00700000, 0x00AAAAAA);
+    // static const ReplaceEntry kSkillEntries[] = {
+    //     { "ED 23 4E 00", 1101016, skipArray, 4 },
+    //     { "5E 93 E6 00", 1201016, skipArray, 4 }, // spark
+    //     { "4A 1C 23 00", 2201010, skipArray, 4 },
+    //     { "30 FD 13 00", 1210010, skipArray, 4 },
+    //     {}
+    // };
+    // ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
+    //         0x00700000, 0x00AAAAAA);
     Patch4(0x0094B4EC + 1, 1411003); // switch addy
-    Patch4(0x00765A61 + 1, 121); // skill root check
+    Patch4(0x00765A61 + 1, 121);     // skill root check
     Patch1(0x008C4077 + 2, 0x0);
     Patch1(0x008C407D, 0x0);
     Patch1(0x007AFDE1, 0x0);
@@ -1305,14 +1330,6 @@ const char* __cdecl get_job_name(int nJob) {
     }
 }
 
-
-auto jobCode = (int(__thiscall*)(void*))0x0095FFC3;
-
-int(__fastcall jobCode_hook)(void* _this) {
-    jobID = jobCode(_this);
-    return jobCode(_this);
-}
-
 auto isDarkSight_hook = (void*(__thiscall*)(void*))0x009581A9;
 
 void*(__fastcall isDarkSight)(void* _this) {
@@ -1428,7 +1445,6 @@ void AttachSkillOffsetMod() {
 }
 
 
-
 void changeMagicAttacks() {
     Patch4(0x00955D19 + 1, 2101008);
     Patch4(0x00955D24 + 1, 2101007);
@@ -1440,7 +1456,6 @@ void changeMagicAttacks() {
     Patch4(0x00955D66 + 1, 2511006);
     Patch4(0x00955D7C + 1, 2411012);
     Patch4(0x00955D87 + 1, 2111002);
-
 }
 
 
@@ -1474,6 +1489,7 @@ auto meso_bag_handle = (int(__thiscall*)(void*, CInPacket*))0x00959A47;
 
 int(__fastcall siegeModePacket)(void* _cuser, void* edx, CInPacket* a2) {
     DEBUG_MESSAGE("Packet Received.");
+    int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (CInPacket_Decode1Original(a2) == 0 && jobID <= 322) {
         siegeMode = false;
         return 0;
@@ -1562,6 +1578,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(void* _This, void* edx, int nSkil
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
+
     if (nSkillID == 4211015) {
         Patch4(0x00952F20 + 3, 4211015);
     }
@@ -1576,6 +1593,11 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(void* _This, void* edx, int nSkil
     }
     if (nSkillID == 5411021) {
         Patch4(0x00952F20 + 3, 5411021);
+    }
+            DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
+    if (nSkillID == 5411022 && getCurrentComboCount() < 100) {
+
+        return 0;
     }
     moveOffsets(nSkillID);
     if (nSkillID == 3001013) {
@@ -1625,6 +1647,7 @@ auto pGetSkillLevel = (int(__thiscall*)(int, void*, int, int))0x007616F6;
 
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
+    int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (i) {
         pGetSkillLevel(_this, charData, i, skillEntry);
         if (jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
@@ -1651,6 +1674,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         }
         if (jobID == 210 || jobID == 211 || jobID == 212 || jobID == 241 || jobID == 242) {
             mastery = pGetSkillLevel(_this, charData, 2100001, skillEntry);
+            DEBUG_MESSAGE("Mastery: %d", mastery);
         }
         if (jobID == 220 || jobID == 221 || jobID == 222 || jobID == 251 || jobID == 252) {
             mastery = pGetSkillLevel(_this, charData, 2200001, skillEntry);
@@ -1666,8 +1690,8 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         if (pGetSkillLevel(_this, charData, critSkillID, skillEntry) > 0) {
             Patch4(0x007650DB + 1, critSkillID);
         }
-        mesos = pGetSkillLevel(_this, charData, 4511006, skillEntry);
     }
+
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1952,9 +1976,6 @@ void redoMagic() {
     random_number = dist(rng);
 }
 
-int int_ = 0;
-int magic = 0;
-int bonusmagic = 0;
 int pleasejmpout = 0x00791C6C;
 double int_multiplier = 4.2;
 double Hundred = 100;
@@ -1979,11 +2000,14 @@ void setMAD() {
         break;
     }
 
-    int effectiveMagic = (magic + bonusmagic) - int_;
+    int int_ = CWvsContext::GetInstance()->get_m_basicStat().nINT.Fuse();
+    int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
+    int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    int effectiveMagic = (magic + bonusMagic) - int_;
     topMAD = (int_ * int_multiplier * effectiveMagic) / 100;
     totmagic = effectiveMagic;
     // Log("%7d, %7d", effectiveMagic, totmagic);
-
+    printf("Mastery: %d\n", mastery);
     if (mastery > 0) {
         botMAD = topMAD * (0.05 * mastery + 0.1);
     } else {
@@ -2136,31 +2160,6 @@ double __cdecl ztlfuse_double(int a1, int a2) {
     return val;
 }
 
-auto ztlSecureFuse_check = (unsigned int(__cdecl*)(int, int))0x00416563;
-
-unsigned int __cdecl ztlfuse(int a1, int a2) {
-    if ((int)_ReturnAddress() == 0x0078F719) {
-        luk = ztlSecureFuse_check(a1, a2);
-    }
-    if ((int)_ReturnAddress() == 0x0078F6FB) {
-        dex = ztlSecureFuse_check(a1, a2);
-    }
-    if ((int)_ReturnAddress() == 0x00791BC9) {
-        int_ = ztlSecureFuse_check(a1, a2);
-    }
-    if ((int)_ReturnAddress() == 0x008C36A4) {
-        magic = ztlSecureFuse_check(a1, a2);
-    }
-    if ((int)_ReturnAddress() == 0x00791650) {
-        magic = ztlSecureFuse_check(a1, a2);
-    }
-    if ((int)_ReturnAddress() == 0x0079165E) {
-        bonusmagic = ztlSecureFuse_check(a1, a2);
-    }
-    return ztlSecureFuse_check(a1, a2);
-}
-
-
 auto mastery_Calcs_Hook = (int(__cdecl*)(int, int, int, int, int, int))0x00764795;
 
 int __cdecl mCalc(int a1, int a2, int a3, int a4, int a5, int a6) {
@@ -2183,28 +2182,6 @@ int __fastcall getPAD_hook(void* thisptr, void* edx, int a2, int a3) {
     return getPAD(thisptr, a2, a3);
 }
 
-auto getLUK = (int(__thiscall*)(void*))0x004F19AF;
-
-int __fastcall getLUK_hook(void* thisptr) {
-    luk = getLUK(thisptr);
-    return getLUK(thisptr);
-}
-
-auto getINT = (int(__thiscall*)(void*))0x004F19A0;
-
-int __fastcall getINT_hook(void* thisptr) {
-    int_ = getINT(thisptr);
-    return getINT(thisptr);
-}
-
-auto getSTR = (int(__thiscall*)(void*))0x004F1982;
-auto getDEX = (int(__thiscall*)(void*))0x004F1991;
-
-int __fastcall getDEX_hook(void* thisptr) {
-    dex = getDEX(thisptr);
-    return getDEX(thisptr);
-}
-
 auto getSpeed = (int(__thiscall*)(void*))0x008C457C;
 
 int __fastcall getSpeed_hook(void* thisptr, void* edx) {
@@ -2222,7 +2199,6 @@ auto hook_bstr_t = (void(__thiscall*)(void*, const char*))0x00425ADD;
 
 void(__fastcall bstrt)(void* Level, void* blah, const char* a2) {
     using namespace std;
-     setMAD();
     int tMAD = topMAD;
     int bMAD = botMAD;
     int getMad = totmagic;
@@ -2234,7 +2210,21 @@ void(__fastcall bstrt)(void* Level, void* blah, const char* a2) {
     const char* sussychar = toMad.c_str();
     const char* weaponchar = padStr.c_str();
     if ((int)_ReturnAddress() == 0X008C35C9) {
-        a2 = sussychar;
+        int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+        bool isMage = (job >= 200 && job < 300);
+        setMAD();
+        if (isMage) {
+            a2 = magicchar;
+        } else {
+            a2 = weaponchar;
+        }
+    }
+    if ((int)_ReturnAddress() == 0X008C3400) {
+        int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+        bool isMage = (job >= 200 && job < 300);
+        if (isMage) {
+            a2 = sussychar;
+        }
     }
     return hook_bstr_t(Level, a2);
 }
@@ -2334,34 +2324,10 @@ int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
     return _is_attack_area_set_by_data(nSkillID);
 }
 
-auto mesoFormulaHook = (signed int(__thiscall*)(void*, void*, void*, void*, void*, int*, unsigned int, int*))0x00791FBC;
-
-int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, void* bs, void* ss, void* ms, int* anMoneyAmount,
-        unsigned int dwDropFlag, int* aDamage) {
-    int v26 = 0;
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dist(0.60, 1.00);
-    random_number = dist(gen);
-    for (int i = 0; i < 15; i++) {
-        if (dwDropFlag != 0) {
-            // if (reinterpret_cast<uintptr_t>(ms) + 488) {
-            //	aDamage[i] = 0;
-            // }
-            aDamage[i] = (((((getLUK(bs) * 3.6) + getDEX(bs)) * (pad)) / 100) * (.40 + (mesos * 0.02)));
-            v26++;
-        }
-    }
-    return v26;
-}
 
 void AttachSkillEdits() {
     // ATTACH_HOOK(MesoFormula, mesoFormulaHook);
     ATTACH_HOOK(getPAD, getPAD_hook);
-    ATTACH_HOOK(getLUK, getLUK_hook);
-    ATTACH_HOOK(getINT, getINT_hook);
-    ATTACH_HOOK(getDEX, getDEX_hook);
-    ATTACH_HOOK(getSpeed, getSpeed_hook);
     ATTACH_HOOK(hook_bstr_t, bstrt);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
     // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
@@ -2374,18 +2340,17 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
-    //ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
+    // ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
     ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
-    //ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
-    ATTACH_HOOK(ztlSecureFuse_check, ztlfuse);
-    ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
-    ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
-    ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
-    ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
-    ATTACH_HOOK(jobCode, jobCode_hook);
-    ATTACH_HOOK(meso_bag_handle, siegeModePacket);
+    // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
+    // ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
+    // ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
+    // ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
+    // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
+    // ATTACH_HOOK(jobCode, jobCode_hook);
+    // ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
@@ -2393,19 +2358,13 @@ void AttachSkillEdits() {
     skillHacks();
     changeMagicAttacks();
     AttachSkillOffsetMod();
-    // Instant FA
-    Patch1(0x0095795E, 0x83);
-    Patch1(0x0095795E + 1, 0xC0);
-    Patch1(0x0095795E + 2, 0x00);
-    //
+    // // Instant FA
+     Patch1(0x0095795E, 0x83);
+     Patch1(0x0095795E + 1, 0xC0);
+     Patch1(0x0095795E + 2, 0x00);
+
     comboStuff();
-
 }
-
-
-//
-// Created by Gwen on 4/3/2026.
-//
 
 
 #include "hook.h"
@@ -2604,7 +2563,7 @@ __declspec(naked) void FireArrowBullet() {
 }
 
 auto is_shoot_action = (int(__cdecl*)(int))0x004566F5;
-int (__cdecl is_shoot_action_hook)(int nAction) {
+int(__cdecl is_shoot_action_hook)(int nAction) {
     return 1;
 }
 
@@ -2840,7 +2799,7 @@ void AttachOtherHooks() {
 
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
 
-    //mwlbhook BYPASS
+    // mwlbhook BYPASS
     Patch1(0x0095385b, 0xEB);
     Patch1(0x00955783, 0xEB);
     Patch1(0x009509DC, 0xEB);
@@ -2850,7 +2809,6 @@ void AttachOtherHooks() {
     Patch1(0x0095F1A3, 0xEB);
     Patch1(0x009571BB, 0xEB);
     Patch1(0x009571F6, 0xEB);
-
 
 
     ATTACH_HOOK(setInput, setInput_hook);
@@ -2998,6 +2956,3 @@ void InitExpOverride() {
     Patch1(0x008DA406 + 1, 64); // increase string size allocation -- v207 = alloca(32)
     PatchCall(0x008DA418, itoa_ExpSwap);
 }
-
-
-

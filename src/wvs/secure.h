@@ -113,9 +113,6 @@ T __fastcall ZtlSecureFuse(T* at, unsigned int cs) {
         value[i] = v1[i] ^ _rotl(v2[i], rotation);
         checksum = v2[i] + _rotr(v1[i] ^ checksum, 5);
     }
-#ifdef _DEBUG
-    assert(checksum == cs);
-#endif
     return *reinterpret_cast<T*>(&value[0]);
 }
 
@@ -130,6 +127,13 @@ struct ZtlSecure {
     ZtlSecure& operator=(const T& value) {
         cs = ZtlSecureTear<T>(at, t);
         return *this;
+    }
+
+    inline void Tear(T t) {
+        cs = ZtlSecureTear<T>(at, t);
+    }
+    inline T Fuse() {
+        return ZtlSecureFuse<T>(at, cs);
     }
 };
 

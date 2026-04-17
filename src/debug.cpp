@@ -12,6 +12,8 @@ void DebugMessage(const char* pszFormat, ...) {
     va_start(argList, pszFormat);
     StringCbVPrintfA(pszDest, cbDest, pszFormat, argList);
     OutputDebugStringA(pszDest);
+    fputs(pszDest, stdout);
+    fputc('\n', stdout);
     va_end(argList);
 }
 
@@ -59,4 +61,34 @@ void LogCrashReport(unsigned long dwError, const char* pszContext) {
     }
 
     if (pszSysMsg) LocalFree(pszSysMsg);
+}
+
+void LogInfo(const char* pszFormat, ...) {
+    char pszDest[1024];
+    va_list argList;
+    va_start(argList, pszFormat);
+    StringCbVPrintfA(pszDest, sizeof(pszDest), pszFormat, argList);
+    va_end(argList);
+
+    OutputDebugStringA(pszDest);
+    OutputDebugStringA("\n");
+
+    time_t now = time(nullptr);
+    char szTime[32];
+    struct tm tmBuf;
+    localtime_s(&tmBuf, &now);
+    strftime(szTime, sizeof(szTime), "%Y-%m-%d %H:%M:%S", &tmBuf);
+
+    char szPath[MAX_PATH];
+    GetModuleFileNameA(nullptr, szPath, MAX_PATH);
+    char* pLastSlash = strrchr(szPath, '\\');
+    if (pLastSlash) *(pLastSlash + 1) = '\0';
+    StringCbCatA(szPath, sizeof(szPath), "MapleNight.log");
+
+    FILE* f = nullptr;
+    fopen_s(&f, szPath, "a");
+    if (f) {
+        fprintf(f, "[%s] %s\n", szTime, pszDest);
+        fclose(f);
+    }
 }
