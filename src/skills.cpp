@@ -2783,8 +2783,8 @@ void AttachOtherHooks() {
     Patch1(0x009571BB, 0xEB);
     Patch1(0x009571F6, 0xEB);
     //sp requirements stuff
-    Patch1(0x8AD203 + 3, 0xA9);
-    Patch1(0x8AD158 + 3, 0x31);
+    unsigned char sp_skip_array[] = { 0xe9, 0x08, 0x02, 0x00, 0x00, 0x90 };
+    Patch1Array(0x008ad01a, sp_skip_array, sizeof(sp_skip_array));
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
