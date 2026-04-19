@@ -501,6 +501,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 4211001
+            cmp esi, eax
+            je buff
+
                 // ninja
             mov eax, 4411006
             cmp esi, eax
@@ -574,15 +578,15 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 5111013
+            cmp esi, eax
+            je melee
+
             mov eax, 5111011
             cmp esi, eax
             je buff
 
             mov eax, 5111012
-            cmp esi, eax
-            je buff
-
-            mov eax, 5111013
             cmp esi, eax
             je buff
 
@@ -1015,7 +1019,7 @@ bool isSkillIDMatched(int nSkillID) {
         4501005, 4501014, 4501006,
 
         // ===== Chief Bandit =====
-        4211011, 4211015,
+        4211011, 4211015, 4211001,
 
         // ===== Ninja =====
         4411006, 4411009, 4411019,
@@ -1025,6 +1029,9 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Gunslinger 2nd =====
         5501001,
+
+        // ===== Marauder 3rd =====
+        5111013,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
         5401002, 5401003,
@@ -1740,6 +1747,9 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
     if (nSkillID == 1001007 || nSkillID == 3001013) {
         return 1000;
     }
+    if (nSkillID == 5101003 || nSkillID == 5101002) {
+        return 100;
+    }
     return (get_cool_time(nSkillID));
 }
 
@@ -1918,7 +1928,7 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
 auto octHook = (int(__cdecl*)(int))0x00766612;
 
 int(__cdecl octopus)(int nSkillID) {
-    if (nSkillID == 3121013 || nSkillID == 8001002 || nSkillID == 8001003 || nSkillID == 8001004 || nSkillID == 5111015) {
+    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015) {
         return 1;
     }
     return octHook(nSkillID);
@@ -2044,24 +2054,24 @@ int __fastcall drop_off_damage_skills(int* a1, void* edx, int a3, int a4, int* a
 }
 
 
-auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
-
-int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
-    int nWeaponDegree;
-    switch (get_weapon_type()) {
-    case 32:
-    case 37:
-        nWeaponDegree = 4;
-        break;
-    case 38:
-        nWeaponDegree = 7;
-        break;
-    default:
-        nWeaponDegree = a3;
-        break;
-    }
-    return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
-}
+//auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
+//
+//int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
+//    int nWeaponDegree;
+//    switch (get_weapon_type()) {
+//    case 32:
+//    case 37:
+//        nWeaponDegree = 4;
+//        break;
+//    case 38:
+//        nWeaponDegree = 7;
+//        break;
+//    default:
+//        nWeaponDegree = a3;
+//        break;
+//    }
+//    return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
+//}
 
 auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, tagPOINT*))0x00933990;
 
@@ -2317,7 +2327,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
-    ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
