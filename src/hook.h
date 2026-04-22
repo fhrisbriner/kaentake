@@ -71,6 +71,7 @@ void AttachOtherHooks();
 void InitExpOverride();
 void PacketHooks();
 void AttachMapObjectFade();
+void BGMOverride();
 
 
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
@@ -83,22 +84,23 @@ inline void AttachClientHooks() {
     freopen_s(&fDummy, "CONIN$", "r", stdin);
     setvbuf(stdout, nullptr, _IONBF, 0);
     LogInfo("AttachClientHooks: begin, image delta=0x%08X", GetImageDelta());
-    LOGGED_STEP(AttachClientBypass());
+   (AttachClientBypass());
     //AttachClientInlink();
-    LOGGED_STEP(AttachStringPoolMod());
-    LOGGED_STEP(AttachResManMod());
-    LOGGED_STEP(AttachAvatarDataMod());
-    LOGGED_STEP(AttachItemEffectMod());
-    LOGGED_STEP(AttachResolutionMod());
-    LOGGED_STEP(AttachMobHpTagMod());
-    LOGGED_STEP(AttachToolTipMod());
-    LOGGED_STEP(AttachIconIconMod());
-    LOGGED_STEP(AttachTempStatMod());
-    LOGGED_STEP(AttachSkillEdits());
-    LOGGED_STEP(AttachOtherHooks());
-    LOGGED_STEP(InitExpOverride());
-    LOGGED_STEP(PacketHooks());
-    LOGGED_STEP(AttachMapObjectFade());
+    (AttachStringPoolMod());
+    (AttachResManMod());
+    (AttachAvatarDataMod());
+    (AttachItemEffectMod());
+    (AttachResolutionMod());
+    (AttachMobHpTagMod());
+    (AttachToolTipMod());
+    (AttachIconIconMod());
+    (AttachTempStatMod());
+    (AttachSkillEdits());
+    (AttachOtherHooks());
+    (InitExpOverride());
+    (PacketHooks());
+    (AttachMapObjectFade());
+    (BGMOverride());
     LogInfo("AttachClientHooks: all done");
 }
 

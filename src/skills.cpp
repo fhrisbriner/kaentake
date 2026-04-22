@@ -2,6 +2,7 @@
 #include "WzLib/IWzArchive.h"
 #include "wvs/CUserLocal.h"
 #include "wvs/CWvsContext.h"
+#include "wvs/field.h"
 #include "wvs/packet.h"
 
 #include <chrono>
@@ -1640,6 +1641,8 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         PatchNop(combat1, 2);
         Patch1(combat2, 0xf7);
         Patch1(combat2 + 1, 0xd8);
+    } else if (nSkillID == 1001007) {
+
     }
     auto elapsed = chrono::steady_clock::now() - skilltimer;
     if (nSkillID == 3001013 || nSkillID == 1001007) {
@@ -2057,7 +2060,7 @@ int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int 
         nWeaponDegree = 7;
         break;
     default:
-        nWeaponDegree = a3;
+        nWeaponDegree = a4;
         break;
     }
     return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
@@ -2315,6 +2318,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     // ATTACH_HOOK(jobCode, jobCode_hook);
+    ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
@@ -2933,4 +2937,33 @@ void InitExpOverride() {
     /* CUIStatusBar::SetNumberValue -> hijack displayed exp above exp gauge */
     Patch1(0x008DA406 + 1, 64); // increase string size allocation -- v207 = alloca(32)
     PatchCall(0x008DA418, itoa_ExpSwap);
+}
+
+
+auto GetCurFieldID = (unsigned int(__thiscall*)(CWvsContext*))0xA1238B;
+auto PlayBGMFromMapInfo = (void(__thiscall*)(void*))0x64211E;
+void __fastcall PlayBGMFromMapInfo_Hook(void* pThis, void* edx) {
+    PlayBGMFromMapInfo(pThis);
+}
+
+auto PlayNextBGM = (void(__thiscall*)(void*))0x641db2;
+void __fastcall PlayNextBgm_Hook(void* pThis, void* edx) {
+}
+
+auto RestoreBGM = (void(__thiscall*)(void*))0x642214;
+void __fastcall RestoreBgm_Hook(void* pThis, void* edx) {
+}
+
+auto SoundMan__PlayBGM = (void(__thiscall*)(void*, void*, int, int, int, void*))0x43f301;
+void __fastcall SoundMan__PlayBGM_Hook(void* pThis, void* edx, void* pBGM, int nBGMType, int nBGMVolume, int nBGMLoop, void* nBGMPriority) {
+    if ((int)_ReturnAddress() == 0x5333A0 || (GetCurFieldID(CWvsContext::GetInstance()) == -1)) {
+        SoundMan__PlayBGM(pThis, pBGM, nBGMType, nBGMVolume, nBGMLoop, nBGMPriority);
+    }
+}
+
+void BGMOverride() {
+    ATTACH_HOOK(PlayBGMFromMapInfo, PlayBGMFromMapInfo_Hook);
+    ATTACH_HOOK(PlayNextBGM, PlayNextBgm_Hook);
+    ATTACH_HOOK(RestoreBGM, RestoreBgm_Hook);
+    ATTACH_HOOK(SoundMan__PlayBGM, SoundMan__PlayBGM_Hook);
 }
