@@ -71,6 +71,7 @@ int myCharacterid = 0;
 bool firstLoad = true;
 bool AttackMove = false;
 int sparkID = 0;
+int job = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -569,10 +570,29 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je summons
 
-
-            mov eax, 5211014
+            mov eax, 3601001
             cmp esi, eax
-            je summons
+            je buff
+
+            mov eax, 3601002
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601003
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601004
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601005
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601006
+            cmp esi, eax
+            je buff
 
                 // Pirate 3rd
             mov eax, 5111010
@@ -865,13 +885,25 @@ int requiredComboCount_hook(int skillID) {
     if (skillID == 5411022) {
         return 100;
     }
-    return 0;
+    if (skillID == 5511002 || skillID == 5511015) {
+        return 100;
+    }
+    if (skillID == 5511014) {
+        return 300;
+    }
 }
 
 void comboStuff() {
-    Patch4(0x0077dfc4 + 2, 5410000);
-    Patch4(0x0077e1b5 + 2, 5410000);
-    Patch4(0x0077e0cf + 2, 5410000);
+    int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+    int comboAbility = 0;
+    if (job == 541) {
+        comboAbility = 5410000;
+    } else {
+        comboAbility = 5510000;
+    }
+    Patch4(0x0077dfc4 + 2, comboAbility);
+    Patch4(0x0077e1b5 + 2, comboAbility);
+    Patch4(0x0077e0cf + 2, comboAbility);
     // PatchNop(0x00668BFE, 2);
     PatchNop(0x00668C02, 2);
     PatchNop(0x00668C07, 2);
@@ -904,15 +936,14 @@ void replaceSpark() {
 
 void skillHacks() {
 
-    // static const ReplaceEntry kSkillEntries[] = {
-    //     { "ED 23 4E 00", 1101016, skipArray, 4 },
-    //     { "5E 93 E6 00", 1201016, skipArray, 4 }, // spark
-    //     { "4A 1C 23 00", 2201010, skipArray, 4 },
-    //     { "30 FD 13 00", 1210010, skipArray, 4 },
-    //     {}
-    // };
-    // ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
-    //         0x00700000, 0x00AAAAAA);
+     static const ReplaceEntry kSkillEntries[] = {
+         { "ED 23 4E 00", 1101016, skipArray, 4 },
+         { "5E 93 E6 00", 1201016, skipArray, 4 }, // spark
+         { "4A 1C 23 00", 2201010, skipArray, 4 },
+         { "30 FD 13 00", 1210010, skipArray, 4 },
+     };
+     ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
+             0x00700000, 0x00AAAAAA);
     Patch4(0x0094B4EC + 1, 1411003); // switch addy
     Patch4(0x00765A61 + 1, 121);     // skill root check
     Patch1(0x008C4077 + 2, 0x0);
@@ -1003,7 +1034,9 @@ bool isSkillIDMatched(int nSkillID) {
 
         3211014, 3211016, 3211015,
 
-        3601000,
+        3601000, 3601001, 3601002,
+        3601003, 3601004, 3601005,
+        3601006,
 
         // ===== Thief =====
         4001004,
@@ -1027,6 +1060,8 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Bandit 3rd =====
         4511006, 4511013, 4511003, 4511007, 4511001,
+
+        5211012, 5211016, 5111007,
 
         // ===== Gunslinger 2nd =====
         5501001,
@@ -1610,7 +1645,11 @@ auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
         int pnConsumeCheck) {
-            setMAD();
+            if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
+                job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
+                comboStuff();
+            }
+    setMAD();
     if (isCopyCatSkill(nSkillID)) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
@@ -1619,6 +1658,12 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     }
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
+    }
+    if (nSkillID == 5211012 || nSkillID == 5111007) {
+        default_random_engine generator(chrono::system_clock::now().time_since_epoch().count());
+        uniform_int_distribution<int> distribution(1, 6);
+        int roll = distribution(generator);
+        CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000 + roll, nScanCode, pnConsumeCheck);
     }
 
     if (nSkillID == 4211015) {
@@ -1636,8 +1681,8 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (nSkillID == 5411021) {
         Patch4(0x00952F20 + 3, 5411021);
     }
-            DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
-    if (nSkillID == 5411022)  {
+    DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
+    if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
             return 0;
         }
@@ -2151,7 +2196,7 @@ double ropebase = 3.0;
 
 void ropeFormula() {
     double rope;
-    speed = 100  + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
+    speed = 100 + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
     rope = 3.0 * (speed / 100.0);
     if (rope < 3.0) {
         rope = 3.0;
@@ -2307,7 +2352,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(hook_bstr_t, bstrt);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
     // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
-    // ATTACH_HOOK(is_keydown_skill_t, is_keydown_skill_t);
+    //ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
     // ATTACH_HOOK(tGetOneTimeAction, tGetOneTimeAction);
     // // ATTACH_HOOK(tSetOneTimeAction, tSetOneTimeAction);
     // // ATTACH_HOOK(tOnResolveMoveAction, tOnResolveMoveAction);
@@ -2321,28 +2366,28 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
-    // ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
-    // ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
-    // ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
+    ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
+    ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
+    ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     // ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
-    ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
-    ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
-    PatchNop(0x0096C073, 6);
+    //PatchNop(0x0096C073, 6);
     CodeCave((void*)DamCalc, 0x00791BAE, 1);
     skillHacks();
     changeMagicAttacks();
-    AttachSkillOffsetMod();
+    //AttachSkillOffsetMod();
     // // Instant FA
     Patch1(0x0095795E, 0x83);
     Patch1(0x0095795E + 1, 0xC0);
     Patch1(0x0095795E + 2, 0x00);
 
-    comboStuff();
+    //replaceSpark();
 }
 
 
@@ -2794,9 +2839,12 @@ void AttachOtherHooks() {
     Patch1(0x0095F1A3, 0xEB);
     Patch1(0x009571BB, 0xEB);
     Patch1(0x009571F6, 0xEB);
-    //sp requirements stuff
+    // sp requirements stuff
     unsigned char sp_skip_array[] = { 0xe9, 0x08, 0x02, 0x00, 0x00, 0x90 };
     Patch1Array(0x008ad01a, sp_skip_array, sizeof(sp_skip_array));
+
+    Patch4(0x0078FE91 + 2, 0xAFE378);
+    Patch4(0x0078FE6A + 2, 0xAFE378);
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
