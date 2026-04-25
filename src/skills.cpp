@@ -550,6 +550,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 5201007
+            cmp esi, eax
+            je jumpmove
+
             mov eax, 5411022
             cmp esi, eax
             je melee
@@ -1063,7 +1067,7 @@ bool isSkillIDMatched(int nSkillID) {
         // ===== Bandit 3rd =====
         4511006, 4511013, 4511003, 4511007, 4511001,
 
-        5211012, 5211016, 5111007,
+        5211012, 5211016, 5111007, 5201007,
 
         // ===== Gunslinger 2nd =====
         5501001,
@@ -1092,6 +1096,11 @@ auto CInPacket_Decode1Original = reinterpret_cast<char(__thiscall*)(CInPacket*)>
 void CInPacket_Decode2(CInPacket* pPacket, void* edx) {
 
     CInPacket_Decode2Original(pPacket);
+}
+
+auto dashOnDash = (int(__thiscall*)(void*, int))0x74c73a;
+int __fastcall* dashOnDash_hook(void* pThis, void* edx, int nDash) {
+    return 0;
 }
 
 
@@ -2361,6 +2370,7 @@ void AttachSkillEdits() {
     // // ATTACH_HOOK(tget_flipX, tget_flipX);
     // ATTACH_HOOK(tOnSkillKeyDownEnd, tOnSkillKeyDownEnd);
     // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
+    ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
     // ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
