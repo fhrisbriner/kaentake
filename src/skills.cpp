@@ -598,6 +598,15 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 5111007
+            cmp esi, eax
+            je buff
+
+            mov eax, 5211012
+            cmp esi, eax
+            je buff
+
+
                 // Pirate 3rd
             mov eax, 5111010
             cmp esi, eax
@@ -1099,7 +1108,7 @@ void CInPacket_Decode2(CInPacket* pPacket, void* edx) {
 }
 
 auto dashOnDash = (int(__thiscall*)(void*, int))0x74c73a;
-int __fastcall* dashOnDash_hook(void* pThis, void* edx, int nDash) {
+int __fastcall dashOnDash_hook(void* pThis, void* edx, int nDash) {
     return 0;
 }
 
@@ -1820,9 +1829,11 @@ int(__cdecl remove_bullets)(int nSkillID) {
 }
 
 void applyVelocityChange() {
-    Patch4(0x0096C00A + 1, 0xFFFFFEA2);
-    Patch4(0x0096C021 + 3, 0x0000015E);
-    Patch4(0x0096C031 + 1, 0xFFFFFF06);
+    Patch4(0x0096C00A + 1, 0x00000000);
+    Patch4(0x0096C021 + 3, 0x00000000);
+    Patch4(0x0096C031 + 1, 0xFFFFFd80);
+    Patch1(0x0096C012 + 2, 0x00);
+    Patch1(0x0096C02E + 2, 0x4);
 }
 
 void restoreVelocityChange() {
@@ -1837,6 +1848,8 @@ const DWORD FlashJumpRet = 0x0096BF12;
 void __declspec(naked) FlashJumpAll() {
     _asm {
             cmp eax, 4101009
+            je[applyDefault]
+            cmp eax, 5201007
             je[applyOverride]
             jmp FlashJumpRet
 
@@ -2370,7 +2383,6 @@ void AttachSkillEdits() {
     // // ATTACH_HOOK(tget_flipX, tget_flipX);
     // ATTACH_HOOK(tOnSkillKeyDownEnd, tOnSkillKeyDownEnd);
     // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
-    ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
     // ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
@@ -2400,7 +2412,12 @@ void AttachSkillEdits() {
     Patch1(0x0095795E + 2, 0x00);
 
     //dash can't cancel
+    ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     Patch1(0x94cdb0, 0xeb);
+
+    //octojump
+    //Patch4(0x0096bf04 + 1, 5201007);
+    Patch4(0x0096c062 + 1, 5201007);
 
     //replaceSpark();
 }
