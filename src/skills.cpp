@@ -808,6 +808,10 @@ void ReplaceValueBatch(const ReplaceEntry* entries, int count, DWORD start, DWOR
     patterns.reserve(count);
     size_t maxLen = 0;
     for (int k = 0; k < count; k++) {
+        if (!entries[k].aob) {
+            patterns.emplace_back();
+            continue;
+        }
         patterns.push_back(ParsePattern(entries[k].aob));
         if (patterns.back().bytes.size() > maxLen)
             maxLen = patterns.back().bytes.size();
@@ -818,6 +822,8 @@ void ReplaceValueBatch(const ReplaceEntry* entries, int count, DWORD start, DWOR
     const DWORD last = end - (DWORD)maxLen;
     for (DWORD i = start; i < last; i++) {
         for (int k = 0; k < count; k++) {
+            if (patterns[k].bytes.empty())
+                continue;
             if (MatchPatternAt(patterns[k], i) &&
                     !IsSkipped(i, entries[k].skipAddresses, entries[k].skipCount)) {
                 Patch4(i, entries[k].value);
@@ -927,23 +933,19 @@ void replaceSpark() {
     } else {
         sparkID = 4111010;
     }
-    static const ReplaceEntry kSkillEntries[] = {
-        { "5E 93 E6 00", sparkID, skipArray, 4 },
-    };
-    ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
-            0x00700000, 0x00AAAAAA);
+    Patch4(0x766829 + 1, sparkID);
+    Patch4(0x942971 + 3, sparkID);
+}
+
+void cleave() {
+    int SparkID = 1201016;
+    Patch4(0x766829 + 1, 1201016);
+    Patch4(0x942971 + 3, 1201016);
 }
 
 void skillHacks() {
 
-     static const ReplaceEntry kSkillEntries[] = {
-         { "ED 23 4E 00", 1101016, skipArray, 4 },
-         { "5E 93 E6 00", 1201016, skipArray, 4 }, // spark
-         { "4A 1C 23 00", 2201010, skipArray, 4 },
-         { "30 FD 13 00", 1210010, skipArray, 4 },
-     };
-     ReplaceValueBatch(kSkillEntries, sizeof(kSkillEntries) / sizeof(kSkillEntries[0]),
-             0x00700000, 0x00AAAAAA);
+    Patch4(0x00952360 + 1, 1101016); // il amplification
     Patch4(0x0094B4EC + 1, 1411003); // switch addy
     Patch4(0x00765A61 + 1, 121);     // skill root check
     Patch1(0x008C4077 + 2, 0x0);
@@ -2377,15 +2379,18 @@ void AttachSkillEdits() {
     //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
-    //PatchNop(0x0096C073, 6);
+    PatchNop(0x0096C073, 6);
     CodeCave((void*)DamCalc, 0x00791BAE, 1);
     skillHacks();
     changeMagicAttacks();
-    //AttachSkillOffsetMod();
+    AttachSkillOffsetMod();
     // // Instant FA
     Patch1(0x0095795E, 0x83);
     Patch1(0x0095795E + 1, 0xC0);
     Patch1(0x0095795E + 2, 0x00);
+
+    //dash can't cancel
+    Patch1(0x94cdb0, 0xeb);
 
     //replaceSpark();
 }
