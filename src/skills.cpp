@@ -453,6 +453,11 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 3511019
+            cmp esi, eax
+            je shoot
+
+
                 // Thief 2nd
             mov eax, 4001004
             cmp esi, eax
@@ -1045,7 +1050,7 @@ bool isSkillIDMatched(int nSkillID) {
         3411006, 3411007, 3411005,
 
         // ===== Sniper =====
-        3511003, 3511008, 3511004,
+        3511003, 3511008, 3511004, 3511019,
 
         3211014, 3211016, 3211015,
 
@@ -1793,7 +1798,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             mastery = pGetSkillLevel(_this, charData, 5200000, skillEntry);
         }
         if (jobID == 510 || jobID == 511 || jobID == 512 || jobID == 541 || jobID == 542) {
-            mastery = pGetSkillLevel(_this, charData, 5110000, skillEntry);
+            mastery = pGetSkillLevel(_this, charData, 5100001, skillEntry);
         }
         tb = pGetSkillLevel(_this, charData, 15110000, skillEntry);
         if (pGetSkillLevel(_this, charData, critSkillID, skillEntry) > 0) {
@@ -2393,6 +2398,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
     ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
+    ATTACH_HOOK(octHook, octopus);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     // ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
