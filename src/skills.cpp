@@ -2,6 +2,7 @@
 #include "WzLib/IWzArchive.h"
 #include "wvs/CUserLocal.h"
 #include "wvs/CWvsContext.h"
+#include "wvs/mob.h"
 #include "wvs/packet.h"
 
 #include <chrono>
@@ -30,6 +31,8 @@ int doBoundJump = 0x0096897A; // requires further handling
 int shootAttack = 0x009690E9; // should work for basic rt/lb shooting skills.
 int doTeleport = 0x00969146;
 int mesoExplosion = 0x009681D3;
+const DWORD dwAccuracyCalc = 0x0077F743;
+const DWORD dwAccuracyCalcRetn = 0x0077F7E2;
 bool siegeMode = false;
 bool jumped = false;
 int mastery = 0;
@@ -70,6 +73,8 @@ int myCharacterid = 0;
 bool firstLoad = true;
 bool AttackMove = false;
 int sparkID = 0;
+double strMultiplier = 0.28;
+DWORD ZtlBussy = 0x004746DD;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -82,6 +87,7 @@ int botMAD = 0;
 int totmagic = 0;
 int pad = 0;
 double clMultiplier = 1.25;
+int currStr = 4;
 
 int get_weapon_type() {
     int localplayer = *reinterpret_cast<uintptr_t*>(0x00BEBF98);
@@ -528,7 +534,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je meso
 
-            mov eax, 4511013
+            mov eax, 45110131
             cmp esi, eax
             je buff
 
@@ -1609,7 +1615,7 @@ auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
         int pnConsumeCheck) {
-            setMAD();
+    setMAD();
     if (isCopyCatSkill(nSkillID)) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
@@ -1635,8 +1641,8 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (nSkillID == 5411021) {
         Patch4(0x00952F20 + 3, 5411021);
     }
-            DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
-    if (nSkillID == 5411022)  {
+    DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
+    if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
             return 0;
         }
@@ -1691,6 +1697,7 @@ auto pGetSkillLevel = (int(__thiscall*)(int, void*, int, int))0x007616F6;
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+    currStr =CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
     if (i) {
         pGetSkillLevel(_this, charData, i, skillEntry);
         if (jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
@@ -1730,6 +1737,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             mastery = pGetSkillLevel(_this, charData, 5110000, skillEntry);
         }
         tb = pGetSkillLevel(_this, charData, 15110000, skillEntry);
+        mesos = pGetSkillLevel(_this, charData, 4511006, skillEntry);
         if (pGetSkillLevel(_this, charData, critSkillID, skillEntry) > 0) {
             Patch4(0x007650DB + 1, critSkillID);
         }
@@ -2054,24 +2062,24 @@ int __fastcall drop_off_damage_skills(int* a1, void* edx, int a3, int a4, int* a
 }
 
 
-//auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
+// auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
 //
-//int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
-//    int nWeaponDegree;
-//    switch (get_weapon_type()) {
-//    case 32:
-//    case 37:
-//        nWeaponDegree = 4;
-//        break;
-//    case 38:
-//        nWeaponDegree = 7;
-//        break;
-//    default:
-//        nWeaponDegree = a3;
-//        break;
-//    }
-//    return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
-//}
+// int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
+//     int nWeaponDegree;
+//     switch (get_weapon_type()) {
+//     case 32:
+//     case 37:
+//         nWeaponDegree = 4;
+//         break;
+//     case 38:
+//         nWeaponDegree = 7;
+//         break;
+//     default:
+//         nWeaponDegree = a3;
+//         break;
+//     }
+//     return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
+// }
 
 auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, tagPOINT*))0x00933990;
 
@@ -2150,7 +2158,7 @@ double ropebase = 3.0;
 
 void ropeFormula() {
     double rope;
-    speed = 100  + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
+    speed = 100 + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
     rope = 3.0 * (speed / 100.0);
     if (rope < 3.0) {
         rope = 3.0;
@@ -2327,7 +2335,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
-    //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    // ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
@@ -2339,6 +2347,18 @@ void AttachSkillEdits() {
     Patch1(0x0095795E, 0x83);
     Patch1(0x0095795E + 1, 0xC0);
     Patch1(0x0095795E + 2, 0x00);
+
+    // Re-point the engine's hardcoded Meso Explosion skill ID (4211006) to 4511006.
+    // Eight immediate operands across CDropPool::Update, CalcDamage_MesoExplosion,
+    // CUserRemote::OnAttack/OnMeleeAttack, and the sub_4FB292 skill-type filter.
+    Patch4(0x004FB2ED, 4511006); // cmp esi, imm32  (sub_4FB292)
+    Patch4(0x00504CC0, 4511006); // push imm32      (CDropPool::Update)
+    Patch4(0x00504D15, 4511006); // push imm32      (CDropPool::Update)
+    Patch4(0x00791FCF, 4511006); // push imm32      (CalcDamage_MesoExplosion)
+    Patch4(0x00980543, 4511006); // cmp [ebp-10h], imm32 (CUserRemote::OnAttack)
+    Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
+    Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
+    Patch4(0x009810B0, 4511006); // push imm32      (CUserRemote::OnMeleeAttack)
 
     comboStuff();
 }
@@ -2539,7 +2559,72 @@ __declspec(naked) void FireArrowBullet() {
     }
 }
 
-auto is_shoot_action = (int(__cdecl*)(int))0x004566F5;
+typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTemplate* pTemplate);
+static auto SetFromWhenDoom = reinterpret_cast<SetFromWhenDoom_t>(0x00789EFD);
+
+typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
+static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
+
+SetFromWhenDoom_t Hook_FromWhenDoom = [](MobStat* pThis, void* edx, MobTemplate* pTemplate) -> void {
+    pTemplate = GetMobTemplate(100100);
+    memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
+    pThis->nPAD = 0;
+    pThis->nMAD = 0;
+    pThis->nACC = 0;
+    pThis->nPDR = 0;
+    pThis->nMDR = 0;
+    pThis->nEVA = 0;
+    pThis->nACC = 0;
+    pThis->nSpeed = 0;
+};
+
+typedef void(__fastcall* OnDoomed_t)(Mob* pThis, void* edx, int bDoom);
+static auto OnDoomed = reinterpret_cast<OnDoomed_t>(0x0066D6D4);
+
+OnDoomed_t Hook_Doom = [](Mob* pThis, void* edx, int bDoom) -> void {
+    int templateId = 0;
+    if (bDoom) {
+        templateId = ZtlSecureFuse(pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID, pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID_CS);
+        Patch4(0x0066D722 + 1, templateId);
+    }
+    OnDoomed(pThis, edx, bDoom);
+    if (templateId != 0) {
+        MobTemplate* mobTemplate = GetMobTemplate(100100);
+        MobTemplate* currMonsterTemplate = GetMobTemplate(templateId);
+        mobTemplate->_ZtlSecureTear_dwTemplateID[0] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[0];
+        mobTemplate->_ZtlSecureTear_dwTemplateID[1] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[1];
+        mobTemplate->_ZtlSecureTear_dwTemplateID_CS = currMonsterTemplate->_ZtlSecureTear_dwTemplateID_CS;
+        pThis->m_pTemplateByDoom = mobTemplate;
+    }
+};
+
+auto mesoFormulaHook = (int(__thiscall*)(void *, void *, BasicStat*, SecondaryStat*, MobStat *, int *, unsigned int, int *))0x00791FBC;
+int __fastcall MesoFormula(void *pThis, PVOID edx, void *cd, BasicStat *bs, SecondaryStat *ss, MobStat *ms, int *anMoneyAmount,
+                           unsigned int dwDropFlag, int *aDamage) {
+    long double ratio;
+    int nAttackCount;
+    int i;
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
+    random_number = dist(gen);
+
+    nAttackCount = 0;
+    for (i = 0; i < 15; ++i) {
+        if (((1 << i) & dwDropFlag) != 0) {
+            ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * random_number;
+            __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
+            *aDamage = damage;
+            ++nAttackCount;
+            ++aDamage;
+        }
+        ++anMoneyAmount;
+    }
+    return nAttackCount;
+};
+
+                                                                                                                                                                                    auto is_shoot_action = (int(__cdecl*)(int))0x004566F5;
 int(__cdecl is_shoot_action_hook)(int nAction) {
     return 1;
 }
@@ -2628,6 +2713,21 @@ public:
         return SkillInfo__GetSkill(GetInstance(), NULL, nSkillID);
     }
 };
+
+__declspec(naked) void AdjustAccuracyCalc() {
+    __asm {
+        push dword ptr[ebx + 0x2C]
+        lea eax, [ebx + 0x24]
+        push eax
+        call[ZtlBussy]
+        add esp, 8
+        mov[currStr], eax
+        fild[currStr]
+        fmul strMultiplier
+        faddp st(2), st
+        jmp dword ptr[dwAccuracyCalcRetn]
+    }
+}
 
 struct CUIToolTip;
 
@@ -2792,9 +2892,12 @@ void AttachOtherHooks() {
     Patch1(0x0095F1A3, 0xEB);
     Patch1(0x009571BB, 0xEB);
     Patch1(0x009571F6, 0xEB);
-    //sp requirements stuff
+    // sp requirements stuff
     unsigned char sp_skip_array[] = { 0xe9, 0x08, 0x02, 0x00, 0x00, 0x90 };
     Patch1Array(0x008ad01a, sp_skip_array, sizeof(sp_skip_array));
+
+    // strength accuracy calc
+    //CodeCave(AdjustAccuracyCalc, dwAccuracyCalc, 5);
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
@@ -2807,6 +2910,9 @@ void AttachOtherHooks() {
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
+    ATTACH_HOOK(SetFromWhenDoom, Hook_FromWhenDoom);
+    ATTACH_HOOK(OnDoomed, Hook_Doom);
+    ATTACH_HOOK(mesoFormulaHook, MesoFormula);
 }
 
 
