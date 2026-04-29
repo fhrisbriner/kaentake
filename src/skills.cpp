@@ -4,7 +4,7 @@
 #include "wvs/CWvsContext.h"
 #include "wvs/field.h"
 #include "wvs/packet.h"
-
+#include "wvs/mob.h"
 #include <chrono>
 #include <intsafe.h>
 #include <random>
@@ -31,6 +31,8 @@ int doBoundJump = 0x0096897A; // requires further handling
 int shootAttack = 0x009690E9; // should work for basic rt/lb shooting skills.
 int doTeleport = 0x00969146;
 int mesoExplosion = 0x009681D3;
+const DWORD dwAccuracyCalc = 0x0077F743;
+const DWORD dwAccuracyCalcRetn = 0x0077F7E2;
 bool siegeMode = false;
 bool jumped = false;
 int mastery = 0;
@@ -72,6 +74,9 @@ bool firstLoad = true;
 bool AttackMove = false;
 int sparkID = 0;
 int job = 0;
+double strMultiplier = 0.28;
+DWORD ZtlBussy = 0x004746DD;
+int currStr = 4;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -1488,6 +1493,90 @@ void*(__fastcall CMovePath__MakeMovePath_Hook)(
     return CMovePath__MakeMovePath(_this, nAttr, pfh, pfhStart, pLR, x, y, vx, vy, nMoveAction, tElapse);
 }
 
+
+typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTemplate* pTemplate);
+static auto SetFromWhenDoom = reinterpret_cast<SetFromWhenDoom_t>(0x00789EFD);
+
+typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
+static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
+
+SetFromWhenDoom_t Hook_FromWhenDoom = [](MobStat* pThis, void* edx, MobTemplate* pTemplate) -> void {
+    pTemplate = GetMobTemplate(100100);
+    memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
+    pThis->nPAD = 0;
+    pThis->nMAD = 0;
+    pThis->nACC = 0;
+    pThis->nPDR = 0;
+    pThis->nMDR = 0;
+    pThis->nEVA = 0;
+    pThis->nACC = 0;
+    pThis->nSpeed = 0;
+};
+
+typedef void(__fastcall* OnDoomed_t)(Mob* pThis, void* edx, int bDoom);
+static auto OnDoomed = reinterpret_cast<OnDoomed_t>(0x0066D6D4);
+
+OnDoomed_t Hook_Doom = [](Mob* pThis, void* edx, int bDoom) -> void {
+    int templateId = 0;
+    if (bDoom) {
+        templateId = ZtlSecureFuse(pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID, pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID_CS);
+        Patch4(0x0066D722 + 1, templateId);
+    }
+    OnDoomed(pThis, edx, bDoom);
+    if (templateId != 0) {
+        MobTemplate* mobTemplate = GetMobTemplate(100100);
+        MobTemplate* currMonsterTemplate = GetMobTemplate(templateId);
+        mobTemplate->_ZtlSecureTear_dwTemplateID[0] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[0];
+        mobTemplate->_ZtlSecureTear_dwTemplateID[1] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[1];
+        mobTemplate->_ZtlSecureTear_dwTemplateID_CS = currMonsterTemplate->_ZtlSecureTear_dwTemplateID_CS;
+        pThis->m_pTemplateByDoom = mobTemplate;
+    }
+};
+
+double owo = 0.0;
+
+auto mesoFormulaHook = (int(__thiscall*)(void *, void *, BasicStat*, SecondaryStat*, MobStat *, int *, unsigned int, int *))0x00791FBC;
+int __fastcall MesoFormula(void *pThis, PVOID edx, void *cd, BasicStat *bs, SecondaryStat *ss, MobStat *ms, int *anMoneyAmount,
+                           unsigned int dwDropFlag, int *aDamage) {
+    long double ratio;
+    int nAttackCount;
+    int i;
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
+    owo = dist(gen);
+
+    nAttackCount = 0;
+    for (i = 0; i < 15; ++i) {
+        if (((1 << i) & dwDropFlag) != 0) {
+            ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
+            __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
+            *aDamage = damage;
+            ++nAttackCount;
+            ++aDamage;
+        }
+        ++anMoneyAmount;
+    }
+    return nAttackCount;
+};
+
+__declspec(naked) void AdjustAccuracyCalc() {
+    __asm {
+        push dword ptr[ebx + 0x2C]
+        lea eax, [ebx + 0x24]
+        push eax
+        call[ZtlBussy]
+        add esp, 8
+        mov[currStr], eax
+        fild[currStr]
+        fmul strMultiplier
+        faddp st(2), st
+        jmp dword ptr[dwAccuracyCalcRetn]
+    }
+}
+
+
 auto SetDamaged_Hook = (void(__thiscall*)(void*, int, int, int, unsigned __int16, int*, int, int, int, int, int))0x009581A9;
 
 void(__fastcall SetDamaged)(void* _this, void* edx,
@@ -1762,6 +1851,7 @@ auto pGetSkillLevel = (int(__thiscall*)(int, void*, int, int))0x007616F6;
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+    currStr =CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
     if (i) {
         pGetSkillLevel(_this, charData, i, skillEntry);
         if (jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
@@ -1805,7 +1895,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             Patch4(0x007650DB + 1, critSkillID);
         }
     }
-
+    mesos = pGetSkillLevel(_this, charData, 4511006, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -2425,6 +2515,15 @@ void AttachSkillEdits() {
     //Patch4(0x0096bf04 + 1, 5201007);
     Patch4(0x0096c062 + 1, 5201007);
 
+    Patch4(0x004FB2ED, 4511006); // cmp esi, imm32  (sub_4FB292)
+    Patch4(0x00504CC0, 4511006); // push imm32      (CDropPool::Update)
+    Patch4(0x00504D15, 4511006); // push imm32      (CDropPool::Update)
+    Patch4(0x00791FCF, 4511006); // push imm32      (CalcDamage_MesoExplosion)
+    Patch4(0x00980543, 4511006); // cmp [ebp-10h], imm32 (CUserRemote::OnAttack)
+    Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
+    Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
+    Patch4(0x009810B0, 4511006);
+
     //replaceSpark();
 }
 
@@ -2895,6 +2994,10 @@ void AttachOtherHooks() {
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
+
+    ATTACH_HOOK(SetFromWhenDoom, Hook_FromWhenDoom);
+    ATTACH_HOOK(OnDoomed, Hook_Doom);
+    ATTACH_HOOK(mesoFormulaHook, MesoFormula);
 }
 
 

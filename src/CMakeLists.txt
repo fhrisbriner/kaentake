@@ -22,6 +22,7 @@ add_library(injector SHARED
         ztl/zmap.h
         wvs/CWvsContext.h
         wvs/CUserLocal.h
+        wvs/mob.h
 )
 
 target_precompile_headers(injector PRIVATE pch.h)
