@@ -683,6 +683,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 4511001
+            cmp esi, eax
+            je buff
+
             mov eax, 2301005
             jmp doActiveJmpBack
 
