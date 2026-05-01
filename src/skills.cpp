@@ -1554,13 +1554,14 @@ int __fastcall MesoFormula(void *pThis, PVOID edx, void *cd, BasicStat *bs, Seco
     int nAttackCount;
     int i;
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
-    owo = dist(gen);
+
 
     nAttackCount = 0;
     for (i = 0; i < 15; ++i) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
+        owo = dist(gen);
         if (((1 << i) & dwDropFlag) != 0) {
             ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
             __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
