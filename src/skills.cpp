@@ -265,6 +265,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+            mov eax, 2111013
+            cmp esi, eax
+            je magic
+
             mov eax, 2401005
             cmp esi, eax
             je magic
@@ -1037,7 +1041,7 @@ bool isSkillIDMatched(int nSkillID) {
         2501010, 2501011, 2501012, 2501013,
 
         // ===== FP Mage =====
-        2111011, 2111010, 2111012,
+        2111011, 2111010, 2111012, 2111013,
 
         // ===== Priest =====
         2211011,
@@ -1658,7 +1662,7 @@ void changeMagicAttacks() {
     Patch4(0x00955D5B + 1, 2201013);
     Patch4(0x00955D66 + 1, 2511006);
     Patch4(0x00955D7C + 1, 2411012);
-    Patch4(0x00955D87 + 1, 2111002);
+    Patch4(0x00955D87 + 1, 2111013);
 }
 
 
