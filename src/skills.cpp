@@ -1234,6 +1234,16 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
+    if (nSkillID == 4101008 ) {
+        if (get_weapon_type() == 47) {
+            return true;
+        }
+    }
+    if (nSkillID == 3411004 ) {
+        if (get_weapon_type() == 45) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -1695,6 +1705,9 @@ bool isCopyCatSkill(int skillId) {
     if (thirdDigit == 0) {
         return secondDigit == 4 || secondDigit == 5;
     }
+    if (skillId == 3411004 || skillId == 4101008) {
+        return true;
+    }
     return false;
 }
 
@@ -1788,6 +1801,12 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             }
     setMAD();
     if (isCopyCatSkill(nSkillID)) {
+        if (nSkillID == 4101008) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 14101006, nScanCode, pnConsumeCheck);
+        }
+        if (nSkillID == 3411004) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 5201005, nScanCode, pnConsumeCheck);
+        }
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
     if (!isCorrectWeapon(nSkillID)) {
