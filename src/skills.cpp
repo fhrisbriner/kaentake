@@ -11,6 +11,8 @@
 #include <string>
 #include <sstream>
 
+
+class _bstr_t;
 using namespace std;
 using chrono::duration_cast;
 using chrono::milliseconds;
@@ -1935,6 +1937,14 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
     return (get_cool_time(nSkillID));
 }
 
+auto hitMobInRect = (int(__cdecl*)(int))0x00766722;
+int(__cdecl hitMobInRect_hook)(int skillId) {
+    if (skillId == 4101008 || skillId == 3511003) {
+        return 1;
+    }
+    return hitMobInRect(skillId);
+}
+
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
@@ -2509,6 +2519,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
     ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
+    ATTACH_HOOK(hitMobInRect, hitMobInRect_hook);
     ATTACH_HOOK(octHook, octopus);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     // ATTACH_HOOK(jobCode, jobCode_hook);
