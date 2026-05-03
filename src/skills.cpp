@@ -448,6 +448,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 3411005
+            cmp esi, eax
+            je buff
+
                 // sniper
 
             mov eax, 3511003
@@ -456,7 +460,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 3511008
             cmp esi, eax
-            je shoot
+            je melee
 
             mov eax, 3511004
             cmp esi, eax
@@ -1656,7 +1660,7 @@ void changeMagicAttacks() {
     Patch4(0x00955D19 + 1, 2101008);
     Patch4(0x00955D24 + 1, 2101007);
     Patch4(0x00955D2F + 1, 2111010);
-    Patch4(0x00955D3A + 1, 2111003);
+    Patch4(0x00955D3A + 1, 2111003); // Poison Mist?
     Patch4(0x00955D45 + 1, 2201010);
     Patch4(0x00955D50 + 1, 2211014);
     Patch4(0x00955D5B + 1, 2201013);
@@ -1934,7 +1938,7 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
-    if (nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000) {
+    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000) {
         return 1;
     }
     return (remove_bullet_skill_hook(nSkillID));
@@ -2119,7 +2123,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 5101012 || nSkillID == 4111012 || nSkillID == 4101008 || nSkillID == 3101011 || nSkillID == 3111009 || nSkillID == 3001004) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -2510,6 +2514,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
+    ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
     //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     CodeCave((void*)please, 0x00791C41, 4);
