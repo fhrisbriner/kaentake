@@ -79,6 +79,7 @@ int job = 0;
 double strMultiplier = 0.28;
 DWORD ZtlBussy = 0x004746DD;
 int currStr = 4;
+int PassiveSpeed = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -1234,12 +1235,12 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if (nSkillID == 4101008 ) {
+    if (nSkillID == 4101008 ||nSkillID == 14101006) {
         if (get_weapon_type() == 47) {
             return true;
         }
     }
-    if (nSkillID == 3411004 ) {
+    if (nSkillID == 3411004 ||nSkillID == 5201005) {
         if (get_weapon_type() == 45) {
             return true;
         }
@@ -1701,12 +1702,11 @@ bool isCopyCatSkill(int skillId) {
     int secondDigit = (job / 10) % 10;
     int third = skillId / 1000;
     int thirdDigit = (third / 10) % 10;
-
-    if (thirdDigit == 0) {
-        return secondDigit == 4 || secondDigit == 5;
-    }
     if (skillId == 3411004 || skillId == 4101008) {
         return true;
+    }
+    if (thirdDigit == 0) {
+        return secondDigit == 4 || secondDigit == 5;
     }
     return false;
 }
@@ -1931,6 +1931,12 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         }
         if (jobID == 510 || jobID == 511 || jobID == 512 || jobID == 541 || jobID == 542) {
             mastery = pGetSkillLevel(_this, charData, 5100001, skillEntry);
+        }
+        if (jobID == 311 || jobID == 312) {
+            PassiveSpeed = pGetSkillLevel(_this, charData, 3110000, skillEntry);
+        }
+        if  (jobID == 341 || jobID == 342) {
+            PassiveSpeed = pGetSkillLevel(_this, charData, 3410000, skillEntry);
         }
         tb = pGetSkillLevel(_this, charData, 15110000, skillEntry);
         if (pGetSkillLevel(_this, charData, critSkillID, skillEntry) > 0) {
@@ -2366,7 +2372,7 @@ double ropebase = 3.0;
 void ropeFormula() {
     double rope;
     speed = 100 + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
-    rope = 3.0 * (speed / 100.0);
+    rope = 3.0 * (speed + PassiveSpeed / 100.0);
     if (rope < 3.0) {
         rope = 3.0;
     }
@@ -2495,6 +2501,43 @@ int(__fastcall tOnSkillKeyDownEnd(void* _this)) {
     return OnSkillKeyDownEnd(_this);
 }
 
+static auto _ZtlSecureFuse_double = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338); //v83
+static auto _ZtlSecureTear_double = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6); //v83
+
+
+auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(void*, int))0x009B2C3C; //v83
+
+void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
+    // Call the original function first
+    OriginalCVecCtrl__CalcFloat(this_, tElapse);
+    // Check if wings are active (m_bWingsNow at offset 0x17C)
+    bool isWingsActive = *(bool*)((uintptr_t)this_ + 0x17C); //v83
+
+    if (isWingsActive) {
+        // Get the horizontal velocity (if you want to use it)
+        double vx = _ZtlSecureFuse_double(
+            reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60)
+        );
+        // Check if left or right keys are pressed
+        if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
+            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
+                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                -100 - CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse() - PassiveSpeed
+            );
+        }
+        else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
+                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                100 + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse() + PassiveSpeed
+            );
+        }
+        else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
+            isWingsActive = false;
+        }
+    }
+}
+
 
 auto isMoveableSkill = (int(__cdecl*)(int))0x0095F96F;
 
@@ -2519,6 +2562,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(MesoFormula, mesoFormulaHook);
     ATTACH_HOOK(getPAD, getPAD_hook);
     ATTACH_HOOK(hook_bstr_t, bstrt);
+    ATTACH_HOOK(OriginalCVecCtrl__CalcFloat, CVecCtrl__CalcFloat_hook);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
     // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
     //ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
@@ -2550,6 +2594,8 @@ void AttachSkillEdits() {
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
+    Patch4(0x00765CFC + 1, 341);
+    Patch4(0x00765D19 + 1, 3410000);
     CodeCave((void*)DamCalc, 0x00791BAE, 1);
     skillHacks();
     changeMagicAttacks();
@@ -3221,3 +3267,5 @@ void BGMOverride() {
     ATTACH_HOOK(RestoreBGM, RestoreBgm_Hook);
     ATTACH_HOOK(SoundMan__PlayBGM, SoundMan__PlayBGM_Hook);
 }
+
+
