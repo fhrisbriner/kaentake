@@ -3010,6 +3010,12 @@ void AttachOtherHooks() {
     Patch1(0x008C3F8E + 1, 0x74); // weapon def
     PatchNop(0x00668C04, 5);
 
+    //jump move
+    Patch1(0x009539FA, 0xE9);
+    Patch4(0x009539FA + 1, 0x00953A11 - 0x009539FA - 5);
+    Patch1(0x009559E5, 0xE9);
+    Patch4(0x009559E5 + 1, 0x00955A20 - 0x009559E5 - 5);
+
     CodeCave((void*)NW_Multi, nwthrow, 0);
     Patch1(0x0078EDB1 + 1, 0x84);
     CodeCave((void*)Claw_5, 0x0078EDB1, 1);
