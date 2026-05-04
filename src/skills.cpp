@@ -2371,8 +2371,8 @@ double ropebase = 3.0;
 
 void ropeFormula() {
     double rope;
-    speed = 100 + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
-    rope = 3.0 * (speed + PassiveSpeed / 100.0);
+    speed = 100 + PassiveSpeed + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
+    rope = 3.0 * (speed / 100.0);
     if (rope < 3.0) {
         rope = 3.0;
     }
@@ -2523,13 +2523,13 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
         if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
             *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
                 reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                -100 - CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse() - PassiveSpeed
+                 -speed
             );
         }
         else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
             *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
                 reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                100 + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse() + PassiveSpeed
+                speed
             );
         }
         else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
@@ -2604,7 +2604,7 @@ void AttachSkillEdits() {
     Patch1(0x0095795E, 0x83);
     Patch1(0x0095795E + 1, 0xC0);
     Patch1(0x0095795E + 2, 0x00);
-
+    Patch1(0x0094DC26, 0xEB); // remove Custom spring conditions
     //dash can't cancel
     ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     Patch1(0x94cdb0, 0xeb);
