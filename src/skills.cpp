@@ -2607,6 +2607,7 @@ void AttachSkillEdits() {
     Patch1(0x0094DC26, 0xEB); // remove Custom spring conditions
     //dash can't cancel
     ATTACH_HOOK(dashOnDash, dashOnDash_hook);
+    ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
 
     //octojump
@@ -2621,6 +2622,7 @@ void AttachSkillEdits() {
     Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
+
 
     //replaceSpark();
 }
