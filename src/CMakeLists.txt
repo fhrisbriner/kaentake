@@ -49,7 +49,30 @@ target_link_options(launcher PRIVATE "/MANIFEST:NO")
 
 target_link_libraries(launcher PRIVATE
         Detours
+        gdiplus.lib
+        urlmon.lib
 )
+
+if (MSVC)
+    set_property(TARGET injector PROPERTY
+            MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebugDLL>$<$<NOT:$<CONFIG:Debug>>:MultiThreaded>")
+    set_property(TARGET launcher PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif ()
+
+foreach (MN_LAUNCHER_ENV_KEY
+        MN_UPDATE_ENABLED
+        MN_UPDATE_LATEST_VERSION
+        MN_UPDATE_BASE_URL
+        MN_RUNTIME_VERSION
+        MN_UPDATE_S3_ENDPOINT
+        MN_UPDATE_S3_BUCKET
+        MN_UPDATE_S3_REGION)
+    if (DEFINED ENV{${MN_LAUNCHER_ENV_KEY}})
+        string(REPLACE "\"" "\\\"" MN_LAUNCHER_ENV_VALUE "$ENV{${MN_LAUNCHER_ENV_KEY}}")
+        target_compile_definitions(launcher PRIVATE "${MN_LAUNCHER_ENV_KEY}=\"${MN_LAUNCHER_ENV_VALUE}\"")
+    endif ()
+endforeach ()
 
 set_target_properties(launcher PROPERTIES
         OUTPUT_NAME ${PROJECT_NAME}
