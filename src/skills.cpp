@@ -710,10 +710,6 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
-            mov eax, 2311005
-            cmp esi, eax
-            je buff
-
             mov eax, 2301005
             jmp doActiveJmpBack
 
@@ -1060,8 +1056,7 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Priest =====
         2211011,
-        2211012, 2211014, 2211015, 2211013,
-        2311005,
+        2211012, 2211014, 2211015,
 
         // ===== IL Mage =====
         2411010, 2411011, 2411012, 2411013,
@@ -1819,6 +1814,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     }
     setMAD();
     if (isCopyCatSkill(nSkillID)) {
+        DebugMessage("Wtf");
         if (nSkillID == 4101008) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 14101006, nScanCode, pnConsumeCheck);
         }
@@ -1828,15 +1824,12 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 2211013) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
         }
-
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
-    if (nSkillID == 2211013) {
-        return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
-    }
-    if (!isCorrectWeapon(nSkillID)) {
-        return 0;
-    }
+
+    // if (!isCorrectWeapon(nSkillID)) {
+    //     return 0;
+    // }
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
