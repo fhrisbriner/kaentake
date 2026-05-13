@@ -1250,7 +1250,7 @@ bool isCorrectWeapon(int nSkillID) {
         }
     }
     if (nSkillID == 2211013 ||nSkillID == 2311005) {
-        if ((get_weapon_type() == 37 || get_weapon_type() == 38 || get_weapon_type() == 32)) {
+       if (get_weapon_type() == 37 || get_weapon_type() == 38 || get_weapon_type() == 32) {
             return true;
         }
     }
@@ -1716,7 +1716,7 @@ bool isCopyCatSkill(int skillId) {
     int secondDigit = (job / 10) % 10;
     int third = skillId / 1000;
     int thirdDigit = (third / 10) % 10;
-    if (skillId == 3411004 || skillId == 4101008) {
+    if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013) {
         return true;
     }
     if (thirdDigit == 0) {
@@ -1821,6 +1821,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 3411004) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 5201005, nScanCode, pnConsumeCheck);
         }
+        if (nSkillID == 2211013) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
+        }
+
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
     if (!isCorrectWeapon(nSkillID)) {
