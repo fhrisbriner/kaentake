@@ -1537,12 +1537,12 @@ void*(__fastcall CMovePath__MakeMovePath_Hook)(
 
 
 typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTemplate* pTemplate);
-static auto SetFromWhenDoom = reinterpret_cast<SetFromWhenDoom_t>(0x00789EFD);
 
 typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
 static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
 
-SetFromWhenDoom_t Hook_FromWhenDoom = [](MobStat* pThis, void* edx, MobTemplate* pTemplate) -> void {
+auto SetFromWhenDoom = (void(__thiscall*)(MobStat*, MobTemplate*)) 0x00789EFD;
+void __fastcall SetFromWhenDoom_Hook (MobStat* pThis, void* edx, MobTemplate* pTemplate) {
     pTemplate = GetMobTemplate(100100);
     DEBUG_MESSAGE("first");
     memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
@@ -1555,7 +1555,7 @@ SetFromWhenDoom_t Hook_FromWhenDoom = [](MobStat* pThis, void* edx, MobTemplate*
     pThis->nACC = 0;
     pThis->nSpeed = 0;
     DEBUG_MESSAGE(".");
-};
+}
 
 
 auto onDoomed = (void(__thiscall*)(void*, int))0x0066D6D4;
@@ -2605,7 +2605,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
     //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
-    ATTACH_HOOK(SetFromWhenDoom, Hook_FromWhenDoom);
+    ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
     ATTACH_HOOK(onDoomed, OnDoomed_Hook);
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
     CodeCave((void*)please, 0x00791C41, 4);

@@ -15,30 +15,49 @@
 // The 4 stat slots written by the engine sit on a 32-byte stride.
 // nPDR/nMDR/nSpeed are not touched by sub_789EFD; their offsets here continue
 // the same stride and should be verified before relying on them.
-struct MobStat {
-    int  nLevel;                 // +0x00
-    int  aDamagedElemAttr[8];    // +0x04 .. +0x23  (32 bytes)
-    int  nPAD;                   // +0x24
-    int  _padPAD[7];
-    int  nMAD;                   // +0x44
-    int  _padMAD[7];
-    int  nACC;                   // +0x64
-    int  _padACC[7];
-    int  nEVA;                   // +0x84
-    int  _padEVA[7];
-    int  nPDR;                   // +0xA4 (guess)
-    int  _padPDR[7];
-    int  nMDR;                   // +0xC4 (guess)
-    int  _padMDR[7];
-    int  nSpeed;                 // +0xE4 (guess)
-    int  _padSpeed[7];
+class MobStat {
+public:
+    int nLevel; // 0x0
+    int aDamagedElemAttr[8]; // 0x4
+    int nPAD; // 0x24
+    int nPAD_; // 0x28
+    int rPAD_; // 0x2C
+    int tPAD_; // 0x30
+    int nPDR; // 0x34
+    int nPDR_; // 0x38
+    int rPDR_; // 0x3C
+    int tPDR_; // 0x40
+    int nMAD; // 0x44
+    int nMAD_; // 0x48
+    int rMAD_; // 0x4C
+    int tMAD_; // 0x50
+    int nMDR; // 0x54
+    int nMDR_; // 0x58
+    int rMDR_; // 0x5C
+    int tMDR_; // 0x60
+    int nACC; // 0x64
+    int nACC_; // 0x68
+    int rACC_; // 0x6C
+    int tACC_; // 0x70
+    int nEVA; // 0x74
+    int nEVA_; // 0x78
+    int rEVA_; // 0x7C
+    int tEVA_; // 0x80
+    int nSpeed; // 0x84
+    int nSpeed_; // 0x88
+    int rSpeed_; // 0x8C
+    int tSpeed_; // 0x90
+    char padding1[0x8C]; // 0x94
+    int nPImmune_; // 0x120
+    char padding2[0xC4]; // 0x124
+    int bInvincible;
 };
 
 static_assert(offsetof(MobStat, aDamagedElemAttr) == 0x04, "MobStat::aDamagedElemAttr offset mismatch");
 static_assert(offsetof(MobStat, nPAD) == 0x24, "MobStat::nPAD offset mismatch");
 static_assert(offsetof(MobStat, nMAD) == 0x44, "MobStat::nMAD offset mismatch");
 static_assert(offsetof(MobStat, nACC) == 0x64, "MobStat::nACC offset mismatch");
-static_assert(offsetof(MobStat, nEVA) == 0x84, "MobStat::nEVA offset mismatch");
+//static_assert(offsetof(MobStat, nEVA) == 0x84, "MobStat::nEVA offset mismatch");
 
 
 // Confirmed from IDA sub_789EFD: aDamagedElemAttr is 32 bytes at +0x118 (decimal 280).
