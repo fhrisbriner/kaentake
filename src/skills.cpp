@@ -10,6 +10,7 @@
 #include <random>
 #include <string>
 #include <sstream>
+#include <unordered_map>
 
 
 class _bstr_t;
@@ -1541,10 +1542,20 @@ typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTempla
 typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
 static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
 
+static std::unordered_map<MobTemplate*, int> g_TemplateIdByPtr;
+
+MobTemplate* __cdecl GetMobTemplate_Hook(int templateId) {
+    MobTemplate* p = GetMobTemplate(templateId);
+    if (p) {
+        g_TemplateIdByPtr[p] = templateId;
+    }
+    return p;
+}
+
 auto SetFromWhenDoom = (void(__thiscall*)(MobStat*, MobTemplate*))0x00789EFD;
 void __fastcall SetFromWhenDoom_Hook(MobStat* pThis, void* edx, MobTemplate* pTemplate) {
     pTemplate = GetMobTemplate(100100);
-    DEBUG_MESSAGE("first");
+    DebugMessage("first");
     memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
     pThis->nPAD = 0;
     pThis->nMAD = 0;
@@ -1554,29 +1565,23 @@ void __fastcall SetFromWhenDoom_Hook(MobStat* pThis, void* edx, MobTemplate* pTe
     pThis->nEVA = 0;
     pThis->nACC = 0;
     pThis->nSpeed = 0;
-    DEBUG_MESSAGE(".");
+    DebugMessage(".");
 }
 
 
-auto onDoomed = (void(__thiscall*)(void*, int))0x0066D6D4;
+auto onDoomed = (void(__thiscall*)(Mob*, int))0x0066D6D4;
 
 void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom) {
-    DEBUG_MESSAGE("OnDoomed");
     int templateId = 0;
     if (bDoom) {
-        templateId = ZtlSecureFuse(pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID, pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID_CS);
-        Patch4(0x0066D722 + 1, templateId);
+        auto it = g_TemplateIdByPtr.find(pThis->m_pTemplate);
+        templateId = (it != g_TemplateIdByPtr.end()) ? it->second : 0;
+        printf("templateId: %d\n", templateId);
+        if (templateId != 0) {
+            Patch4(0x0066D722 + 1, templateId);
+        }
     }
     onDoomed(pThis, bDoom);
-    if (templateId != 0) {
-        MobTemplate* mobTemplate = GetMobTemplate(100100);
-        MobTemplate* currMonsterTemplate = GetMobTemplate(templateId);
-        mobTemplate->_ZtlSecureTear_dwTemplateID[0] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[0];
-        mobTemplate->_ZtlSecureTear_dwTemplateID[1] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[1];
-        mobTemplate->_ZtlSecureTear_dwTemplateID_CS = currMonsterTemplate->_ZtlSecureTear_dwTemplateID_CS;
-        pThis->m_pTemplateByDoom = mobTemplate;
-        DEBUG_MESSAGE("OnDoomed2");
-    }
 };
 
 double owo = 0.0;
@@ -1827,9 +1832,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
 
-    // if (!isCorrectWeapon(nSkillID)) {
-    //     return 0;
-    // }
+    if (!isCorrectWeapon(nSkillID)) {
+        return 0;
+    }
+
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
@@ -2604,6 +2610,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
     // ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     // ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    ATTACH_HOOK(GetMobTemplate, GetMobTemplate_Hook);
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
     ATTACH_HOOK(onDoomed, OnDoomed_Hook);
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
