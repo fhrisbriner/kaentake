@@ -710,6 +710,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 2311005
+            cmp esi, eax
+            je buff
+
             mov eax, 2301005
             jmp doActiveJmpBack
 
@@ -1057,6 +1061,7 @@ bool isSkillIDMatched(int nSkillID) {
         // ===== Priest =====
         2211011,
         2211012, 2211014, 2211015, 2211013,
+        2311005,
 
         // ===== IL Mage =====
         2411010, 2411011, 2411012, 2411013,
@@ -1239,18 +1244,18 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if (nSkillID == 4101008 ||nSkillID == 14101006) {
+    if (nSkillID == 4101008 || nSkillID == 14101006) {
         if (get_weapon_type() == 47) {
             return true;
         }
     }
-    if (nSkillID == 3411004 ||nSkillID == 5201005) {
+    if (nSkillID == 3411004 || nSkillID == 5201005) {
         if (get_weapon_type() == 45) {
             return true;
         }
     }
-    if (nSkillID == 2211013 ||nSkillID == 2311005) {
-       if (get_weapon_type() == 37 || get_weapon_type() == 38 || get_weapon_type() == 32) {
+    if (nSkillID == 2211013 || nSkillID == 2311005) {
+        if (get_weapon_type() == 37 || get_weapon_type() == 38 || get_weapon_type() == 32) {
             return true;
         }
     }
@@ -1541,8 +1546,8 @@ typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTempla
 typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
 static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
 
-auto SetFromWhenDoom = (void(__thiscall*)(MobStat*, MobTemplate*)) 0x00789EFD;
-void __fastcall SetFromWhenDoom_Hook (MobStat* pThis, void* edx, MobTemplate* pTemplate) {
+auto SetFromWhenDoom = (void(__thiscall*)(MobStat*, MobTemplate*))0x00789EFD;
+void __fastcall SetFromWhenDoom_Hook(MobStat* pThis, void* edx, MobTemplate* pTemplate) {
     pTemplate = GetMobTemplate(100100);
     DEBUG_MESSAGE("first");
     memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
@@ -1560,7 +1565,7 @@ void __fastcall SetFromWhenDoom_Hook (MobStat* pThis, void* edx, MobTemplate* pT
 
 auto onDoomed = (void(__thiscall*)(void*, int))0x0066D6D4;
 
-void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom ) {
+void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom) {
     DEBUG_MESSAGE("OnDoomed");
     int templateId = 0;
     if (bDoom) {
@@ -1581,13 +1586,12 @@ void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom ) {
 
 double owo = 0.0;
 
-auto mesoFormulaHook = (int(__thiscall*)(void *, void *, BasicStat*, SecondaryStat*, MobStat *, int *, unsigned int, int *))0x00791FBC;
-int __fastcall MesoFormula(void *pThis, PVOID edx, void *cd, BasicStat *bs, SecondaryStat *ss, MobStat *ms, int *anMoneyAmount,
-                           unsigned int dwDropFlag, int *aDamage) {
+auto mesoFormulaHook = (int(__thiscall*)(void*, void*, BasicStat*, SecondaryStat*, MobStat*, int*, unsigned int, int*))0x00791FBC;
+int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, BasicStat* bs, SecondaryStat* ss, MobStat* ms, int* anMoneyAmount,
+        unsigned int dwDropFlag, int* aDamage) {
     long double ratio;
     int nAttackCount;
     int i;
-
 
 
     nAttackCount = 0;
@@ -1809,10 +1813,10 @@ auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
         int pnConsumeCheck) {
-            if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
-                job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
-                comboStuff();
-            }
+    if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
+        job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
+        comboStuff();
+    }
     setMAD();
     if (isCopyCatSkill(nSkillID)) {
         if (nSkillID == 4101008) {
@@ -1821,11 +1825,11 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 3411004) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 5201005, nScanCode, pnConsumeCheck);
         }
-        if (nSkillID == 2211013) {
-            return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
-        }
 
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
+    }
+    if (nSkillID == 2211013) {
+        return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
     }
     if (!isCorrectWeapon(nSkillID)) {
         return 0;
@@ -1911,7 +1915,7 @@ auto pGetSkillLevel = (int(__thiscall*)(int, void*, int, int))0x007616F6;
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-    currStr =CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
+    currStr = CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
     if (i) {
         pGetSkillLevel(_this, charData, i, skillEntry);
         if (jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
@@ -1953,7 +1957,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         if (jobID == 311 || jobID == 312) {
             PassiveSpeed = pGetSkillLevel(_this, charData, 3110000, skillEntry);
         }
-        if  (jobID == 341 || jobID == 342) {
+        if (jobID == 341 || jobID == 342) {
             PassiveSpeed = pGetSkillLevel(_this, charData, 3410000, skillEntry);
         }
         tb = pGetSkillLevel(_this, charData, 15110000, skillEntry);
@@ -2519,38 +2523,33 @@ int(__fastcall tOnSkillKeyDownEnd(void* _this)) {
     return OnSkillKeyDownEnd(_this);
 }
 
-static auto _ZtlSecureFuse_double = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338); //v83
-static auto _ZtlSecureTear_double = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6); //v83
+static auto _ZtlSecureFuse_double = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338);  // v83
+static auto _ZtlSecureTear_double = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6); // v83
 
 
-auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(void*, int))0x009B2C3C; //v83
+auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(void*, int))0x009B2C3C; // v83
 
 void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
     // Call the original function first
     OriginalCVecCtrl__CalcFloat(this_, tElapse);
     // Check if wings are active (m_bWingsNow at offset 0x17C)
-    bool isWingsActive = *(bool*)((uintptr_t)this_ + 0x17C); //v83
+    bool isWingsActive = *(bool*)((uintptr_t)this_ + 0x17C); // v83
 
     if (isWingsActive) {
         // Get the horizontal velocity (if you want to use it)
         double vx = _ZtlSecureFuse_double(
-            reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60)
-        );
+                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60));
         // Check if left or right keys are pressed
         if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
             *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
-                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                 -speed
-            );
-        }
-        else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
+                    reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                    -speed);
+        } else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
             *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
-                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                speed
-            );
-        }
-        else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
+                    reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                    speed);
+        } else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
             isWingsActive = false;
         }
     }
@@ -2583,7 +2582,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(OriginalCVecCtrl__CalcFloat, CVecCtrl__CalcFloat_hook);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
     // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
-    //ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
+    // ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
     // ATTACH_HOOK(tGetOneTimeAction, tGetOneTimeAction);
     // // ATTACH_HOOK(tSetOneTimeAction, tSetOneTimeAction);
     // // ATTACH_HOOK(tOnResolveMoveAction, tOnResolveMoveAction);
@@ -2607,8 +2606,8 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
-    //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
-    //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    // ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    // ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
     ATTACH_HOOK(onDoomed, OnDoomed_Hook);
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
@@ -2626,13 +2625,13 @@ void AttachSkillEdits() {
     Patch1(0x0095795E + 1, 0xC0);
     Patch1(0x0095795E + 2, 0x00);
     Patch1(0x0094DC26, 0xEB); // remove Custom spring conditions
-    //dash can't cancel
+    // dash can't cancel
     ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
 
-    //octojump
-    //Patch4(0x0096bf04 + 1, 5201007);
+    // octojump
+    // Patch4(0x0096bf04 + 1, 5201007);
     Patch4(0x0096c062 + 1, 5201007);
 
     Patch4(0x004FB2ED, 4511006); // cmp esi, imm32  (sub_4FB292)
@@ -2645,7 +2644,7 @@ void AttachSkillEdits() {
     Patch4(0x009810B0, 4511006);
 
 
-    //replaceSpark();
+    // replaceSpark();
 }
 
 
@@ -3079,7 +3078,7 @@ void AttachOtherHooks() {
     Patch1(0x008C3F8E + 1, 0x74); // weapon def
     PatchNop(0x00668C04, 5);
 
-    //jump move
+    // jump move
     Patch1(0x009539FA, 0xE9);
     Patch4(0x009539FA + 1, 0x00953A11 - 0x009539FA - 5);
     Patch1(0x009559E5, 0xE9);
@@ -3121,7 +3120,6 @@ void AttachOtherHooks() {
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
-
 }
 
 
@@ -3149,7 +3147,7 @@ public:
 };
 
 
-inline LONGLONG myArrayForCustomEXP[] = { 1, 15, 44, 96, 188, 312, 550, 731, 969, 1154, 1358, 1358, 1810, 2308, 2856, 3464, 4134, 4872, 5688, 6588, 7582, 8678, 9890, 11224, 12698, 14326, 16122, 18102, 20290, 22704, 25368, 28308, 31554, 35136, 39090, 43454, 48272, 53588, 59458, 65938, 73090, 80984, 89700, 99320, 109940, 121666, 134608, 148896, 164670, 182084, 201308, 222532, 245962, 271830, 300386, 331914, 366722, 405150, 447574, 494414, 546126, 603218, 666250, 735840, 812672, 897498, 991150, 1094548, 1208706, 1334744, 1473896, 1627532, 1797156, 1984432, 2191198, 2419484, 2671528, 2949804, 3257042, 3596258, 3970778, 4384278, 4840816, 5344870, 5901388, 6515830, 7194226, 7749044, 8173766, 8621760, 9094306, 9592748, 10118504, 10673072, 11258030, 11875046, 12525870, 13212362, 13936472, 14700264, 15505912, 16355710, 17252078, 18197566, 19194866, 20246818, 21356418, 22526822, 23761366, 25063564, 26437120, 27885948, 29414172, 31026142, 32726446, 34519930,362790501, 382743979, 402768232, 422812419, 442827910, 462770506, 482600578, 502283177, 521788075, 541089799, 560167642, 579005600, 597592213, 615920387, 633987156, 651793372, 669342374, 686641632, 703700356, 720530097, 737143358, 753553293, 769773431, 785817421, 801698849, 817430061, 833022053, 848484423, 863825371, 879051717, 894168994, 909181536, 924092529, 938904073, 953617246, 968232162, 982747040, 997158318, 1011459774, 1025643664, 1039700875, 1053620106, 1067388075, 1080989769, 1094408685, 1107626082, 1120621202, 1133371511, 1145852981, 1158040357, 1169907493, 1181427724, 1192574233, 1203320470, 1213640573, 1223509773, 1232904846, 1241804545, 1250190029, 1258045218, 1265357192, 1272116548, 1278317720, 1283959260, 1289043057, 1293574364, 1297561264, 1301549825, 1305551374, 1309565938, 1313593545, 1317634223, 1321688002, 1325754911, 1329834979, 1333928236, 1338034713, 1342154439, 1346287447, 1350433767, 1354593432, 1358766474, 1362952926, 1367152822, 2205594688L, 2424154688L, 2668594688L, 2942194688L, 3489882688L, 4093322688L, 4758522688L, 5491962688L, 6300602688L, 7191922688L, 8173982688L, 9255474688L, 10445794688L, 11757434688L };
+inline LONGLONG myArrayForCustomEXP[] = { 1, 15, 44, 96, 188, 312, 550, 731, 969, 1154, 1358, 1358, 1810, 2308, 2856, 3464, 4134, 4872, 5688, 6588, 7582, 8678, 9890, 11224, 12698, 14326, 16122, 18102, 20290, 22704, 25368, 28308, 31554, 35136, 39090, 43454, 48272, 53588, 59458, 65938, 73090, 80984, 89700, 99320, 109940, 121666, 134608, 148896, 164670, 182084, 201308, 222532, 245962, 271830, 300386, 331914, 366722, 405150, 447574, 494414, 546126, 603218, 666250, 735840, 812672, 897498, 991150, 1094548, 1208706, 1334744, 1473896, 1627532, 1797156, 1984432, 2191198, 2419484, 2671528, 2949804, 3257042, 3596258, 3970778, 4384278, 4840816, 5344870, 5901388, 6515830, 7194226, 7749044, 8173766, 8621760, 9094306, 9592748, 10118504, 10673072, 11258030, 11875046, 12525870, 13212362, 13936472, 14700264, 15505912, 16355710, 17252078, 18197566, 19194866, 20246818, 21356418, 22526822, 23761366, 25063564, 26437120, 27885948, 29414172, 31026142, 32726446, 34519930, 362790501, 382743979, 402768232, 422812419, 442827910, 462770506, 482600578, 502283177, 521788075, 541089799, 560167642, 579005600, 597592213, 615920387, 633987156, 651793372, 669342374, 686641632, 703700356, 720530097, 737143358, 753553293, 769773431, 785817421, 801698849, 817430061, 833022053, 848484423, 863825371, 879051717, 894168994, 909181536, 924092529, 938904073, 953617246, 968232162, 982747040, 997158318, 1011459774, 1025643664, 1039700875, 1053620106, 1067388075, 1080989769, 1094408685, 1107626082, 1120621202, 1133371511, 1145852981, 1158040357, 1169907493, 1181427724, 1192574233, 1203320470, 1213640573, 1223509773, 1232904846, 1241804545, 1250190029, 1258045218, 1265357192, 1272116548, 1278317720, 1283959260, 1289043057, 1293574364, 1297561264, 1301549825, 1305551374, 1309565938, 1313593545, 1317634223, 1321688002, 1325754911, 1329834979, 1333928236, 1338034713, 1342154439, 1346287447, 1350433767, 1354593432, 1358766474, 1362952926, 1367152822, 2205594688L, 2424154688L, 2668594688L, 2942194688L, 3489882688L, 4093322688L, 4758522688L, 5491962688L, 6300602688L, 7191922688L, 8173982688L, 9255474688L, 10445794688L, 11757434688L };
 inline constexpr size_t maxLevelForCustomEXP = sizeof(myArrayForCustomEXP) / sizeof(myArrayForCustomEXP[0]);
 
 inline LONGLONG get_next_level_exp() {
@@ -3287,5 +3285,3 @@ void BGMOverride() {
     ATTACH_HOOK(RestoreBGM, RestoreBgm_Hook);
     ATTACH_HOOK(SoundMan__PlayBGM, SoundMan__PlayBGM_Hook);
 }
-
-
