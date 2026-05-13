@@ -1249,6 +1249,11 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
+    if (nSkillID == 2211013 ||nSkillID == 2311005) {
+        if ((get_weapon_type() == 37 || get_weapon_type() == 38 || get_weapon_type() == 32)) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -1539,6 +1544,7 @@ static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
 
 SetFromWhenDoom_t Hook_FromWhenDoom = [](MobStat* pThis, void* edx, MobTemplate* pTemplate) -> void {
     pTemplate = GetMobTemplate(100100);
+    DEBUG_MESSAGE("first");
     memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
     pThis->nPAD = 0;
     pThis->nMAD = 0;
@@ -1548,18 +1554,20 @@ SetFromWhenDoom_t Hook_FromWhenDoom = [](MobStat* pThis, void* edx, MobTemplate*
     pThis->nEVA = 0;
     pThis->nACC = 0;
     pThis->nSpeed = 0;
+    DEBUG_MESSAGE(".");
 };
 
-typedef void(__fastcall* OnDoomed_t)(Mob* pThis, void* edx, int bDoom);
-static auto OnDoomed = reinterpret_cast<OnDoomed_t>(0x0066D6D4);
 
-OnDoomed_t Hook_Doom = [](Mob* pThis, void* edx, int bDoom) -> void {
+auto onDoomed = (void(__thiscall*)(void*, int))0x0066D6D4;
+
+void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom ) {
+    DEBUG_MESSAGE("OnDoomed");
     int templateId = 0;
     if (bDoom) {
         templateId = ZtlSecureFuse(pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID, pThis->m_pTemplate->_ZtlSecureTear_dwTemplateID_CS);
         Patch4(0x0066D722 + 1, templateId);
     }
-    OnDoomed(pThis, edx, bDoom);
+    onDoomed(pThis, bDoom);
     if (templateId != 0) {
         MobTemplate* mobTemplate = GetMobTemplate(100100);
         MobTemplate* currMonsterTemplate = GetMobTemplate(templateId);
@@ -1567,6 +1575,7 @@ OnDoomed_t Hook_Doom = [](Mob* pThis, void* edx, int bDoom) -> void {
         mobTemplate->_ZtlSecureTear_dwTemplateID[1] = currMonsterTemplate->_ZtlSecureTear_dwTemplateID[1];
         mobTemplate->_ZtlSecureTear_dwTemplateID_CS = currMonsterTemplate->_ZtlSecureTear_dwTemplateID_CS;
         pThis->m_pTemplateByDoom = mobTemplate;
+        DEBUG_MESSAGE("OnDoomed2");
     }
 };
 
@@ -1591,6 +1600,7 @@ int __fastcall MesoFormula(void *pThis, PVOID edx, void *cd, BasicStat *bs, Seco
             ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
             __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
             *aDamage = damage;
+            DebugMessage("damage:%d", damage);
             ++nAttackCount;
             ++aDamage;
         }
@@ -2595,6 +2605,9 @@ void AttachSkillEdits() {
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
     //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     //ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    ATTACH_HOOK(SetFromWhenDoom, Hook_FromWhenDoom);
+    ATTACH_HOOK(onDoomed, OnDoomed_Hook);
+    ATTACH_HOOK(mesoFormulaHook, MesoFormula);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
@@ -3105,9 +3118,6 @@ void AttachOtherHooks() {
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
 
-    ATTACH_HOOK(SetFromWhenDoom, Hook_FromWhenDoom);
-    ATTACH_HOOK(OnDoomed, Hook_Doom);
-    ATTACH_HOOK(mesoFormulaHook, MesoFormula);
 }
 
 
