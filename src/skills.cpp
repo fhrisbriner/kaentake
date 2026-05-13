@@ -1825,6 +1825,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 3411004) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 5201005, nScanCode, pnConsumeCheck);
         }
+        if (nSkillID == 2211013) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
+        }
 
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
