@@ -353,9 +353,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
-            mov eax, 2211015
+            mov eax, 2211016
             cmp esi, eax
-            je buff
+            je magic
+
 
                 // IL Mage
             mov eax, 2411010
@@ -1057,7 +1058,7 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Priest =====
         2211011,
-        2211012, 2211014, 2211015,
+        2211012, 2211014, 2221015, 2211016, 2211013,
 
         // ===== IL Mage =====
         2411010, 2411011, 2411012, 2411013,
@@ -1066,7 +1067,7 @@ bool isSkillIDMatched(int nSkillID) {
         2511006, 2511004, 2511001,
 
         // ===== Priest =====
-        2211004, 2221015,
+        2211004,
 
         // ===== Bowman =====
         3001013,
@@ -1628,7 +1629,6 @@ __declspec(naked) void AdjustAccuracyCalc() {
     }
 }
 
-
 auto SetDamaged_Hook = (void(__thiscall*)(void*, int, int, int, unsigned __int16, int*, int, int, int, int, int))0x009581A9;
 
 void(__fastcall SetDamaged)(void* _this, void* edx,
@@ -1684,6 +1684,18 @@ void AttachSkillOffsetMod() {
     Patch1(0x007A5B31 + 1, 0x69);
     // Second occurrence at 0x007A5B86
     Patch1(0x007A5B86 + 1, 0x69);
+}
+
+constexpr DWORD dwDoomShowAffectedSkill = 0x0066F26A;
+constexpr DWORD dwShowAffectedSkillRetn = 0x0066F2AD;
+
+
+_declspec(naked) void SetColorToDoom() {
+    _asm {
+        call onDoomed
+        mov dword ptr[ebp-16], 0x78a0c5
+        jmp dword ptr[dwShowAffectedSkillRetn]
+    }
 }
 
 
@@ -2645,6 +2657,11 @@ void AttachSkillEdits() {
     Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
+
+    CodeCave(SetColorToDoom, dwDoomShowAffectedSkill, 5);
+    Patch1(0x0066D780 + 1, 50); // Changes the delay to transition the color to 100ms
+    FillBytes(0x0066D780 + 2, 0x90, 3);
+    FillBytes(0x0066D81E, 0x90, 7); // Disables removing the mob when Doom happen
 
 
     // replaceSpark();
