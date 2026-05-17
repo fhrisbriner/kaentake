@@ -77,14 +77,14 @@ void BGMOverride();
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
 
 inline void AttachClientHooks() {
-    AllocConsole();
+    //AllocConsole();
     FILE* fDummy;
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);
     freopen_s(&fDummy, "CONIN$", "r", stdin);
     setvbuf(stdout, nullptr, _IONBF, 0);
     LogInfo("AttachClientHooks: begin, image delta=0x%08X", GetImageDelta());
-   (AttachClientBypass());
+    (AttachClientBypass());
     //AttachClientInlink();
     (AttachStringPoolMod());
     (AttachResManMod());
@@ -101,7 +101,6 @@ inline void AttachClientHooks() {
     (PacketHooks());
     (AttachMapObjectFade());
     (BGMOverride());
-    LogInfo("AttachClientHooks: all done");
 }
 
 

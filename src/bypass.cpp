@@ -379,7 +379,10 @@ void AttachClientBypass() {
     ATTACH_HOOK(CWvsApp::Run, CWvsApp::Run_hook);
     ATTACH_HOOK(CLogin::SendCheckPasswordPacket, CLogin::SendCheckPasswordPacket_hook);
     ATTACH_HOOK(CWndMan::TranslateMessage, CWndMan::TranslateMessage_hook);
-
+    PatchNop(0x00460AED, 2);
+    PatchNop(0x004F350C, 6); // Apply 6 NOPs at address 0x004F351E
+    PatchNop(0x004F351E, 6); //Apply 6 NOPs at address 0x004F350C
+    PatchNop(0x00A08D5B, 5);
     PatchRetZero(0x009FEC62); // CWvsApp::EnableWinKey
     PatchRetZero(0x009F18C9); // ShowStartUpWndModal
     PatchRetZero(0x00422C7E); // ShowAdBalloon

@@ -1503,7 +1503,7 @@ void(__fastcall AddRush_Hook)(void* _this, void* edx, int a2, int vx, int a4) {
     switch ((int)_ReturnAddress()) {
     case 0x00952F74:
     case 0x00952F8C:
-        DEBUG_MESSAGE("rush override");
+
         a2 = 1000;
     default:
         a2 = a2;
@@ -1529,8 +1529,6 @@ void*(__fastcall CMovePath__MakeMovePath_Hook)(
         int nMoveAction,
         int tElapse) {
     if ((DWORD)_ReturnAddress() == 0x0052EFDA) {
-        DEBUG_MESSAGE("nAttr: %d, x: %d, y: %d, vx: %d, vy: %d, nMoveAction: %d, Elapse: %d", nAttr, x, y, vx, vy, nMoveAction,
-                tElapse);
         return CMovePath__MakeMovePath(_this, 8, pfh, pfhStart, pLR, 125, y, vx, vy, nMoveAction, 60);
     }
     return CMovePath__MakeMovePath(_this, nAttr, pfh, pfhStart, pLR, x, y, vx, vy, nMoveAction, tElapse);
@@ -1555,7 +1553,6 @@ MobTemplate* __cdecl GetMobTemplate_Hook(int templateId) {
 auto SetFromWhenDoom = (void(__thiscall*)(MobStat*, MobTemplate*))0x00789EFD;
 void __fastcall SetFromWhenDoom_Hook(MobStat* pThis, void* edx, MobTemplate* pTemplate) {
     pTemplate = GetMobTemplate(100100);
-    DebugMessage("first");
     memcpy(pThis->aDamagedElemAttr, pTemplate->aDamagedElemAttr, sizeof(pThis->aDamagedElemAttr)); // might be interesting to change this later
     pThis->nPAD = 0;
     pThis->nMAD = 0;
@@ -1819,7 +1816,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     }
     setMAD();
     if (isCopyCatSkill(nSkillID)) {
-        DebugMessage("Wtf");
         if (nSkillID == 4101008) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 14101006, nScanCode, pnConsumeCheck);
         }
@@ -1861,7 +1857,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (nSkillID == 5411021) {
         Patch4(0x00952F20 + 3, 5411021);
     }
-    DEBUG_MESSAGE("Combo: %d", getCurrentComboCount());
     if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
             return 0;
@@ -1899,7 +1894,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
 auto LoadSkillRoot_hook = (int(__cdecl*)(int, int, void*, int))0x0076119A;
 
 int(__cdecl LoadSkillRoot)(int skillid, int exception, void* a4, int a5) {
-    DEBUG_MESSAGE("%7d", skillid);
     return LoadSkillRoot_hook(skillid, exception, a4, a5);
 }
 
@@ -1920,7 +1914,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     currStr = CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
     if (i) {
         pGetSkillLevel(_this, charData, i, skillEntry);
-        if (jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
+        if (jobID == 300 || jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
             mastery = pGetSkillLevel(_this, charData, 3100000, skillEntry);
             critSkillID = 3000001;
         }
@@ -2629,7 +2623,7 @@ void AttachSkillEdits() {
     Patch1(0x0095795E + 2, 0x00);
     Patch1(0x0094DC26, 0xEB); // remove Custom spring conditions
     // dash can't cancel
-    ATTACH_HOOK(dashOnDash, dashOnDash_hook);
+    //ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
 
