@@ -2,3 +2,5 @@
 .vs
 .vscode
 build/
+.env
+external.zip
