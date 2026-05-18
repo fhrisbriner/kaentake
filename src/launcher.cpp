@@ -324,8 +324,7 @@ bool IsGitPath(const std::wstring &path) {
 bool IsLaunchVerifiedPath(const std::wstring &path) {
     return path.rfind(L"Data\\Skill\\", 0) == 0
         || path.rfind(L"Data\\Mob\\", 0) == 0
-        || path.rfind(L"Data\\Quest\\", 0) == 0
-        || path.rfind(L"Data\\Reactor\\", 0) == 0;
+        || path.rfind(L"Data\\Map\\", 0) == 0;
 }
 
 void EnumerateFiles(const std::wstring &directory, std::vector<DataFile> &files) {
@@ -755,6 +754,9 @@ bool StartRuntimeRepairUpdater() {
 }
 
 void SetUpdaterEnvironment() {
+    if (MN_UPDATE_BASE_URL[0] != '\0') {
+        SetEnvironmentVariableW(L"MN_UPDATE_BASE_URL", Utf8ToWide(MN_UPDATE_BASE_URL).c_str());
+    }
     if (MN_UPDATE_S3_ENDPOINT[0] != '\0') {
         SetEnvironmentVariableW(L"MN_UPDATE_S3_ENDPOINT", Utf8ToWide(MN_UPDATE_S3_ENDPOINT).c_str());
     }

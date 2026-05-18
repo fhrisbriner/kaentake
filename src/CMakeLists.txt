@@ -53,10 +53,28 @@ target_link_libraries(launcher PRIVATE
         urlmon.lib
 )
 
+
+# Build updater (CLI invoked by launcher; protocol documented at top of updater.cpp)
+add_executable(updater
+        updater.cpp
+)
+
+target_link_libraries(updater PRIVATE
+        winhttp.lib
+        bcrypt.lib
+        shell32.lib
+)
+
+set_target_properties(updater PROPERTIES
+        OUTPUT_NAME Updater
+)
+
 if (MSVC)
     set_property(TARGET injector PROPERTY
             MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebugDLL>$<$<NOT:$<CONFIG:Debug>>:MultiThreaded>")
     set_property(TARGET launcher PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set_property(TARGET updater PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif ()
 

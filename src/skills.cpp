@@ -1489,7 +1489,7 @@ void*(__fastcall isDarkSight)(void* _this) {
 
 auto isLeft = (int(__thiscall*)(void*))0x00451E42;
 
-int(__fastcall isLeft_Hook)(void* _this) {
+int(__fastcall isLeft_Hook)(void* _this, void* edx) {
     if (isLeft(_this) == 1) {
         isLeftH = true;
     } else {
