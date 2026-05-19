@@ -2256,7 +2256,7 @@ double div100 = 0.01;
 double random_number = 0.0;
 
 void redoMagic() {
-    double min = mastery > 0 ? (mastery * 0.05) + 0.1 : 0.10;
+    double min = mastery > 0 ? (mastery * 0.05) + 0.1 : 0.15;
     min = min(min, 0.99);
 
     std::uniform_real_distribution<double> dist(min, 1.0);
@@ -3068,12 +3068,12 @@ void AttachOtherHooks() {
     PatchNop(0x007650B3, 29);
 
     // uiStat stuff
-    Patch1(0x008C35C9 + 1, 0x2C); // weapon def
-    Patch1(0x008C374A + 1, 0x1A); // weapon def
-    Patch1(0x008C39E9 + 1, 0x62); // weapon def
-    Patch1(0x008C3B9C + 1, 0x50); // weapon def
-    Patch1(0x008C3D4F + 1, 0x3E); // weapon def
-    Patch1(0x008C3F8E + 1, 0x74); // weapon def
+    // Patch1(0x008C35C9 + 1, 0x2C); // weapon def
+    // Patch1(0x008C374A + 1, 0x1A); // weapon def
+    // Patch1(0x008C39E9 + 1, 0x62); // weapon def
+    // Patch1(0x008C3B9C + 1, 0x50); // weapon def
+    // Patch1(0x008C3D4F + 1, 0x3E); // weapon def
+    // Patch1(0x008C3F8E + 1, 0x74); // weapon def
     PatchNop(0x00668C04, 5);
 
     // jump move

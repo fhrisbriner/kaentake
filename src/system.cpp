@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "hook.h"
 #include "constants.h"
+#include "debug.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -118,8 +119,53 @@ HWND WINAPI CreateWindowExA_hook(DWORD dwExStyle, LPCSTR lpClassName, LPCSTR lpW
 typedef decltype(&RegCreateKeyExA) RegCreateKeyExA_t;
 static RegCreateKeyExA_t RegCreateKeyExA_orig = reinterpret_cast<RegCreateKeyExA_t>(GetAddress("ADVAPI32", "RegCreateKeyExA"));
 
+typedef decltype(&RegOpenKeyExA) RegOpenKeyExA_t;
+static RegOpenKeyExA_t RegOpenKeyExA_orig = reinterpret_cast<RegOpenKeyExA_t>(GetAddress("ADVAPI32", "RegOpenKeyExA"));
+
+typedef decltype(&RegOpenKeyA) RegOpenKeyA_t;
+static RegOpenKeyA_t RegOpenKeyA_orig = reinterpret_cast<RegOpenKeyA_t>(GetAddress("ADVAPI32", "RegOpenKeyA"));
+
+static bool SubKeyContainsWizet(LPCSTR lpSubKey) {
+    if (!lpSubKey) return false;
+    for (const char* p = lpSubKey; *p; ++p) {
+        if (_strnicmp(p, "Wizet", 5) == 0) return true;
+    }
+    return false;
+}
+
 LSTATUS WINAPI RegCreateKeyExA_hook(HKEY hKey, LPCSTR lpSubKey, DWORD Reserved, LPSTR lpClass, DWORD dwOptions, REGSAM samDesired, const LPSECURITY_ATTRIBUTES lpSecurityAttributes, PHKEY phkResult, LPDWORD lpdwDisposition) {
-    return RegCreateKeyExA_orig(HKEY_CURRENT_USER, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
+    LogInfo("RegCreateKeyExA hKey=%p subkey='%s' sam=0x%lX", (void*)hKey, lpSubKey ? lpSubKey : "(null)", (unsigned long)samDesired);
+    LSTATUS status = RegCreateKeyExA_orig(HKEY_CURRENT_USER, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
+    LogInfo("RegCreateKeyExA result status=%ld disposition=%lu handle=%p", status, lpdwDisposition ? *lpdwDisposition : 0, phkResult ? (void*)*phkResult : nullptr);
+    return status;
+}
+
+LSTATUS WINAPI RegOpenKeyExA_hook(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) {
+    // Force HKCU for any Wizet-containing subkey so two-step opens (open "Software\Wizet",
+    // then open "MapleStory" sub) get caught at the parent and the child handle lives in HKCU.
+    bool intercept = SubKeyContainsWizet(lpSubKey);
+    HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
+    if (intercept) {
+        LogInfo("RegOpenKeyExA hKey=%p subkey='%s' sam=0x%lX (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : "(null)", (unsigned long)samDesired);
+    }
+    LSTATUS status = RegOpenKeyExA_orig(root, lpSubKey, ulOptions, samDesired, phkResult);
+    if (intercept) {
+        LogInfo("RegOpenKeyExA result status=%ld handle=%p", status, phkResult ? (void*)*phkResult : nullptr);
+    }
+    return status;
+}
+
+LSTATUS WINAPI RegOpenKeyA_hook(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult) {
+    bool intercept = SubKeyContainsWizet(lpSubKey);
+    HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
+    if (intercept) {
+        LogInfo("RegOpenKeyA hKey=%p subkey='%s' (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : "(null)");
+    }
+    LSTATUS status = RegOpenKeyA_orig(root, lpSubKey, phkResult);
+    if (intercept) {
+        LogInfo("RegOpenKeyA result status=%ld handle=%p", status, phkResult ? (void*)*phkResult : nullptr);
+    }
+    return status;
 }
 
 
@@ -167,9 +213,12 @@ int WSPAPI WSPStartup_hook(WORD wVersionRequested, LPWSPDATA lpWSPData, LPWSAPRO
 
 
 void AttachSystemHooks() {
+    LogInfo("AttachSystemHooks: attaching registry + window + WSP hooks");
     ATTACH_HOOK(SetUnhandledExceptionFilter_orig, SetUnhandledExceptionFilter_hook);
     ATTACH_HOOK(CreateMutexA_orig, CreateMutexA_hook);
     ATTACH_HOOK(CreateWindowExA_orig, CreateWindowExA_hook);
     ATTACH_HOOK(RegCreateKeyExA_orig, RegCreateKeyExA_hook);
+    ATTACH_HOOK(RegOpenKeyExA_orig, RegOpenKeyExA_hook);
+    ATTACH_HOOK(RegOpenKeyA_orig, RegOpenKeyA_hook);
     ATTACH_HOOK(WSPStartup_orig, WSPStartup_hook);
 }

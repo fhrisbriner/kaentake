@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "hook.h"
 #include "constants.h"
+#include "debug.h"
 #include "wvs/config.h"
 #include "wvs/wnd.h"
 #include "wvs/wndman.h"
@@ -150,15 +151,21 @@ void CConfig::LoadCharacter_hook(int nWorldID, unsigned int dwCharacterId) {
 
 void CConfig::LoadGlobal_hook() {
     CConfig::LoadGlobal(this);
-    g_nResolution = GetOpt_Int(GLOBAL_OPT, "soScreenResolution", 0, 0, 4);
+    g_nResolution = GetOpt_Int(GLOBAL_OPT, "mnScreenResolution", 0, 0, 4);
+    LogInfo("CConfig::LoadGlobal_hook: g_nResolution=%d", g_nResolution);
 }
 
 void CConfig::SaveGlobal_hook() {
-    SetOpt_Int(GLOBAL_OPT, "soScreenResolution", g_nResolution);
+    LogInfo("CConfig::SaveGlobal_hook: writing g_nResolution=%d", g_nResolution);
+    SetOpt_Int(GLOBAL_OPT, "mnScreenResolution", g_nResolution);
     CConfig::SaveGlobal(this);
+    LogInfo("CConfig::SaveGlobal_hook: original SaveGlobal returned");
 }
 
 void CConfig::ApplySysOpt_hook(void* pSysOpt, int bApplyVideo) {
+    LogInfo("CConfig::ApplySysOpt_hook: pSysOpt=%p bApplyVideo=%d cbResolution=%d select=%d",
+            pSysOpt, bApplyVideo, g_cbResolution ? 1 : 0,
+            g_cbResolution ? g_cbResolution->m_nSelect : -1);
     CConfig::ApplySysOpt(this, pSysOpt, bApplyVideo);
     if (pSysOpt && bApplyVideo && g_cbResolution) {
         set_screen_resolution(g_cbResolution->m_nSelect, true);
@@ -644,30 +651,38 @@ void set_screen_resolution(int nResolution, bool bSave) {
     }
     if (nScreenWidth != g_nScreenWidth || nScreenHeight != g_nScreenHeight) {
         auto gr = reinterpret_cast<CWzGr2D*>(get_gr().GetInterfacePtr());
-        if (FAILED(gr->ScreenResolution(nScreenWidth, nScreenHeight))) {
-            return;
-        }
-        g_nScreenWidth = nScreenWidth;
-        g_nScreenHeight = nScreenHeight;
-        g_nAdjustCenterY = (g_nScreenHeight - 600) / 2;
-        if (CWndMan::IsInstantiated()) {
-            CWndMan::GetInstance()->ResetOrgWindow();
-            // Adjust CUtilDlgEx position
-            sRectQuestDlg.top = get_screen_height() / 2;
-            sRectQuestDlg.left = get_screen_width() / 2;
-        }
-        if (CWvsContext::IsInstantiated()) {
-            CWvsContext::GetInstance()->m_temporaryStatView.AdjustPosition_hook();
-        }
-        CField* field = get_field();
-        if (field) {
-            field->RestoreViewRange_hook();
-            // CMapLoadable::ReloadBack
-            reinterpret_cast<void(__thiscall*)(CMapLoadable*)>(0x00644491)(field);
+        HRESULT hr = gr->ScreenResolution(nScreenWidth, nScreenHeight);
+        if (SUCCEEDED(hr)) {
+            g_nScreenWidth = nScreenWidth;
+            g_nScreenHeight = nScreenHeight;
+            g_nAdjustCenterY = (g_nScreenHeight - 600) / 2;
+            if (CWndMan::IsInstantiated()) {
+                CWndMan::GetInstance()->ResetOrgWindow();
+                // Adjust CUtilDlgEx position
+                sRectQuestDlg.top = get_screen_height() / 2;
+                sRectQuestDlg.left = get_screen_width() / 2;
+            }
+            if (CWvsContext::IsInstantiated()) {
+                CWvsContext::GetInstance()->m_temporaryStatView.AdjustPosition_hook();
+            }
+            CField* field = get_field();
+            if (field) {
+                field->RestoreViewRange_hook();
+                // CMapLoadable::ReloadBack
+                reinterpret_cast<void(__thiscall*)(CMapLoadable*)>(0x00644491)(field);
+            }
+        } else {
+            // ScreenResolution failed (most likely FindScreenMode rejected the requested
+            // mode in fullscreen — monitor doesn't list it as a supported display mode).
+            // Don't drop the user's preference: still update g_nResolution below so the
+            // choice persists and we can retry on the next session/stage transition.
+            LogInfo("set_screen_resolution: ScreenResolution(%d, %d) FAILED hr=0x%08lX (mode not supported, keeping preference)",
+                    nScreenWidth, nScreenHeight, (unsigned long)hr);
         }
     }
     if (bSave) {
         g_nResolution = nResolution;
+        LogInfo("set_screen_resolution: bSave -> g_nResolution=%d (screen=%dx%d)", g_nResolution, g_nScreenWidth, g_nScreenHeight);
     }
 }
 
