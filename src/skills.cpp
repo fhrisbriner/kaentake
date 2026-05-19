@@ -2642,12 +2642,6 @@ void AttachSkillEdits() {
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
 
-    CodeCave(SetColorToDoom, dwDoomShowAffectedSkill, 5);
-    Patch1(0x0066D780 + 1, 50); // Changes the delay to transition the color to 100ms
-    FillBytes(0x0066D780 + 2, 0x90, 3);
-    FillBytes(0x0066D81E, 0x90, 7); // Disables removing the mob when Doom happen
-
-
     // replaceSpark();
 }
 
@@ -3110,8 +3104,27 @@ void AttachOtherHooks() {
     unsigned char sp_skip_array[] = { 0xe9, 0x08, 0x02, 0x00, 0x00, 0x90 };
     Patch1Array(0x008ad01a, sp_skip_array, sizeof(sp_skip_array));
 
+    CodeCave(SetColorToDoom, dwDoomShowAffectedSkill, 5);
+    Patch1(0x0066D780 + 1, 50); // Changes the delay to transition the color to 100ms
+    FillBytes(0x0066D780 + 2, 0x90, 3);
+    FillBytes(0x0066D81E, 0x90, 7); // Disables removing the mob when Doom happen
+
+
     Patch4(0x0078FE91 + 2, 0xAFE378);
     Patch4(0x0078FE6A + 2, 0xAFE378);
+
+
+    Patch1(0x004905EB, 0xEB);
+    Patch1(0x004CAA09, 0xEB); // Infinite chat 1 of 2 scroll through chat box
+    Patch1(0x004CAA84, 0xEB); // Infinite chat 2 of 2 scroll through chat box
+    //Remove "Repeating the same line over and over\r\ncan negatively affect other users." check allow spam text
+    Patch1(0x00490607, 0xEB);
+    Patch1(0x00490609, 0x27);
+    //Remove "Too much chatting can disrupt\r\nother players' ability to play the game." check allow spam text
+    Patch1(0x00490651, 0xEB);
+    Patch1(0x00490652, 0x1D);
+    // Pic Modifier - Allowed PIC to by typed
+    PatchNop(0x004ca8ba, 2);
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
