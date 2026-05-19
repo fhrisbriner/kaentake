@@ -281,7 +281,50 @@ bool WriteTextFile(const std::wstring &path, const std::wstring &text) {
 }
 
 std::wstring ResolveLatestDataVersion() {
-    return Utf8ToWide(MN_UPDATE_LATEST_VERSION);
+    const std::wstring fallback = Utf8ToWide(MN_UPDATE_LATEST_VERSION);
+
+    if (MN_UPDATE_BASE_URL[0] == '\0') {
+        return fallback;
+    }
+
+    std::wstring baseUrl = Utf8ToWide(MN_UPDATE_BASE_URL);
+    while (!baseUrl.empty() && baseUrl.back() == L'/') {
+        baseUrl.pop_back();
+    }
+
+    wchar_t tempDir[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, tempDir) == 0) {
+        DebugLog(L"ResolveLatestDataVersion: GetTempPathW failed error=%lu; using fallback %s", GetLastError(), fallback.c_str());
+        return fallback;
+    }
+
+    wchar_t tempFile[MAX_PATH] = {};
+    if (GetTempFileNameW(tempDir, L"mnv", 0, tempFile) == 0) {
+        DebugLog(L"ResolveLatestDataVersion: GetTempFileNameW failed error=%lu; using fallback %s", GetLastError(), fallback.c_str());
+        return fallback;
+    }
+
+    wchar_t cacheBuster[32] = {};
+    swprintf_s(cacheBuster, L"?_t=%lu", GetTickCount());
+    const std::wstring url = baseUrl + L"/data/latest" + cacheBuster;
+
+    const HRESULT result = URLDownloadToFileW(nullptr, url.c_str(), tempFile, 0, nullptr);
+    if (FAILED(result)) {
+        DebugLog(L"ResolveLatestDataVersion: download failed hr=0x%08lx url=%s; using fallback %s", static_cast<unsigned long>(result), url.c_str(), fallback.c_str());
+        DeleteFileW(tempFile);
+        return fallback;
+    }
+
+    std::wstring remote = ReadTextFile(tempFile);
+    DeleteFileW(tempFile);
+
+    if (remote.empty()) {
+        DebugLog(L"ResolveLatestDataVersion: remote latest empty url=%s; using fallback %s", url.c_str(), fallback.c_str());
+        return fallback;
+    }
+
+    DebugLog(L"ResolveLatestDataVersion: remote latest=%s (fallback was %s)", remote.c_str(), fallback.c_str());
+    return remote;
 }
 
 void EnsureLauncherBackgroundAvailable() {
