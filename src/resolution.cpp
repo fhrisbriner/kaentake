@@ -154,8 +154,8 @@ void CConfig::LoadGlobal_hook() {
 }
 
 void CConfig::SaveGlobal_hook() {
-    CConfig::SaveGlobal(this);
     SetOpt_Int(GLOBAL_OPT, "soScreenResolution", g_nResolution);
+    CConfig::SaveGlobal(this);
 }
 
 void CConfig::ApplySysOpt_hook(void* pSysOpt, int bApplyVideo) {
