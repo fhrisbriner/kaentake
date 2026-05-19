@@ -479,16 +479,15 @@ bool WasUpdateCancelled() {
 }
 
 void CancelUpdatePrompt() {
+    g_launcherExitRequested = true;
     if (!g_launcherWindow) {
-        g_launcherExitRequested = true;
         return;
     }
 
     std::lock_guard<std::mutex> lock(g_launcherWindow->state.mutex);
-    if (g_launcherWindow->state.showUpdateButton) {
-        g_launcherWindow->state.showUpdateButton = false;
-        g_launcherWindow->state.updateCancelled = true;
-        g_launcherExitRequested = true;
+    g_launcherWindow->state.updateCancelled = true;
+    g_launcherWindow->state.showUpdateButton = false;
+    if (g_launcherWindow->hwnd) {
         InvalidateRect(g_launcherWindow->hwnd, nullptr, FALSE);
     }
 }
@@ -1006,8 +1005,14 @@ bool RunExternalUpdater(HWND hwnd, std::wstring &installedVersion) {
 
     const DWORD startTick = GetTickCount();
     DWORD wait = WAIT_TIMEOUT;
+    bool terminatedByExit = false;
     while ((wait = WaitForSingleObject(process.hProcess, 50)) == WAIT_TIMEOUT) {
         PumpLauncherMessages();
+        if (g_launcherExitRequested && !terminatedByExit) {
+            DebugLog(L"Updater.exe terminating: launcher exit requested");
+            TerminateProcess(process.hProcess, 0xC000013AL);
+            terminatedByExit = true;
+        }
     }
 
     if (outputReader.joinable()) {
@@ -1141,8 +1146,14 @@ bool RunExternalVerifier(HWND hwnd) {
 
     const DWORD startTick = GetTickCount();
     DWORD wait = WAIT_TIMEOUT;
+    bool terminatedByExit = false;
     while ((wait = WaitForSingleObject(process.hProcess, 50)) == WAIT_TIMEOUT) {
         PumpLauncherMessages();
+        if (g_launcherExitRequested && !terminatedByExit) {
+            DebugLog(L"Updater.exe terminating: launcher exit requested");
+            TerminateProcess(process.hProcess, 0xC000013AL);
+            terminatedByExit = true;
+        }
     }
 
     if (outputReader.joinable()) {
@@ -1327,6 +1338,28 @@ LRESULT CALLBACK LauncherWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     switch (message) {
     case WM_ERASEBKGND:
         return 1;
+    case WM_NCHITTEST: {
+        POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(hwnd, &pt);
+        if (IsCloseButtonHit(pt.x, pt.y)) {
+            return HTCLIENT;
+        }
+        if (g_launcherWindow) {
+            bool overUpdate = false;
+            {
+                std::lock_guard<std::mutex> lock(g_launcherWindow->state.mutex);
+                overUpdate = g_launcherWindow->state.showUpdateButton
+                    && pt.x >= kUpdateButtonX
+                    && pt.x <= kUpdateButtonX + kUpdateButtonWidth
+                    && pt.y >= kUpdateButtonY
+                    && pt.y <= kUpdateButtonY + kUpdateButtonHeight;
+            }
+            if (overUpdate) {
+                return HTCLIENT;
+            }
+        }
+        return HTCAPTION;
+    }
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         HDC hdc = BeginPaint(hwnd, &ps);

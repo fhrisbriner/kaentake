@@ -31,8 +31,13 @@ param(
     # Path segments to skip. Matches if any segment of the relative path equals one of these.
     [string[]]$ExcludeDir = @('.git', '.idea', '.vs', '.vscode', '__pycache__', 'node_modules'),
     # Filename patterns to skip (wildcards).
+    # `runtime.version` and `version` are updater-managed stamps written
+    # post-install -- shipping them in the manifest causes a permanent
+    # sha mismatch on the next verify pass.
     [string[]]$ExcludeFile = @('Thumbs.db', '.DS_Store', '*.tmp', '*.log', '*.pdb', '*.bak', '*.swp',
-                                '*.part', 'Updater.new.exe', 'MapleNight.exe.backup', 'MapleStory.exe.backup')
+                                '*.part', 'Updater.new.exe', 'Updater.old.exe',
+                                'MapleNight.exe.backup', 'MapleStory.exe.backup',
+                                'runtime.version', 'version')
 )
 
 $ErrorActionPreference = 'Stop'
