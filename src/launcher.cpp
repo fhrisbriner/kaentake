@@ -93,6 +93,8 @@ struct LauncherWindow {
 
 LauncherWindow *g_launcherWindow = nullptr;
 bool g_launcherExitRequested = false;
+std::mutex g_lastVerifyFailedMutex;
+std::string g_lastVerifyFailedPath;
 
 void SetProgress(
     HWND hwnd,
@@ -920,6 +922,10 @@ bool HandleUpdaterProgressLine(HWND hwnd, const std::string &line) {
         status = L"Verifying game files...";
         start = 0.10;
         end = 0.98;
+    } else if (phase == "verify-failed") {
+        std::lock_guard<std::mutex> lock(g_lastVerifyFailedMutex);
+        g_lastVerifyFailedPath = parts.size() > 4 ? parts[4] : std::string{};
+        return true;
     }
 
     wchar_t countText[96]{};
@@ -961,7 +967,6 @@ bool RunExternalUpdater(HWND hwnd, std::wstring &installedVersion) {
     SetHandleInformation(pipeRead, HANDLE_FLAG_INHERIT, 0);
 
     HANDLE logFile = INVALID_HANDLE_VALUE;
-#ifdef _DEBUG
     CreateDirectoryW(L"logs", nullptr);
     logFile = CreateFileW(
         L"logs\\updater.log",
@@ -972,7 +977,6 @@ bool RunExternalUpdater(HWND hwnd, std::wstring &installedVersion) {
         FILE_ATTRIBUTE_NORMAL,
         nullptr
     );
-#endif
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -1102,7 +1106,6 @@ bool RunExternalVerifier(HWND hwnd) {
     SetHandleInformation(pipeRead, HANDLE_FLAG_INHERIT, 0);
 
     HANDLE logFile = INVALID_HANDLE_VALUE;
-#ifdef _DEBUG
     CreateDirectoryW(L"logs", nullptr);
     logFile = CreateFileW(
         L"logs\\updater-verify.log",
@@ -1113,7 +1116,6 @@ bool RunExternalVerifier(HWND hwnd) {
         FILE_ATTRIBUTE_NORMAL,
         nullptr
     );
-#endif
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -1446,8 +1448,6 @@ LRESULT CALLBACK LauncherWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         Gdiplus::SolidBrush detailBrush(Gdiplus::Color(205, 224, 230, 232));
         Gdiplus::SolidBrush statusOverlay(Gdiplus::Color(150, 14, 16, 20));
 
-        graphics.DrawString(L"Maple Night", -1, &titleFont, Gdiplus::PointF(34.0f, 42.0f), &textBrush);
-
         {
             const bool closeActive = snapshot.showUpdateButton;
             Gdiplus::RectF closeRect(
@@ -1585,7 +1585,7 @@ bool RunUpdaterWindow(HINSTANCE instance) {
     window.hwnd = CreateWindowExW(
         WS_EX_APPWINDOW,
         wc.lpszClassName,
-        L"Maple Night",
+        L"",
         WS_POPUP,
         x,
         y,
@@ -1767,8 +1767,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             DebugLog(L"Launcher exiting: update cancelled");
             return 0;
         }
-        DebugLog(L"Launcher exiting: data verification failed");
-        ErrorMessage("Data verification failed");
+        std::string failedPath;
+        {
+            std::lock_guard<std::mutex> lock(g_lastVerifyFailedMutex);
+            failedPath = g_lastVerifyFailedPath;
+        }
+        DebugLog(L"Launcher exiting: data verification failed path=%S", failedPath.c_str());
+        if (failedPath.empty()) {
+            ErrorMessage("Data verification failed");
+        } else {
+            ErrorMessage("Data verification failed: %s\n\nSee logs\\updater-verify.log for details.", failedPath.c_str());
+        }
         return 1;
     }
     if (verifyOnly) {

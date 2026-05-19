@@ -794,7 +794,11 @@ int CmdVerify(const Args& a) {
             std::wstring localPath = dest + L"\\" + relW;
             std::string h;
             if (!Sha256File(localPath, h) || h != f.sha256) {
-                { std::lock_guard<std::mutex> g(logMu); Logf("verify failed %s", f.path.c_str()); }
+                {
+                    std::lock_guard<std::mutex> g(logMu);
+                    Logf("verify failed %s expected=%s got=%s", f.path.c_str(), f.sha256.c_str(), h.c_str());
+                    EmitProgress("verify-failed", 0, 1, f.path, 0, 0, 0);
+                }
                 failed.store(true, std::memory_order_relaxed);
                 return;
             }
@@ -835,7 +839,8 @@ int CmdRuntimeVerify(const Args& a) {
         std::wstring localPath = dest + L"\\" + relW;
         std::string h;
         if (!Sha256File(localPath, h) || h != f.sha256) {
-            Logf("verify failed %s", f.path.c_str());
+            Logf("verify failed %s expected=%s got=%s", f.path.c_str(), f.sha256.c_str(), h.c_str());
+            EmitProgress("verify-failed", 0, 1, f.path, 0, 0, 0);
             return 1;
         }
         done += f.size;

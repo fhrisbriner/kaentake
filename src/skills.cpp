@@ -1491,8 +1491,10 @@ auto isLeft = (int(__thiscall*)(void*))0x00451E42;
 
 int(__fastcall isLeft_Hook)(void* _this, void* edx) {
     if (isLeft(_this) == 1) {
+        DEBUG_MESSAGE("yeah we're left");
         isLeftH = true;
     } else {
+        DEBUG_MESSAGE("No we're Right");
         isLeftH = false;
     }
     return isLeft(_this);
@@ -1602,7 +1604,6 @@ int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, BasicStat* bs, Seco
             ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
             __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
             *aDamage = damage;
-            DebugMessage("damage:%d", damage);
             ++nAttackCount;
             ++aDamage;
         }
@@ -1709,21 +1710,6 @@ void changeMagicAttacks() {
     Patch4(0x00955D87 + 1, 2111013);
 }
 
-
-auto hook_error = (void(__stdcall*)(int))0x00A5FDE4;
-
-void(__stdcall lol)(int errornum) {
-    printf("Error at: 0x%08X\n", (DWORD)_ReturnAddress());
-    return hook_error(errornum);
-}
-
-auto hook_exception = (void(__stdcall*)(DWORD, DWORD))0x00A60BB7;
-
-void(__stdcall texception)(DWORD errornum, DWORD othererror) {
-    printf("Error at: 0x%08X\n", (DWORD)_ReturnAddress());
-    return hook_exception(errornum, othererror);
-}
-
 bool isCopyCatSkill(int skillId) {
     int job = skillId / 10000;
     int secondDigit = (job / 10) % 10;
@@ -1757,6 +1743,15 @@ int(__fastcall setInput_hook)(void* _this, void* edx, int XInput, int YInput) {
     if (siegeMode && (int)_ReturnAddress() == 0x009CC0DF)
         return (setInput(_this, 0, 0));
     return setInput(_this, XInput, YInput);
+}
+
+auto SetImpactNext = (void(__thiscall*)(void*, double, double))0x7a6353;
+void(__fastcall SetImpactNext_Hook)(void* _this, void* edx, double x, double y) {
+    int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+    if (job > 200 && (int)_ReturnAddress() == 0x0096DAFF) {
+        return SetImpactNext(_this, -x, y);
+    }
+    return SetImpactNext(_this, x, y);
 }
 
 void moveOffsets(int skillID) {
@@ -1876,11 +1871,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         CUserLocal__SendSkillCancelRequest(_This, 5410000);
     }
     moveOffsets(nSkillID);
-    if (nSkillID == 3001013) {
-        PatchNop(combat1, 2);
-        Patch1(combat2, 0xf7);
-        Patch1(combat2 + 1, 0xd8);
-    }
     auto elapsed = chrono::steady_clock::now() - skilltimer;
     if (nSkillID == 3001013 || nSkillID == 1001007) {
         jumptimer = chrono::steady_clock::now();
@@ -2635,7 +2625,7 @@ void AttachSkillEdits() {
     Patch1(0x0095795E + 2, 0x00);
     Patch1(0x0094DC26, 0xEB); // remove Custom spring conditions
     // dash can't cancel
-    //ATTACH_HOOK(dashOnDash, dashOnDash_hook);
+    ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
 
@@ -3134,6 +3124,8 @@ void AttachOtherHooks() {
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
     ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
+    ATTACH_HOOK(isLeft, isLeft_Hook);
+    ATTACH_HOOK(SetImpactNext, SetImpactNext_Hook);
 }
 
 
