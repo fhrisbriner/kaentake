@@ -2967,6 +2967,14 @@ int(__fastcall DrawStat_t)(void* thisptr, void* edx, void* pParam) {
     return DrawStat(thisptr, pParam);
 }
 
+auto CanSendExclRequest = (int(__thiscall*)(CWvsContext*, int, int))0x00485BF7;
+int (__fastcall CanSendExclRequest_Hook)(CWvsContext* pThis, void* edx, int a1, int a2) {
+    if ((int)_ReturnAddress() != 0x00A23D0F) {
+        return 1;
+    }
+    return CanSendExclRequest(pThis, a1, a2);
+}
+
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
@@ -3011,10 +3019,6 @@ void AttachOtherHooks() {
     // Allow double click pots while in Dark Sight skill
     FillBytes(0x004F0311, 0x90, 6);
     // //
-    // // // Super Tubi
-    FillBytes(0x00485C01, 0x90, 2);
-    FillBytes(0x00485C21, 0x90, 2);
-    FillBytes(0x00485C32, 0x90, 2);
     // //
     PatchNop(0x00957C2D, 6);
     //
@@ -3058,6 +3062,9 @@ void AttachOtherHooks() {
     Patch4(0x00780746, 250);
     Patch4(0x008c4287, 250);
     Patch4(0x0094D91F, 250);
+
+    // Skill up stuff
+    Patch4(0x00A23D05 + 1, 200);
 
     // Enable Teleport mid air -
     // Ezrosia V2 ()newer ones) FillBytes(0x00957C2D, 0x90, 6);

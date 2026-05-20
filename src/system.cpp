@@ -125,6 +125,35 @@ static RegOpenKeyExA_t RegOpenKeyExA_orig = reinterpret_cast<RegOpenKeyExA_t>(Ge
 typedef decltype(&RegOpenKeyA) RegOpenKeyA_t;
 static RegOpenKeyA_t RegOpenKeyA_orig = reinterpret_cast<RegOpenKeyA_t>(GetAddress("ADVAPI32", "RegOpenKeyA"));
 
+typedef decltype(&RegCreateKeyA) RegCreateKeyA_t;
+static RegCreateKeyA_t RegCreateKeyA_orig = reinterpret_cast<RegCreateKeyA_t>(GetAddress("ADVAPI32", "RegCreateKeyA"));
+
+typedef decltype(&RegCreateKeyExW) RegCreateKeyExW_t;
+static RegCreateKeyExW_t RegCreateKeyExW_orig = reinterpret_cast<RegCreateKeyExW_t>(GetAddress("ADVAPI32", "RegCreateKeyExW"));
+
+typedef decltype(&RegOpenKeyExW) RegOpenKeyExW_t;
+static RegOpenKeyExW_t RegOpenKeyExW_orig = reinterpret_cast<RegOpenKeyExW_t>(GetAddress("ADVAPI32", "RegOpenKeyExW"));
+
+typedef decltype(&RegSetValueExA) RegSetValueExA_t;
+static RegSetValueExA_t RegSetValueExA_orig = reinterpret_cast<RegSetValueExA_t>(GetAddress("ADVAPI32", "RegSetValueExA"));
+
+static bool LooksLikeCConfigValueName(LPCSTR name) {
+    if (!name || !*name) return false;
+    static const char* prefixes[] = { "so", "ui", "scr", "mn", "jp", "go", "co", "si", "L", "RMA", "LMA", "LCWN", "Exec", "uiBin", "uiOpt", "uiWnd" };
+    for (auto p : prefixes) {
+        if (_strnicmp(name, p, strlen(p)) == 0) return true;
+    }
+    return false;
+}
+
+static bool SubKeyContainsWizetW(LPCWSTR lpSubKey) {
+    if (!lpSubKey) return false;
+    for (const wchar_t* p = lpSubKey; *p; ++p) {
+        if (_wcsnicmp(p, L"Wizet", 5) == 0) return true;
+    }
+    return false;
+}
+
 static bool SubKeyContainsWizet(LPCSTR lpSubKey) {
     if (!lpSubKey) return false;
     for (const char* p = lpSubKey; *p; ++p) {
@@ -134,38 +163,83 @@ static bool SubKeyContainsWizet(LPCSTR lpSubKey) {
 }
 
 LSTATUS WINAPI RegCreateKeyExA_hook(HKEY hKey, LPCSTR lpSubKey, DWORD Reserved, LPSTR lpClass, DWORD dwOptions, REGSAM samDesired, const LPSECURITY_ATTRIBUTES lpSecurityAttributes, PHKEY phkResult, LPDWORD lpdwDisposition) {
-    LogInfo("RegCreateKeyExA hKey=%p subkey='%s' sam=0x%lX", (void*)hKey, lpSubKey ? lpSubKey : "(null)", (unsigned long)samDesired);
-    LSTATUS status = RegCreateKeyExA_orig(HKEY_CURRENT_USER, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
-    LogInfo("RegCreateKeyExA result status=%ld disposition=%lu handle=%p", status, lpdwDisposition ? *lpdwDisposition : 0, phkResult ? (void*)*phkResult : nullptr);
+    bool intercept = SubKeyContainsWizet(lpSubKey);
+    HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
+    if (intercept) {
+        LogInfo("RegCreateKeyExA hKey=%p subkey='%s' sam=0x%lX (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : "(null)", (unsigned long)samDesired);
+    }
+    LSTATUS status = RegCreateKeyExA_orig(root, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
+    if (intercept) {
+        LogInfo("RegCreateKeyExA result status=%ld disposition=%lu handle=%p", status, lpdwDisposition ? *lpdwDisposition : 0, phkResult ? (void*)*phkResult : nullptr);
+    }
     return status;
 }
 
 LSTATUS WINAPI RegOpenKeyExA_hook(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) {
-    // Force HKCU for any Wizet-containing subkey so two-step opens (open "Software\Wizet",
-    // then open "MapleStory" sub) get caught at the parent and the child handle lives in HKCU.
+    // Log every Open* — we're hunting for which API the game uses to open the Wizet config subkey.
+    LogInfo("RegOpenKeyExA hKey=%p subkey='%s' sam=0x%lX", (void*)hKey, lpSubKey ? lpSubKey : "(null)", (unsigned long)samDesired);
     bool intercept = SubKeyContainsWizet(lpSubKey);
     HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
-    if (intercept) {
-        LogInfo("RegOpenKeyExA hKey=%p subkey='%s' sam=0x%lX (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : "(null)", (unsigned long)samDesired);
-    }
     LSTATUS status = RegOpenKeyExA_orig(root, lpSubKey, ulOptions, samDesired, phkResult);
-    if (intercept) {
-        LogInfo("RegOpenKeyExA result status=%ld handle=%p", status, phkResult ? (void*)*phkResult : nullptr);
-    }
+    LogInfo("RegOpenKeyExA result status=%ld handle=%p intercept=%d", status, phkResult ? (void*)*phkResult : nullptr, intercept ? 1 : 0);
     return status;
 }
 
 LSTATUS WINAPI RegOpenKeyA_hook(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult) {
+    LogInfo("RegOpenKeyA hKey=%p subkey='%s'", (void*)hKey, lpSubKey ? lpSubKey : "(null)");
+    bool intercept = SubKeyContainsWizet(lpSubKey);
+    HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
+    LSTATUS status = RegOpenKeyA_orig(root, lpSubKey, phkResult);
+    LogInfo("RegOpenKeyA result status=%ld handle=%p intercept=%d", status, phkResult ? (void*)*phkResult : nullptr, intercept ? 1 : 0);
+    return status;
+}
+
+LSTATUS WINAPI RegCreateKeyA_hook(HKEY hKey, LPCSTR lpSubKey, PHKEY phkResult) {
     bool intercept = SubKeyContainsWizet(lpSubKey);
     HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
     if (intercept) {
-        LogInfo("RegOpenKeyA hKey=%p subkey='%s' (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : "(null)");
+        LogInfo("RegCreateKeyA hKey=%p subkey='%s' (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : "(null)");
     }
-    LSTATUS status = RegOpenKeyA_orig(root, lpSubKey, phkResult);
+    LSTATUS status = RegCreateKeyA_orig(root, lpSubKey, phkResult);
     if (intercept) {
-        LogInfo("RegOpenKeyA result status=%ld handle=%p", status, phkResult ? (void*)*phkResult : nullptr);
+        LogInfo("RegCreateKeyA result status=%ld handle=%p", status, phkResult ? (void*)*phkResult : nullptr);
     }
     return status;
+}
+
+LSTATUS WINAPI RegCreateKeyExW_hook(HKEY hKey, LPCWSTR lpSubKey, DWORD Reserved, LPWSTR lpClass, DWORD dwOptions, REGSAM samDesired, const LPSECURITY_ATTRIBUTES lpSecurityAttributes, PHKEY phkResult, LPDWORD lpdwDisposition) {
+    bool intercept = SubKeyContainsWizetW(lpSubKey);
+    HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
+    if (intercept) {
+        LogInfo("RegCreateKeyExW hKey=%p subkey='%ls' sam=0x%lX (forced HKCU)", (void*)hKey, lpSubKey ? lpSubKey : L"(null)", (unsigned long)samDesired);
+    }
+    LSTATUS status = RegCreateKeyExW_orig(root, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
+    if (intercept) {
+        LogInfo("RegCreateKeyExW result status=%ld disposition=%lu handle=%p", status, lpdwDisposition ? *lpdwDisposition : 0, phkResult ? (void*)*phkResult : nullptr);
+    }
+    return status;
+}
+
+LSTATUS WINAPI RegOpenKeyExW_hook(HKEY hKey, LPCWSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) {
+    LogInfo("RegOpenKeyExW hKey=%p subkey='%ls' sam=0x%lX", (void*)hKey, lpSubKey ? lpSubKey : L"(null)", (unsigned long)samDesired);
+    bool intercept = SubKeyContainsWizetW(lpSubKey);
+    HKEY root = intercept ? HKEY_CURRENT_USER : hKey;
+    LSTATUS status = RegOpenKeyExW_orig(root, lpSubKey, ulOptions, samDesired, phkResult);
+    LogInfo("RegOpenKeyExW result status=%ld handle=%p intercept=%d", status, phkResult ? (void*)*phkResult : nullptr, intercept ? 1 : 0);
+    return status;
+}
+
+LSTATUS WINAPI RegSetValueExA_hook(HKEY hKey, LPCSTR lpValueName, DWORD Reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
+    if (LooksLikeCConfigValueName(lpValueName)) {
+        DWORD valSnapshot = 0;
+        if (dwType == REG_DWORD && lpData && cbData >= sizeof(DWORD)) {
+            memcpy(&valSnapshot, lpData, sizeof(DWORD));
+        }
+        LSTATUS status = RegSetValueExA_orig(hKey, lpValueName, Reserved, dwType, lpData, cbData);
+        LogInfo("RegSetValueExA handle=%p name='%s' type=%lu cbData=%lu dword=0x%lX status=%ld", (void*)hKey, lpValueName, (unsigned long)dwType, (unsigned long)cbData, (unsigned long)valSnapshot, status);
+        return status;
+    }
+    return RegSetValueExA_orig(hKey, lpValueName, Reserved, dwType, lpData, cbData);
 }
 
 
@@ -220,5 +294,9 @@ void AttachSystemHooks() {
     ATTACH_HOOK(RegCreateKeyExA_orig, RegCreateKeyExA_hook);
     ATTACH_HOOK(RegOpenKeyExA_orig, RegOpenKeyExA_hook);
     ATTACH_HOOK(RegOpenKeyA_orig, RegOpenKeyA_hook);
+    ATTACH_HOOK(RegCreateKeyA_orig, RegCreateKeyA_hook);
+    ATTACH_HOOK(RegCreateKeyExW_orig, RegCreateKeyExW_hook);
+    ATTACH_HOOK(RegOpenKeyExW_orig, RegOpenKeyExW_hook);
+    ATTACH_HOOK(RegSetValueExA_orig, RegSetValueExA_hook);
     ATTACH_HOOK(WSPStartup_orig, WSPStartup_hook);
 }
