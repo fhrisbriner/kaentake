@@ -724,6 +724,10 @@ bool VerifyRuntimeBinaries() {
     DebugLog(L"Runtime binary verification skipped: Debug build");
     return true;
 #else
+    if (!IsUpdateEnabled()) {
+        DebugLog(L"Runtime binary verification skipped: updates disabled");
+        return true;
+    }
     constexpr wchar_t updaterExe[] = L"Updater.exe";
     if (MN_UPDATE_BASE_URL[0] == '\0') {
         DebugLog(L"Runtime binary verification skipped: base URL is empty");

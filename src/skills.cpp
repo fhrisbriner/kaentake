@@ -81,6 +81,7 @@ double strMultiplier = 0.28;
 DWORD ZtlBussy = 0x004746DD;
 int currStr = 4;
 int PassiveSpeed = 0;
+int weaponSpeed = 6;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -975,24 +976,12 @@ void comboStuff() {
     ATTACH_HOOK(requiredComboCount, requiredComboCount_hook);
 }
 
-void replaceSpark() {
-    int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-    if (sparkID > 0) {
-        return;
+auto sparkThing = (int(__cdecl*)(int))0x7668B7;
+int (__cdecl sparkThingHook)(int skillId) {
+    if (skillId == 1201016 || skillId == 4111010) {
+        return 1;
     }
-    if (jobID < 200) {
-        sparkID = 1201016;
-    } else {
-        sparkID = 4111010;
-    }
-    Patch4(0x766829 + 1, sparkID);
-    Patch4(0x942971 + 3, sparkID);
-}
-
-void cleave() {
-    int SparkID = 1201016;
-    Patch4(0x766829 + 1, 1201016);
-    Patch4(0x942971 + 3, 1201016);
+    return sparkThing(skillId);
 }
 
 void skillHacks() {
@@ -2008,9 +1997,9 @@ void applyVelocityChange() {
 }
 
 void restoreVelocityChange() {
-    Patch4(0x0096C00A + 1, 0xFFFFFD55);
-    Patch4(0x0096C021 + 3, 0x0000025E);
-    Patch4(0x0096C031 + 1, 0xFFFFFD50);
+    Patch4(0x0096C00A + 1, 0xFFFFFea2);
+    Patch4(0x0096C021 + 3, 0x0000015E);
+    Patch4(0x0096C031 + 1, 0xFFFFFea2);
 }
 
 const DWORD FlashJumpVar = 0x0096BF52;
@@ -2058,7 +2047,7 @@ int(__fastcall CUserLocal_Jump)(int _this, void* edx, int a2) {
     return pDoJump(_this, a2);
 }
 
-auto calcpdamage_hook = (void*(__thiscall*)(int, int, int, int, int, int, int, int, int, int, int, int, int, int, int,
+auto calcpdamage_hook = (void*(__thiscall*)(int, int, int, int, int, int, int, int, int, int, int, int, int, int**, int,
         int, int, int, int, int, int))0x0078DF87;
 
 void*(__fastcall CalcDamage__PDamage)(
@@ -2067,7 +2056,7 @@ void*(__fastcall CalcDamage__PDamage)(
         int a2,
         int bs,
         int a4,
-        int a5,
+        int dwMobid,
         int a6,
         int a7,
         int nDamagePerMob,
@@ -2076,7 +2065,7 @@ void*(__fastcall CalcDamage__PDamage)(
         int a11,
         int nAction,
         int shadow_partner,
-        int a14,
+        int** a14,
         int a15,
         int a16,
         int a17,
@@ -2089,10 +2078,10 @@ void*(__fastcall CalcDamage__PDamage)(
     case 46:
     case 47:
     case 49:
-        return calcpdamage_hook(_this, a2, bs, a4, a5, a6, a7, nDamagePerMob, nItemID, a10, 1,
+        return calcpdamage_hook(_this, a2, bs, a4, dwMobid, a6, a7, nDamagePerMob, nItemID, a10, 1,
                 nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
     default:
-        return calcpdamage_hook(_this, a2, bs, a4, a5, a6, a7, nDamagePerMob, nItemID, a10, a11,
+        return calcpdamage_hook(_this, a2, bs, a4, dwMobid, a6, a7, nDamagePerMob, nItemID, a10, a11,
                 nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
     }
 }
@@ -2163,6 +2152,7 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
     if (mastery > 0) {
         nWeaponDegree -= 2;
     }
+    weaponSpeed = nWeaponDegree;
     return nWeaponDegree;
 }
 
@@ -2274,44 +2264,13 @@ void _declspec(naked) please() {
     }
 }
 
-auto chainLightning_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0075BF50;
 
-int __fastcall drop_off_damage_skills(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
-    int* v6;
-    int i;
-    for (i = 0; i < 15; i++) {
-        double dMultiplier = 1.2;
-
-        int j;
-
-        for (j = 0; j < i; j++) {
-            dMultiplier *= 1.2;
-        }
-
-        *(double*)(0x00BDB470 + i * sizeof(double)) = dMultiplier;
-    }
-    // Log("%7d", chainLightning_Hook(a1, a2, a3, a4 ,a5, a6));
-    return chainLightning_Hook(a1, a3, a4, a5, a6);
-}
 
 
 auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
 
 int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
-    int nWeaponDegree;
-    switch (get_weapon_type()) {
-    case 32:
-    case 37:
-        nWeaponDegree = 4;
-        break;
-    case 38:
-        nWeaponDegree = 7;
-        break;
-    default:
-        nWeaponDegree = a4;
-        break;
-    }
-    return SetAttackAction_Hook(a1, a3, nWeaponDegree, a5, a6);
+    return SetAttackAction_Hook(a1, a3, weaponSpeed, a5, a6);
 }
 
 auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, tagPOINT*))0x00933990;
@@ -2325,20 +2284,7 @@ void __fastcall ShowSkillEffect(
         int bLeft,
         int nLast,
         tagPOINT* pPtOffset) {
-    int nWeaponDegree = 4;
-    switch (get_weapon_type()) {
-    case 32:
-    case 37:
-        nWeaponDegree = 4;
-        break;
-    case 38:
-        nWeaponDegree = 7;
-        break;
-    default:
-        nWeaponDegree = nActionSpeed;
-        break;
-    }
-    return ShowSkillEffect_hook(_this, pSkill, nSLV, nWeaponDegree, bLeft, nLast, pPtOffset);
+    return ShowSkillEffect_hook(_this, pSkill, nSLV, weaponSpeed, bLeft, nLast, pPtOffset);
 }
 
 auto LoadMapHook = (int(__thiscall*)(void*, int))0x00529BB4;
@@ -2410,6 +2356,57 @@ int __fastcall getSpeed_hook(void* thisptr, void* edx) {
     ropeFormula();
     return getSpeed(thisptr);
 }
+
+
+class SKILLENTRY {
+public:
+    int skillId;
+    ZXString<char> skillName;
+    ZXString<char> description;
+    int skillType;
+};
+
+
+typedef SKILLENTRY*(__fastcall* SkillInfo__GetSkill_t)(PVOID pThis, PVOID edx, int nSkillID);
+static auto SkillInfo__GetSkill = reinterpret_cast<SkillInfo__GetSkill_t>(0x0075C755);
+
+class SkillInfo {
+public:
+    static SkillInfo* GetInstance() {
+        return *reinterpret_cast<SkillInfo**>(0x00BE78DC);
+    }
+
+    SKILLENTRY* GetSkill(int nSkillID) {
+        return SkillInfo__GetSkill(GetInstance(), NULL, nSkillID);
+    }
+};
+
+auto chainLightning_Hook = (signed int(__thiscall*)(SKILLENTRY*, int, int, int*, int))0x0075BF50;
+
+int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int a4, int* a5, int a6) {
+    int* v6;
+    int i;
+    int nSkillID = a1->skillId;
+
+    if (nSkillID == 3101005 || nSkillID == 3201005) {
+        return chainLightning_Hook(a1, a3, a4, a5, a6);
+    }
+
+    for (i = 0; i < 15; i++) {
+        double dMultiplier = 1.1;
+
+        int j;
+
+        for (j = 0; j < i; j++) {
+            dMultiplier *= 1.1;
+        }
+
+        *(double*)(0x00BDB470 + i * sizeof(double)) = dMultiplier;
+    }
+    // Log("%7d", chainLightning_Hook(a1, a2, a3, a4 ,a5, a6));
+    return chainLightning_Hook(a1, a3, a4, a5, a6);
+}
+
 
 
 auto hook_bstr_t = (void(__thiscall*)(void*, const char*))0x00425ADD;
@@ -2589,7 +2586,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
-    // ATTACH_HOOK(chainLightning_Hook, chainLightning_Hook);
+    //ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
     ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
@@ -2604,8 +2601,8 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
-    // ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
-    // ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
+    //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     ATTACH_HOOK(GetMobTemplate, GetMobTemplate_Hook);
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
     ATTACH_HOOK(onDoomed, OnDoomed_Hook);
@@ -2628,6 +2625,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(dashOnDash, dashOnDash_hook);
     ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
+    ATTACH_HOOK(sparkThing, sparkThingHook);
 
     // octojump
     // Patch4(0x0096bf04 + 1, 5201007);
@@ -2908,28 +2906,6 @@ auto CMapLoadable__SetFieldMagLevel = (int(__thiscall*)(void*))0x00642890;
 int(__fastcall CMapLoadable__SetFieldMagLevel_t)(void* thisptr, void* edx) {
     return 0;
 }
-
-class SKILLENTRY {
-public:
-    int skillId;
-    ZXString<char> skillName;
-    ZXString<char> description;
-    int skillType;
-};
-
-typedef SKILLENTRY*(__fastcall* SkillInfo__GetSkill_t)(PVOID pThis, PVOID edx, int nSkillID);
-static auto SkillInfo__GetSkill = reinterpret_cast<SkillInfo__GetSkill_t>(0x0075C755);
-
-class SkillInfo {
-public:
-    static SkillInfo* GetInstance() {
-        return *reinterpret_cast<SkillInfo**>(0x00BE78DC);
-    }
-
-    SKILLENTRY* GetSkill(int nSkillID) {
-        return SkillInfo__GetSkill(GetInstance(), NULL, nSkillID);
-    }
-};
 
 struct CUIToolTip;
 
