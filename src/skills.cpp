@@ -1801,6 +1801,13 @@ void moveOffsets(int skillID) {
 
 bool flying = false;
 
+auto isHerosWill = (int(__cdecl*)(int))0x00765E2D;
+int(__cdecl isHerosWillHook)(int skillId) {
+    if (skillId == 3101012) {
+        return 1;
+    }
+}
+
 
 auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
@@ -2000,6 +2007,8 @@ void restoreVelocityChange() {
     Patch4(0x0096C00A + 1, 0xFFFFFea2);
     Patch4(0x0096C021 + 3, 0x0000015E);
     Patch4(0x0096C031 + 1, 0xFFFFFea2);
+    Patch1(0x0096C012 + 2, 0x00);
+    Patch1(0x0096C02E + 2, 0x3);
 }
 
 const DWORD FlashJumpVar = 0x0096BF52;
@@ -2607,6 +2616,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
     ATTACH_HOOK(onDoomed, OnDoomed_Hook);
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
+    ATTACH_HOOK(isHerosWill, isHerosWillHook);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
@@ -2639,7 +2649,6 @@ void AttachSkillEdits() {
     Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
-
     // replaceSpark();
 }
 
@@ -3122,6 +3131,7 @@ void AttachOtherHooks() {
     ATTACH_HOOK(DrawStat, DrawStat_t);
     ATTACH_HOOK(isLeft, isLeft_Hook);
     ATTACH_HOOK(SetImpactNext, SetImpactNext_Hook);
+    ATTACH_HOOK(CanSendExclRequest, CanSendExclRequest_Hook);
 }
 
 
