@@ -1,0 +1,13 @@
+Windows Registry Editor Version 5.00
+
+; MapleNight config reset — wipes Wizet/MapleStory options from HKCU.
+; Use when a user's resolution or other sysOpt is stuck due to stale values
+; left by another v83-derived client (Royals/Heaven/etc — they all share
+; HKCU\Software\Wizet\MapleStory because the injector hook redirects
+; RegCreateKeyEx HKLM→HKCU).
+;
+; After running, relaunch MapleNight; all options revert to defaults.
+; This does NOT touch character data or game files — only the registry
+; subkey holding screen resolution / window positions / sysOpt flags.
+
+[-HKEY_CURRENT_USER\Software\Wizet\MapleStory]
