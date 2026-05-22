@@ -2099,7 +2099,7 @@ void*(__fastcall CalcDamage__PDamage)(
 auto skillDelayHook = (int(__cdecl*)(int))0x00765047;
 
 int(__cdecl summondelay)(int nSkillID) {
-    return 0;
+    return 600;
 }
 
 auto MakeIncDecHpEffect = (void*(__thiscall*)(void*, int, int))0x0092EC50;
@@ -2570,6 +2570,7 @@ int(__cdecl isMoveableSkillt)(int nSkillID) {
     }
 }
 
+
 auto _is_attack_area_set_by_data = (int(__cdecl*)(int))0x7666CB;
 
 int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
@@ -2617,6 +2618,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(onDoomed, OnDoomed_Hook);
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
     ATTACH_HOOK(isHerosWill, isHerosWillHook);
+    ATTACH_HOOK(skillDelayHook, summondelay);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
