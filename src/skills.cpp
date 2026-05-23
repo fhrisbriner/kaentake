@@ -2661,7 +2661,7 @@ void AttachSkillEdits() {
     Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
-    Patch4(0x00764C60, 2510000);// Dragon fury
+    Patch4(0x00764C61, 2510000);// Dragon fury
     // replaceSpark();
 }
 
