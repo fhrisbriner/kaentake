@@ -2266,7 +2266,30 @@ void _declspec(naked) please() {
 auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
 
 int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
-    return SetAttackAction_Hook(a1, a3, weaponSpeed, a5, a6);
+    int wspeed = weaponSpeed;
+    if (mastery <= 0) {
+        switch (get_weapon_type()) {
+        case 37:
+            wspeed = 4;
+            break;
+        case 42:
+            wspeed = 5;
+            break;
+        case 38:
+            wspeed = 8;
+            break;
+        }
+    } else {
+        switch (get_weapon_type()) {
+        case 37:
+            wspeed = 4;
+        case 42:
+            wspeed = 3;
+        case 38:
+            wspeed = 6;
+        }
+    }
+    return SetAttackAction_Hook(a1, a3, wspeed, a5, a6);
 }
 
 auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, int))0x00933990;
@@ -2598,7 +2621,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
-    ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     ATTACH_HOOK(GetMobTemplate, GetMobTemplate_Hook);
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
