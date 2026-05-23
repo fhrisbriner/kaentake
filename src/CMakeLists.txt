@@ -92,6 +92,13 @@ foreach (MN_LAUNCHER_ENV_KEY
     endif ()
 endforeach ()
 
+# Local-build flag: when MN_UPDATE_ENABLED=0 the build is meant for the dev's own
+# machine, so constants.h picks LOCALHOST instead of the public server IP.
+if (DEFINED ENV{MN_UPDATE_ENABLED} AND "$ENV{MN_UPDATE_ENABLED}" STREQUAL "0")
+    target_compile_definitions(injector PRIVATE MN_LOCAL_BUILD=1)
+    target_compile_definitions(launcher PRIVATE MN_LOCAL_BUILD=1)
+endif ()
+
 set_target_properties(launcher PROPERTIES
         OUTPUT_NAME ${PROJECT_NAME}
 )

@@ -19,6 +19,13 @@
             "generator": "Visual Studio 17 2022",
             "architecture": "Win32",
             "binaryDir": "${sourceDir}/build"
+        },
+        {
+            "name": "release-push",
+            "displayName": "Release x86 push staging (Visual Studio 17 2022)",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "Win32",
+            "binaryDir": "${sourceDir}/build-push"
         }
     ],
     "buildPresets": [
@@ -30,6 +37,11 @@
         {
             "name": "release-win32",
             "configurePreset": "release-win32",
+            "configuration": "Release"
+        },
+        {
+            "name": "release-push",
+            "configurePreset": "release-push",
             "configuration": "Release"
         }
     ]

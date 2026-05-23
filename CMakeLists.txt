@@ -3,9 +3,17 @@ project(MapleNight)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Load .env into process env so target_compile_definitions / output dir can pick it up
-if (EXISTS ${CMAKE_SOURCE_DIR}/.env)
-    file(STRINGS ${CMAKE_SOURCE_DIR}/.env ENV_FILE)
+# Load .env into process env so target_compile_definitions / output dir can pick it up.
+# MN_ENV_FILE env var overrides the default .env path (used by tools/build-push.ps1
+# to swap in .env.push without disturbing the local .env profile).
+if (DEFINED ENV{MN_ENV_FILE})
+    set(MN_ENV_FILE_PATH "$ENV{MN_ENV_FILE}")
+else ()
+    set(MN_ENV_FILE_PATH "${CMAKE_SOURCE_DIR}/.env")
+endif ()
+if (EXISTS ${MN_ENV_FILE_PATH})
+    message(STATUS "Loading env from: ${MN_ENV_FILE_PATH}")
+    file(STRINGS ${MN_ENV_FILE_PATH} ENV_FILE)
     foreach (VAR ${ENV_FILE})
         if (VAR MATCHES "^[ \t]*#" OR VAR MATCHES "^[ \t]*$")
             continue()

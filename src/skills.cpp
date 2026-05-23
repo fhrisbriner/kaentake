@@ -21,6 +21,7 @@ using chrono::system_clock;
 chrono::time_point<chrono::steady_clock> jumptimer;
 chrono::time_point<chrono::steady_clock> skilltimer;
 chrono::time_point<chrono::steady_clock> immunetimer;
+bool jobPatchesApplied = false;
 static std::mt19937 rng(std::random_device{}());
 // These are going to be all our Addresses that we jump to depending on what we want our skill to do.
 int combatStep = 0x00969026;    // requires further handling
@@ -1634,6 +1635,28 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         int nPowerGuard,
         int bCheckHitRemain,
         int bSendPacket) {
+
+            // GWEN'S Shadow Shifter
+            if (!jobPatchesApplied) {
+                int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+                if (jobID == 341) {
+                    Patch1(0x009584F6 + 2, 0x55);
+                    Patch1(0x009584F6 + 3, 0x01);
+                    Patch1(0x00958523 + 2, 0x55);
+                    Patch1(0x00958523 + 3, 0x01);
+                    Patch4(0x00958535 + 2, 3410002);
+                    jobPatchesApplied = true;
+                }
+                else if (jobID == 342) {
+                    Patch1(0x009584F6 + 2, 0x56);
+                    Patch1(0x009584F6 + 3, 0x01);
+                    Patch4(0x00958535 + 2, 3410002);
+                    jobPatchesApplied = true;
+                }
+            }
+            if (iframes > 0) {
+                Patch4(0x009591FE + 1, 1500 + iframes);
+            }
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
             bSendPacket);
 }
@@ -1910,6 +1933,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         if (jobID == 410 || jobID == 411 || jobID == 412 || jobID == 441 || jobID == 442) {
             mastery = pGetSkillLevel(_this, charData, 4100000, skillEntry);
             critSkillID = 4100001;
+            iframes = pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
         }
         if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 421 || jobID == 422) {
             mastery = pGetSkillLevel(_this, charData, 4200000, skillEntry);
@@ -1923,7 +1947,6 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         }
         if (jobID == 210 || jobID == 211 || jobID == 212 || jobID == 241 || jobID == 242) {
             mastery = pGetSkillLevel(_this, charData, 2100001, skillEntry);
-            DEBUG_MESSAGE("Mastery: %d", mastery);
         }
         if (jobID == 220 || jobID == 221 || jobID == 222 || jobID == 251 || jobID == 252) {
             mastery = pGetSkillLevel(_this, charData, 2200001, skillEntry);
@@ -1976,7 +1999,7 @@ int(__cdecl hitMobInRect_hook)(int skillId) {
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
-    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000) {
+    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007) {
         return 1;
     }
     return (remove_bullet_skill_hook(nSkillID));
@@ -2164,7 +2187,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -2620,7 +2643,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(jobCode, jobCode_hook);
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
-    ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
+    ATTACH_HOOK(ltrbshoothook, ltrb);
     //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     ATTACH_HOOK(GetMobTemplate, GetMobTemplate_Hook);
@@ -2648,6 +2671,12 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
     ATTACH_HOOK(sparkThing, sparkThingHook);
+
+    //pheonix
+    Patch4(0x007A6D6B + 2, 3111015);
+    Patch4(0x007A53A4 + 2, 3111015);
+    Patch4(0x007A5068 + 1, 3111015);
+    Patch4(0x0075A53B + 1, 3111015);
 
     // octojump
     // Patch4(0x0096bf04 + 1, 5201007);
