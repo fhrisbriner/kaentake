@@ -82,6 +82,7 @@ DWORD ZtlBussy = 0x004746DD;
 int currStr = 4;
 int PassiveSpeed = 0;
 int weaponSpeed = 6;
+int iframes = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -501,9 +502,9 @@ void __declspec(naked) doActiveSkills() {
 
                 // hermit
 
-            mov eax, 4111010
+            mov eax, 4111021
             cmp esi, eax
-            je buff
+            je shoot
 
                 // Bandit
             mov eax, 4201014
@@ -547,6 +548,10 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 4411019
             cmp esi, eax
             je shoot
+
+            mov eax, 4411004
+            cmp esi, eax
+            je melee
 
                 // thief 3rd job bandit
 
@@ -1089,7 +1094,7 @@ bool isSkillIDMatched(int nSkillID) {
         4401009, 4401008, 4401006,
 
         // ===== Hermit =====
-        4111010, 4111009,
+        4111020,
 
         // ===== Bandit =====
         4201014, 4201006,
@@ -1629,24 +1634,6 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         int nPowerGuard,
         int bCheckHitRemain,
         int bSendPacket) {
-    if ((MapID > 450001060 && MapID <= 450001067) || MapID == 401060100) {
-        // all attacks will hit if not a shadowshifter proc
-        Patch1(0x007930C5, 0xEB);
-        Patch1(0x00793484, 0xEB);
-    } else {
-        Patch1(0x007930C5, 0x74);
-        Patch1(0x00793484, 0x74);
-    }
-    if ((!immune && LastMapID == 450001064) || (!immune && LastMapID == 401060101) || (!immune && LastMapID == 450001060)) {
-        immunetimer = chrono::steady_clock::now();
-        immune = true;
-        LastMapID = MapID;
-    }
-    auto elapsed = chrono::steady_clock::now() - immunetimer;
-    if (elapsed < chrono::milliseconds(5000) && immune) {
-        return;
-    }
-    immune = false;
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
             bSendPacket);
 }
@@ -2282,7 +2269,7 @@ int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int 
     return SetAttackAction_Hook(a1, a3, weaponSpeed, a5, a6);
 }
 
-auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, tagPOINT*))0x00933990;
+auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, int))0x00933990;
 
 void __fastcall ShowSkillEffect(
         void* _this,
@@ -2292,7 +2279,7 @@ void __fastcall ShowSkillEffect(
         int nActionSpeed,
         int bLeft,
         int nLast,
-        tagPOINT* pPtOffset) {
+        int pPtOffset) {
     return ShowSkillEffect_hook(_this, pSkill, nSLV, weaponSpeed, bLeft, nLast, pPtOffset);
 }
 
@@ -2611,7 +2598,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ltrbshoothook, cdecl ltrb);
-    //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     ATTACH_HOOK(GetMobTemplate, GetMobTemplate_Hook);
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
@@ -2651,6 +2638,7 @@ void AttachSkillEdits() {
     Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
+    Patch4(0x00764C60, 2510000);// Dragon fury
     // replaceSpark();
 }
 
