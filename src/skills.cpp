@@ -117,7 +117,7 @@ void setMAD() {
         int_multiplier = 4.0;
         break;
     case 38:
-        int_multiplier = 4.6;
+        int_multiplier = 5.2;
         break;
     default:
         int_multiplier = 1.0;
@@ -127,7 +127,13 @@ void setMAD() {
     int int_ = CWvsContext::GetInstance()->get_m_basicStat().nINT.Fuse();
     int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
     int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    if (magic < 0) {
+        bonusMagic = 0;
+    }
     int effectiveMagic = (magic + bonusMagic) - int_;
+    if (effectiveMagic <= 0) {
+        effectiveMagic = (magic + bonusMagic);
+    }
     topMAD = (int_ * int_multiplier * effectiveMagic) / 100;
     totmagic = effectiveMagic;
     // Log("%7d, %7d", effectiveMagic, totmagic);
@@ -540,11 +546,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 4411006
             cmp esi, eax
-            je shoot
-
-            mov eax, 4411009
-            cmp esi, eax
-            je buff
+            je melee
 
             mov eax, 4411019
             cmp esi, eax
@@ -983,7 +985,7 @@ void comboStuff() {
 }
 
 auto sparkThing = (int(__cdecl*)(int))0x7668B7;
-int (__cdecl sparkThingHook)(int skillId) {
+int(__cdecl sparkThingHook)(int skillId) {
     if (skillId == 1201016 || skillId == 4111010) {
         return 1;
     }
@@ -1105,7 +1107,7 @@ bool isSkillIDMatched(int nSkillID) {
         4211011, 4211015, 4211001,
 
         // ===== Ninja =====
-        4411006, 4411009, 4411019,
+        4411006, 4411009, 4411019, 4411014,
 
         // ===== Bandit 3rd =====
         4511006, 4511013, 4511003, 4511007, 4511001,
@@ -1143,6 +1145,11 @@ void CInPacket_Decode2(CInPacket* pPacket, void* edx) {
 
 auto dashOnDash = (int(__thiscall*)(void*, int))0x74c73a;
 int __fastcall dashOnDash_hook(void* pThis, void* edx, int nDash) {
+    return 0;
+}
+
+auto isDashingSkill = (int(__thiscall*)(void*))0x0095F900;
+int __fastcall isDashingHook(void* pthis, void* edx) {
     return 0;
 }
 
@@ -1636,27 +1643,26 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         int bCheckHitRemain,
         int bSendPacket) {
 
-            // GWEN'S Shadow Shifter
-            if (!jobPatchesApplied) {
-                int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-                if (jobID == 341) {
-                    Patch1(0x009584F6 + 2, 0x55);
-                    Patch1(0x009584F6 + 3, 0x01);
-                    Patch1(0x00958523 + 2, 0x55);
-                    Patch1(0x00958523 + 3, 0x01);
-                    Patch4(0x00958535 + 2, 3410002);
-                    jobPatchesApplied = true;
-                }
-                else if (jobID == 342) {
-                    Patch1(0x009584F6 + 2, 0x56);
-                    Patch1(0x009584F6 + 3, 0x01);
-                    Patch4(0x00958535 + 2, 3410002);
-                    jobPatchesApplied = true;
-                }
-            }
-            if (iframes > 0) {
-                Patch4(0x009591FE + 1, 1500 + iframes);
-            }
+    // GWEN'S Shadow Shifter
+    if (!jobPatchesApplied) {
+        int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+        if (jobID == 341) {
+            Patch1(0x009584F6 + 2, 0x55);
+            Patch1(0x009584F6 + 3, 0x01);
+            Patch1(0x00958523 + 2, 0x55);
+            Patch1(0x00958523 + 3, 0x01);
+            Patch4(0x00958535 + 2, 3410002);
+            jobPatchesApplied = true;
+        } else if (jobID == 342) {
+            Patch1(0x009584F6 + 2, 0x56);
+            Patch1(0x009584F6 + 3, 0x01);
+            Patch4(0x00958535 + 2, 3410002);
+            jobPatchesApplied = true;
+        }
+    }
+    if (iframes > 0) {
+        Patch4(0x009591FE + 1, 1500 + iframes);
+    }
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
             bSendPacket);
 }
@@ -1847,6 +1853,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
 
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
+    }
+    if (siegeMode && nSkillID == 3211015) {
+        return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601007, nScanCode, pnConsumeCheck);
     }
     if (nSkillID == 5211012 || nSkillID == 5111007) {
         default_random_engine generator(chrono::system_clock::now().time_since_epoch().count());
@@ -2187,7 +2196,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006 || nSkillID == 3601007) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -2284,8 +2293,6 @@ void _declspec(naked) please() {
 }
 
 
-
-
 auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
 
 int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
@@ -2305,17 +2312,20 @@ int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int 
     } else {
         switch (get_weapon_type()) {
         case 37:
-            wspeed = 4;
+            wspeed = 2;
+            break;
         case 42:
             wspeed = 3;
+            break;
         case 38:
             wspeed = 6;
+            break;
         }
     }
     return SetAttackAction_Hook(a1, a3, wspeed, a5, a6);
 }
 
-auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, int))0x00933990;
+auto ShowSkillEffect_hook = (void(__thiscall*)(void*, void*, int, int, int, int, void*))0x00933990;
 
 void __fastcall ShowSkillEffect(
         void* _this,
@@ -2325,8 +2335,40 @@ void __fastcall ShowSkillEffect(
         int nActionSpeed,
         int bLeft,
         int nLast,
-        int pPtOffset) {
-    return ShowSkillEffect_hook(_this, pSkill, nSLV, weaponSpeed, bLeft, nLast, pPtOffset);
+        void* pPtOffset) {
+
+    int wspeed = 0;
+    if (mastery <= 0) {
+        switch (get_weapon_type()) {
+        case 37:
+            wspeed = 4;
+            break;
+        case 42:
+            wspeed = 5;
+            break;
+        case 38:
+            wspeed = 8;
+            break;
+        default:
+            wspeed = weaponSpeed;
+        }
+    } else {
+        switch (get_weapon_type()) {
+        case 37:
+            wspeed = 4;
+            break;
+        case 42:
+            wspeed = 3;
+            break;
+        case 38:
+            wspeed = 6;
+            break;
+        default:
+            wspeed = weaponSpeed;
+        }
+    }
+    DebugMessage("NAction %d", wspeed);
+    return ShowSkillEffect_hook(_this, pSkill, nSLV, wspeed, bLeft, nLast, pPtOffset);
 }
 
 auto LoadMapHook = (int(__thiscall*)(void*, int))0x00529BB4;
@@ -2448,7 +2490,6 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int a4,
     // Log("%7d", chainLightning_Hook(a1, a2, a3, a4 ,a5, a6));
     return chainLightning_Hook(a1, a3, a4, a5, a6);
 }
-
 
 
 auto hook_bstr_t = (void(__thiscall*)(void*, const char*))0x00425ADD;
@@ -2629,7 +2670,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
-    //ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
+    // ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
     ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
@@ -2644,7 +2685,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoJump, CUserLocal_Jump);
     ATTACH_HOOK(meso_bag_handle, siegeModePacket);
     ATTACH_HOOK(ltrbshoothook, ltrb);
-    //ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
+    // ATTACH_HOOK(ShowSkillEffect_hook, ShowSkillEffect);
     ATTACH_HOOK(SetAttackAction_Hook, setAttackAction);
     ATTACH_HOOK(GetMobTemplate, GetMobTemplate_Hook);
     ATTACH_HOOK(SetFromWhenDoom, SetFromWhenDoom_Hook);
@@ -2671,8 +2712,9 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pGetAttackSpeedDegree, GetAttackSpeedDegree);
     Patch1(0x94cdb0, 0xeb);
     ATTACH_HOOK(sparkThing, sparkThingHook);
+    ATTACH_HOOK(isDashingSkill, isDashingHook);
 
-    //pheonix
+    // pheonix
     Patch4(0x007A6D6B + 2, 3111015);
     Patch4(0x007A53A4 + 2, 3111015);
     Patch4(0x007A5068 + 1, 3111015);
@@ -2690,7 +2732,7 @@ void AttachSkillEdits() {
     Patch4(0x009805D1, 4511006); // push imm32      (CUserRemote::OnAttack)
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
-    Patch4(0x00764C61, 2510000);// Dragon fury
+    Patch4(0x00764C61, 2510000); // Dragon fury
     // replaceSpark();
 }
 
@@ -2769,6 +2811,7 @@ DWORD GetNearJumpTarget(DWORD instrAddr) {
     }
     return 0;
 }
+
 
 BYTE ReadByteAt(DWORD address) {
     return *(BYTE*)address;
@@ -2995,7 +3038,7 @@ int(__fastcall DrawStat_t)(void* thisptr, void* edx, void* pParam) {
 }
 
 auto CanSendExclRequest = (int(__thiscall*)(CWvsContext*, int, int))0x00485BF7;
-int (__fastcall CanSendExclRequest_Hook)(CWvsContext* pThis, void* edx, int a1, int a2) {
+int(__fastcall CanSendExclRequest_Hook)(CWvsContext* pThis, void* edx, int a1, int a2) {
     if ((int)_ReturnAddress() != 0x00A23D0F) {
         return 1;
     }
@@ -3151,10 +3194,10 @@ void AttachOtherHooks() {
     Patch1(0x004905EB, 0xEB);
     Patch1(0x004CAA09, 0xEB); // Infinite chat 1 of 2 scroll through chat box
     Patch1(0x004CAA84, 0xEB); // Infinite chat 2 of 2 scroll through chat box
-    //Remove "Repeating the same line over and over\r\ncan negatively affect other users." check allow spam text
+    // Remove "Repeating the same line over and over\r\ncan negatively affect other users." check allow spam text
     Patch1(0x00490607, 0xEB);
     Patch1(0x00490609, 0x27);
-    //Remove "Too much chatting can disrupt\r\nother players' ability to play the game." check allow spam text
+    // Remove "Too much chatting can disrupt\r\nother players' ability to play the game." check allow spam text
     Patch1(0x00490651, 0xEB);
     Patch1(0x00490652, 0x1D);
     // Pic Modifier - Allowed PIC to by typed
