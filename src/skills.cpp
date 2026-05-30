@@ -389,6 +389,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je combat
 
+            mov eax, 3111015
+            cmp esi, eax
+            je summons
+
                 // hunter
             mov eax, 3101007
             cmp esi, eax
@@ -986,7 +990,7 @@ void comboStuff() {
 
 auto sparkThing = (int(__cdecl*)(int))0x7668B7;
 int(__cdecl sparkThingHook)(int skillId) {
-    if (skillId == 1201016 || skillId == 4111010) {
+    if (skillId == 1201016 || skillId == 4111010 || skillId == 3411006) {
         return 1;
     }
     return sparkThing(skillId);
@@ -1070,7 +1074,7 @@ bool isSkillIDMatched(int nSkillID) {
         3001013,
 
         // ===== Hunter =====
-        3101007, 3101012,
+        3101007, 3101012, 3111015,
         3401005, 3401007, 3401012,
 
         // ===== Crossbowman =====
@@ -1649,8 +1653,6 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         if (jobID == 341) {
             Patch1(0x009584F6 + 2, 0x55);
             Patch1(0x009584F6 + 3, 0x01);
-            Patch1(0x00958523 + 2, 0x55);
-            Patch1(0x00958523 + 3, 0x01);
             Patch4(0x00958535 + 2, 3410002);
             jobPatchesApplied = true;
         } else if (jobID == 342) {
@@ -1851,6 +1853,14 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         return 0;
     }
 
+    unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
+    if (nSkillID == 3411006) {
+        unsigned char arrayApply[] = { 0xE9, 0xF6, 0x00, 0x00, 0x00, 0x90 };
+        Patch1Array(0x0095497e, arrayApply, sizeof(arrayApply));
+    } else {
+        Patch1Array(0x0095497e, arrayRemoveArrowRain, sizeof(arrayRemoveArrowRain));
+    }
+
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
@@ -1973,6 +1983,9 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         if (jobID == 341 || jobID == 342) {
             PassiveSpeed = pGetSkillLevel(_this, charData, 3410000, skillEntry);
         }
+        if ((int)_ReturnAddress() == 0x0095855D) {
+            return (pGetSkillLevel(_this, charData, 3410002, skillEntry));
+        }
         tb = pGetSkillLevel(_this, charData, 15110000, skillEntry);
         if (pGetSkillLevel(_this, charData, critSkillID, skillEntry) > 0) {
             Patch4(0x007650DB + 1, critSkillID);
@@ -1999,7 +2012,7 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
 
 auto hitMobInRect = (int(__cdecl*)(int))0x00766722;
 int(__cdecl hitMobInRect_hook)(int skillId) {
-    if (skillId == 4101008 || skillId == 3511003) {
+    if (skillId == 4101008 || skillId == 3511003 || skillId == 3411006) {
         return 1;
     }
     return hitMobInRect(skillId);
@@ -2008,7 +2021,7 @@ int(__cdecl hitMobInRect_hook)(int skillId) {
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
-    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007) {
+    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006) {
         return 1;
     }
     return (remove_bullet_skill_hook(nSkillID));
@@ -2417,12 +2430,12 @@ int __fastcall getPAD_hook(void* thisptr, void* edx, int a2, int a3) {
     return getPAD(thisptr, a2, a3);
 }
 
-double ropebase = 3.0;
+double ropebase = 4.0;
 
 void ropeFormula() {
     double rope;
     speed = 100 + PassiveSpeed + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
-    rope = 3.0 * (speed / 100.0);
+    rope = 4.0 * (speed / 100.0);
     if (rope < 3.0) {
         rope = 3.0;
     }
@@ -2585,6 +2598,14 @@ int(__stdcall tget_flipX(void* _this, int* a2)) {
     return flipX;
 }
 
+auto thingyWindArcher = (int(__cdecl*)(int))0x00766867;
+int(__cdecl windarcherhook)(int a1) {
+    if (a1 == 3411006) {
+        return 1;
+    }
+    return thingyWindArcher(a1);
+}
+
 auto OnSkillKeyDownEnd = (int(__thiscall*)(void*))0x0095BEDF;
 
 int(__fastcall tOnSkillKeyDownEnd(void* _this)) {
@@ -2648,7 +2669,7 @@ int(__cdecl isMoveableSkillt)(int nSkillID) {
 auto _is_attack_area_set_by_data = (int(__cdecl*)(int))0x7666CB;
 
 int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
-    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009) {
+    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3411006) {
         return 1;
     }
     return _is_attack_area_set_by_data(nSkillID);
@@ -2678,7 +2699,6 @@ void AttachSkillEdits() {
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
     ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
-    ATTACH_HOOK(hitMobInRect, hitMobInRect_hook);
     ATTACH_HOOK(octHook, octopus);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
     // ATTACH_HOOK(jobCode, jobCode_hook);
@@ -2693,6 +2713,9 @@ void AttachSkillEdits() {
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
     ATTACH_HOOK(isHerosWill, isHerosWillHook);
     ATTACH_HOOK(skillDelayHook, summondelay);
+    ATTACH_HOOK(thingyWindArcher, windarcherhook);
+    ATTACH_HOOK(SetDamaged_Hook, SetDamaged);
+
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
@@ -2737,6 +2760,7 @@ void AttachSkillEdits() {
     Patch1(0x00a2948a, 0xeb);
     Patch4(0x00A294D0 + 1, 2510000);
     Patch4(0x00937B02 + 1, 2510000);
+    Patch4(0x009817AB + 1, 3411006);
 
     Patch4(0x00790399 + 1, 4210100);
     Patch4(0x006319AA + 1, 4210100);
@@ -3212,10 +3236,10 @@ void AttachOtherHooks() {
     Patch1(0x00490652, 0x1D);
     // Pic Modifier - Allowed PIC to by typed
     PatchNop(0x004ca8ba, 2);
-    Patch4 (0x00956E6E + 2, 2411011);
-    Patch4 (0x0095C001 + 1, 2411011);
-    Patch4 (0x0095F97E + 1, 2411011);
-    Patch4 (0x0098067B + 1, 2411011);
+    Patch4(0x00956E6E + 2, 2411011);
+    Patch4(0x0095C001 + 1, 2411011);
+    Patch4(0x0095F97E + 1, 2411011);
+    Patch4(0x0098067B + 1, 2411011);
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
