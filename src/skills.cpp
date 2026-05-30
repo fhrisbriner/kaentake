@@ -301,7 +301,7 @@ void __declspec(naked) doActiveSkills() {
                 // Cleric
             mov eax, 2201010
             cmp esi, eax
-            je heal
+            je buff
 
             mov eax, 2201011
             cmp esi, eax
@@ -350,7 +350,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
-            mov eax, 2221015
+            mov eax, 2211015
             cmp esi, eax
             je buff
 
@@ -2733,6 +2733,15 @@ void AttachSkillEdits() {
     Patch4(0x00981045, 4511006); // cmp [ebp-14h], imm32 (CUserRemote::OnMeleeAttack)
     Patch4(0x009810B0, 4511006);
     Patch4(0x00764C61, 2510000); // Dragon fury
+    Patch1(0x00a2948a, 0xeb);
+    Patch4(0x00A294D0 + 1, 2510000);
+    Patch4(0x00937B02 + 1, 2510000);
+
+    Patch4(0x00790399 + 1, 4210100);
+    Patch4(0x006319AA + 1, 4210100);
+    Patch4(0x0094E335 + 1, 4210100);
+    Patch4(0x00957282 + 1, 4210100);
+    Patch4(0x00967070 + 1, 4210100);
     // replaceSpark();
 }
 
@@ -2958,7 +2967,7 @@ int(__cdecl is_correct_upgrade_equip)(int nUItemID, int nEItemID) {
 
         // 2040100�2040199: Wands and Staffs
         if (v2 == 20401) {
-            return (v3 == 37 || v3 == 38);
+            return (v3 == 37 || v3 == 38 || v3 == 32);
         }
 
         // 2040200�2040299: Hat, Top, Bottom, Shoes, Gloves
