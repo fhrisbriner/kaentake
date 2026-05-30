@@ -2545,7 +2545,7 @@ int(__cdecl is_keydown_skill_t)(int nSkillID) {
     if (nSkillID == 3121004 || nSkillID == 5221004 || nSkillID == 3111009) {
         return 1;
     }
-    if (nSkillID == 1201013 || nSkillID == 1201016) {
+    if (nSkillID == 1201013 || nSkillID == 1201016 || nSkillID == 2411011) {
         return 1;
     }
     return 0;
@@ -2713,6 +2713,7 @@ void AttachSkillEdits() {
     Patch1(0x94cdb0, 0xeb);
     ATTACH_HOOK(sparkThing, sparkThingHook);
     ATTACH_HOOK(isDashingSkill, isDashingHook);
+    ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
 
     // pheonix
     Patch4(0x007A6D6B + 2, 3111015);
@@ -3211,6 +3212,10 @@ void AttachOtherHooks() {
     Patch1(0x00490652, 0x1D);
     // Pic Modifier - Allowed PIC to by typed
     PatchNop(0x004ca8ba, 2);
+    Patch4 (0x00956E6E + 2, 2411011);
+    Patch4 (0x0095C001 + 1, 2411011);
+    Patch4 (0x0095F97E + 1, 2411011);
+    Patch4 (0x0098067B + 1, 2411011);
 
     ATTACH_HOOK(getSpeed, getSpeed_hook);
 
