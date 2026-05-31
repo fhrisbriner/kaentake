@@ -937,40 +937,38 @@ void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCoun
     Patch4(dwOriginAddress + 1, (int)(((int)ptrCodeCave - (int)dwOriginAddress) - 5));
 }
 
-auto MobACC = (int(__thiscall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x0079286E;
+auto MobACC = (int(__stdcall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x0079286E;
 auto GetPDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E067;
 auto GetMDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E141;
 
 auto MobPDamage = (int(__thiscall*)(void*, MobStat*, void*, BasicStat*, SecondaryStat*, int, unsigned int, int*))0x0079309F;
 int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, BasicStat* bs, SecondaryStat* ss, int psd, unsigned int misschance, int* mesoGuard) {
+    if (MobACC(ms, cd, bs, ss, misschance)) {
+        return 0;  // attack missed
+    }
     int mobPD = ms->nPAD;  // Physical Attack Damage (plaintext, no Fuse)
-    printf("mobPD = %d\n", mobPD);
-    default_random_engine gen(chrono::system_clock::now().time_since_epoch().count());
-    uniform_real_distribution<double> padRand(0.008, 0.0085);
-    double baseDamage = (double)mobPD * mobPD * padRand(gen);  // PAD^2 * rand(0.008, 0.0085)
-    printf("baseDamage = %f\n", baseDamage);
+    double baseDamage = (double)mobPD * mobPD * 0.0085;  // PAD^2 * rand(0.008, 0.0085)
     int level = bs->nLevel.Fuse();
     int mobLevel = ms->nLevel;
-    printf("mobLevel = %d\n", mobLevel);
     int str = bs->nSTR.Fuse() / 10;
     int dex = bs->nDEX.Fuse() / 20;
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 40;
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
-    printf("PDD = %d\n", PDD);
     double reduciton = (PDD / (1000 + PDD));
-    printf("reduciton = %f\n", reduciton);
     double leveldiff = 1 + (level - mobLevel) * 0.005;
-    printf("leveldiff = %f\n", leveldiff);
     return baseDamage - ((baseDamage * reduciton) * leveldiff);
 }
 
-auto MobMDamage = (int(__thiscall*)(void*, MobStat*, void*, BasicStat*, SecondaryStat*, int, unsigned int, int*))0x0079345E;
-int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, BasicStat* bs, SecondaryStat* ss, int psd, unsigned int misschance, int* mesoGuard) {
+auto magicACC = (int(__stdcall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x007929CA;
+
+auto MobMDamage = (int(__thiscall*)(void*, MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int, int*))0x0079345E;
+int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, BasicStat* bs, SecondaryStat* ss, unsigned int misschance, int* mesoGuard) {
+    if (magicACC(ms, cd, bs, ss, misschance)) {
+        return 0;  // attack missed
+    }
     int mobPD = ms->nMAD;  // Magic Attack Damage (plaintext, no Fuse)
-    default_random_engine gen(chrono::system_clock::now().time_since_epoch().count());
-    uniform_real_distribution<double> padRand(0.008, 0.0085);
-    double baseDamage = (double)mobPD * mobPD * padRand(gen);  // PAD^2 * rand(0.008, 0.0085)
+    double baseDamage = (double)mobPD * mobPD * 0.008;  // PAD^2 * rand(0.008, 0.0085)
     int level = bs->nLevel.Fuse();
     int mobLevel = ms->nLevel;
     int str = bs->nSTR.Fuse() / 40;
@@ -2084,11 +2082,18 @@ void applyVelocityChange() {
 }
 
 void restoreVelocityChange() {
-    Patch4(0x0096C00A + 1, 0xFFFFFea2);
-    Patch4(0x0096C021 + 3, 0x0000015E);
-    Patch4(0x0096C031 + 1, 0xFFFFFea2);
-    Patch1(0x0096C012 + 2, 0x00);
+    Patch4(0x0096C00A + 1, 0xFFFFFe8f);
+    Patch4(0x0096C021 + 3, 0x00000150);
+    Patch4(0x0096C031 + 1, 0xFFFFFe8f);
     Patch1(0x0096C02E + 2, 0x3);
+}
+
+auto elementCharge = (int(__cdecl*)(int))0x007908E7;
+int __cdecl elementChargeHook(int skillid) {
+    if (skillid == 4101006) {
+        return 4;
+    }
+    return 0;
 }
 
 const DWORD FlashJumpVar = 0x0096BF52;
@@ -2766,6 +2771,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(skillDelayHook, summondelay);
     ATTACH_HOOK(thingyWindArcher, windarcherhook);
     ATTACH_HOOK(SetDamaged_Hook, SetDamaged);
+    ATTACH_HOOK(elementCharge, elementChargeHook);
 
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
