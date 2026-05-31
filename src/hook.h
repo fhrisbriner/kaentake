@@ -77,7 +77,7 @@ void BGMOverride();
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
 
 inline void AttachClientHooks() {
-    //AllocConsole();
+    AllocConsole();
     FILE* fDummy;
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);

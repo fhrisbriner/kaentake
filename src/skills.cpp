@@ -84,6 +84,9 @@ int currStr = 4;
 int PassiveSpeed = 0;
 int weaponSpeed = 6;
 int iframes = 0;
+int verdentVeilSL = 0;
+int dodgeCount = 0;
+bool verdentActive = false;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -868,6 +871,27 @@ struct ReplaceEntry {
 
 auto CUserLocal__SendSkillCancelRequest = (void(__thiscall*)(CUserLocal*, int))0x0096D873;
 
+auto CUserLocal__IsInvincible = (int(__thiscall*)(CUserLocal*))0x00959708;
+int __fastcall CUserLocal__IsInvincible_Hook(CUserLocal* pthis, void* edx) {
+    int inv = CUserLocal__IsInvincible(pthis);
+    if (inv == 1) {
+        if (!verdentActive && verdentVeilSL > 0) {
+            if (verdentVeilSL < 10)      dodgeCount = 1;
+            else if (verdentVeilSL < 20) dodgeCount = 2;
+            else                         dodgeCount = 3;
+            verdentActive = true;
+        }
+        if (dodgeCount > 0) {
+            dodgeCount--;
+        }
+        if (dodgeCount == 0) {
+            verdentActive = false;
+            CUserLocal__SendSkillCancelRequest(pthis, 3110022);
+        }
+    }
+    return inv;
+}
+
 void ReplaceValueBatch(const ReplaceEntry* entries, int count, DWORD start, DWORD end) {
     std::vector<Pattern> patterns;
     patterns.reserve(count);
@@ -913,30 +937,53 @@ void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCoun
     Patch4(dwOriginAddress + 1, (int)(((int)ptrCodeCave - (int)dwOriginAddress) - 5));
 }
 
+auto MobACC = (int(__thiscall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x0079286E;
+auto GetPDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E067;
+auto GetMDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E141;
 
-static const ReplaceEntry kCZakEntries[] = {
-    { "00 47 86 00", 88, nullptr, 0 },
-    { "01 47 86 00", 88, nullptr, 0 },
-    { "02 47 86 00", 88, nullptr, 0 },
-    { "03 47 86 00", 88, nullptr, 0 },
-    { "04 47 86 00", 88, nullptr, 0 },
-    { "05 47 86 00", 88, nullptr, 0 },
-    { "06 47 86 00", 88, nullptr, 0 },
-    { "07 47 86 00", 88, nullptr, 0 },
-    { "08 47 86 00", 88, nullptr, 0 },
-    { "09 47 86 00", 88, nullptr, 0 },
-    { "0A 47 86 00", 88, nullptr, 0 },
-};
-
-void fixCZak() {
-    ReplaceValueBatch(kCZakEntries, sizeof(kCZakEntries) / sizeof(kCZakEntries[0]),
-            0x00700000, 0x00AAAAAA);
+auto MobPDamage = (int(__thiscall*)(void*, MobStat*, void*, BasicStat*, SecondaryStat*, int, unsigned int, int*))0x0079309F;
+int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, BasicStat* bs, SecondaryStat* ss, int psd, unsigned int misschance, int* mesoGuard) {
+    int mobPD = ms->nPAD;  // Physical Attack Damage (plaintext, no Fuse)
+    printf("mobPD = %d\n", mobPD);
+    default_random_engine gen(chrono::system_clock::now().time_since_epoch().count());
+    uniform_real_distribution<double> padRand(0.008, 0.0085);
+    double baseDamage = (double)mobPD * mobPD * padRand(gen);  // PAD^2 * rand(0.008, 0.0085)
+    printf("baseDamage = %f\n", baseDamage);
+    int level = bs->nLevel.Fuse();
+    int mobLevel = ms->nLevel;
+    printf("mobLevel = %d\n", mobLevel);
+    int str = bs->nSTR.Fuse() / 10;
+    int dex = bs->nDEX.Fuse() / 20;
+    int luk = bs->nLUK.Fuse() / 20;
+    int _int = bs->nINT.Fuse() / 40;
+    double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
+    printf("PDD = %d\n", PDD);
+    double reduciton = (PDD / (1000 + PDD));
+    printf("reduciton = %f\n", reduciton);
+    double leveldiff = 1 + (level - mobLevel) * 0.005;
+    printf("leveldiff = %f\n", leveldiff);
+    return baseDamage - ((baseDamage * reduciton) * leveldiff);
 }
 
-void fixCHT() {
-    ReplaceValueBatch(kCZakEntries, sizeof(kCZakEntries) / sizeof(kCZakEntries[0]),
-            0x00700000, 0x00AAAAAA);
+auto MobMDamage = (int(__thiscall*)(void*, MobStat*, void*, BasicStat*, SecondaryStat*, int, unsigned int, int*))0x0079345E;
+int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, BasicStat* bs, SecondaryStat* ss, int psd, unsigned int misschance, int* mesoGuard) {
+    int mobPD = ms->nMAD;  // Magic Attack Damage (plaintext, no Fuse)
+    default_random_engine gen(chrono::system_clock::now().time_since_epoch().count());
+    uniform_real_distribution<double> padRand(0.008, 0.0085);
+    double baseDamage = (double)mobPD * mobPD * padRand(gen);  // PAD^2 * rand(0.008, 0.0085)
+    int level = bs->nLevel.Fuse();
+    int mobLevel = ms->nLevel;
+    int str = bs->nSTR.Fuse() / 40;
+    int dex = bs->nDEX.Fuse() / 40;
+    int luk = bs->nLUK.Fuse() / 20;
+    int _int = bs->nINT.Fuse() / 10;
+    double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
+    double reduciton = (PDD / (1000 + PDD));
+    double leveldiff = 1 + (level - mobLevel) * 0.005;
+    return baseDamage - ((baseDamage * reduciton) * leveldiff);
 }
+
+
 
 inline int skipArray[]{
     0x0078E94F + 2,
@@ -1992,6 +2039,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         }
     }
     mesos = pGetSkillLevel(_this, charData, 4511006, skillEntry);
+    verdentVeilSL = pGetSkillLevel(_this, charData, 3110022, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -2680,6 +2728,9 @@ void AttachSkillEdits() {
     ATTACH_HOOK(getPAD, getPAD_hook);
     ATTACH_HOOK(hook_bstr_t, bstrt);
     ATTACH_HOOK(OriginalCVecCtrl__CalcFloat, CVecCtrl__CalcFloat_hook);
+    ATTACH_HOOK(CUserLocal__IsInvincible, CUserLocal__IsInvincible_Hook);
+    ATTACH_HOOK(MobPDamage, MobPDamage_Hook);
+    ATTACH_HOOK(MobMDamage, MobMDamage_Hook);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
     // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
     // ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
@@ -2697,7 +2748,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
-    ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
+    //ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(octHook, octopus);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);

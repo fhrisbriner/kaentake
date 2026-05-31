@@ -15,6 +15,8 @@
 // The 4 stat slots written by the engine sit on a 32-byte stride.
 // nPDR/nMDR/nSpeed are not touched by sub_789EFD; their offsets here continue
 // the same stride and should be verified before relying on them.
+// Combat stats are PLAINTEXT int (NOT ZtlSecure). Confirmed by IDA Mob_PDamageFormula
+// @ 0x0079309F: reads ms[9] (nPAD), *ms (level), ms[53] directly, no _ZtlSecureFuse on ms.
 struct MobStat {
     int  nLevel;                 // +0x00
     int  aDamagedElemAttr[8];    // +0x04 .. +0x23  (32 bytes)

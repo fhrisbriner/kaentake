@@ -125,7 +125,7 @@ struct ZtlSecure {
         return ZtlSecureFuse<T>(at, cs);
     }
     ZtlSecure& operator=(const T& value) {
-        cs = ZtlSecureTear<T>(at, t);
+        cs = ZtlSecureTear<T>(at, value);
         return *this;
     }
 
@@ -147,7 +147,7 @@ struct ZtlSecurePacked {
         return ZtlSecureFuse<T>(at, cs);
     }
     ZtlSecurePacked& operator=(const T& value) {
-        cs = ZtlSecureTear<T>(at, t);
+        cs = ZtlSecureTear<T>(at, value);
         return *this;
     }
 };
