@@ -699,6 +699,9 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 4101009
+            cmp esi, eax
+            je jumpmove
 
             mov eax, 4401006
             cmp esi, eax
@@ -1240,9 +1243,9 @@ int __fastcall isDashingHook(void* pthis, void* edx) {
     return 0;
 }
 
-auto pGetSkillLevel = (int(__thiscall*)(SkillInfo*, void*, int, SKILLENTRY**))0x007616F6;
+auto pGetSkillLevel = (int(__thiscall*)(int, void*, int, int))0x007616F6;
 
-int(__fastcall GetSkillLevel)(SkillInfo* _this, void* edx, void* charData, int skillID, SKILLENTRY** skillEntry) {
+int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (i) {
@@ -2054,9 +2057,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (!isCorrectWeapon(nSkillID)) {
         return 0;
     }
-    if (nSkillID == 4101009) {
-        moveSkill(_This, nSkillID);
-    }
+    // if (nSkillID == 4101009) {
+    //     moveSkill(_This, nSkillID);
+    // }
 
     if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() >= 541 && CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() < 550 && !animationCancel) {
         printf("doing it.");
@@ -2109,9 +2112,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     //     cancelStuff(chrono::duration_cast<chrono::milliseconds>(skElapsed), nSkillID);
     // }
 
-    if (nSkillID == 5201007) {
-        pDoJump(_This, 0);
-    }
+    // if (nSkillID == 5201007) {
+    //     pDoJump(_This, 0);
+    // }
 
     if (nSkillID == 4211015) {
         Patch4(0x00952F20 + 3, 4211015);
@@ -2656,30 +2659,28 @@ int __fastcall getSpeed_hook(void* thisptr, void* edx) {
 }
 
 
-auto chainLightning_Hook = (signed int(__thiscall*)(SKILLENTRY*, int, int, int*, int))0x0075BF50;
+auto chainLightning_Hook = (void(__thiscall*)(SKILLENTRY*, int, int, int*, int))0x0075BF50;
 
-int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int a4, int* a5, int a6) {
-    int* v6;
+void __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOrder, int* aDamage, int a6) {
     int i;
-    int nSkillID = a1->skillId;
-
-    if (nSkillID == 3101005 || nSkillID == 3201005) {
-        return chainLightning_Hook(a1, a3, a4, a5, a6);
+    int nSkillID;
+    int v5;
+    nSkillID = a1->skillId;
+    double dMultiplier = 1.0;
+    double incRate = 0.0;
+    if (nSkillID == 3601007) {
+        incRate = 0.2;
     }
-
+    if (nSkillID == 3101005 || nSkillID == 321005) {
+        incRate = -0.1;
+    }
     for (i = 0; i < 15; i++) {
-        double dMultiplier = 1.1;
-
-        int j;
-
-        for (j = 0; j < i; j++) {
-            dMultiplier *= 1.1;
+        dMultiplier = (incRate * nOrder) + 1.0;
+        aDamage[i] = (int)((double)aDamage[i] * dMultiplier);
+        if (aDamage[i] == 0) {
+            return;
         }
-
-        *(double*)(0x00BDB470 + i * sizeof(double)) = dMultiplier;
     }
-    // Log("%7d", chainLightning_Hook(a1, a2, a3, a4 ,a5, a6));
-    return chainLightning_Hook(a1, a3, a4, a5, a6);
 }
 
 
@@ -2697,9 +2698,10 @@ void(__fastcall bstrt)(void* Level, void* blah, const char* a2) {
     const char* magicchar = magicStr.c_str();
     const char* sussychar = toMad.c_str();
     const char* weaponchar = padStr.c_str();
+    int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
+    bool isMage = (job >= 200 && job < 300);
     if ((int)_ReturnAddress() == 0X008C35C9) {
-        int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-        bool isMage = (job >= 200 && job < 300);
+
         setMAD();
         if (isMage) {
             a2 = magicchar;
@@ -2708,8 +2710,6 @@ void(__fastcall bstrt)(void* Level, void* blah, const char* a2) {
         }
     }
     if ((int)_ReturnAddress() == 0X008C3400) {
-        int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-        bool isMage = (job >= 200 && job < 300);
         if (isMage) {
             a2 = sussychar;
         }
@@ -2793,20 +2793,33 @@ int(__fastcall tOnSkillKeyDownEnd(void* _this)) {
     return OnSkillKeyDownEnd(_this);
 }
 
-auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(CVecCtrl*, int))0x009B2C3C; // v83
+static auto _ZtlSecureFuse_double = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338);  // v83
+static auto _ZtlSecureTear_double = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6); // v83
 
-void __fastcall CVecCtrl__CalcFloat_hook(CVecCtrl* pThis, void* _EDX, int tElapse) {
+auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(void*, int))0x009B2C3C; // v83
+
+void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
     // Call the original function first
-    OriginalCVecCtrl__CalcFloat(pThis, tElapse);
+    OriginalCVecCtrl__CalcFloat(this_, tElapse);
+    // Check if wings are active (m_bWingsNow at offset 0x17C)
+    bool isWingsActive = *(bool*)((uintptr_t)this_ + 0x17C); // v83
 
-    if (pThis->m_bWingsNow) {
-        // Steer horizontal velocity while wings are active
+    if (isWingsActive) {
+        // Get the horizontal velocity (if you want to use it)
+        double vx = _ZtlSecureFuse_double(
+                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60));
+        // Check if left or right keys are pressed
         if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
-            pThis->m_vx = -static_cast<double>(speed);
+            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
+                    reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                    -speed);
         } else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
-            pThis->m_vx = static_cast<double>(speed);
+            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
+                    reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
+                    speed);
         } else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
-            pThis->m_bWingsNow = 0; // cancel wings (original only cleared a local -> no-op)
+            isWingsActive = false;
         }
     }
 }
@@ -2853,7 +2866,7 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
-    // ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
+    ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
     ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
@@ -2931,11 +2944,6 @@ void AttachSkillEdits() {
     Patch4(0x00967070 + 1, 4210100);
     // replaceSpark();
 }
-
-
-#include "hook.h"
-#include "wvs/packet.h"
-#include "sstream"
 
 DWORD Bypass1 = 0x007540A3;
 DWORD Bypass3 = 0x00755A24;
@@ -3358,6 +3366,7 @@ void AttachOtherHooks() {
     CodeCave((void*)NW_Multi, nwthrow, 0);
     Patch1(0x0078EDB1 + 1, 0x84);
     CodeCave((void*)Claw_5, 0x0078EDB1, 1);
+    CodeCave((void*)DamCalc, 0x00791BAE, 1);
     Patch1(0x0076511E, 0xEB);
     Patch1(0x009F7A9B + 1, 0);
 
@@ -3412,7 +3421,7 @@ void AttachOtherHooks() {
     ATTACH_HOOK(get_cool_time, get_cool_time_t);
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
-    ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
+    //ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
     ATTACH_HOOK(SetImpactNext, SetImpactNext_Hook);
     ATTACH_HOOK(CanSendExclRequest, CanSendExclRequest_Hook);
