@@ -24,6 +24,7 @@ chrono::time_point<chrono::steady_clock> skilltimer;
 chrono::time_point<chrono::steady_clock> immunetimer;
 chrono::time_point<chrono::steady_clock> aniCancelTimer;
 chrono::time_point<chrono::steady_clock> activeTimer;
+chrono::time_point<chrono::steady_clock> standTimer;
 CVecCtrl* CVecPointer = nullptr;
 bool jobPatchesApplied = false;
 static std::mt19937 rng(std::random_device{}());
@@ -39,6 +40,7 @@ int doBoundJump = 0x0096897A; // requires further handling
 int shootAttack = 0x009690E9; // should work for basic rt/lb shooting skills.
 int doTeleport = 0x00969146;
 int mesoExplosion = 0x009681D3;
+int smokeScreen = 0x00968209;
 const DWORD dwAccuracyCalc = 0x0077F743;
 const DWORD dwAccuracyCalcRetn = 0x0077F7E2;
 bool siegeMode = false;
@@ -99,6 +101,7 @@ bool anicomplete = false;
 int lastusedskill = 0;
 int rsLevel = 0;
 int asLevel = 0;
+int bsLevel = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -217,6 +220,10 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 1111009
             cmp esi, eax
             je melee
+
+            mov eax, 1111015
+            cmp esi, eax
+            je smoke
 
                 // Spearman
             mov eax, 1211012
@@ -756,6 +763,7 @@ void __declspec(naked) doActiveSkills() {
             shoot : jmp shootAttack
             jumpmove : jmp doBoundJump
             teleport : jmp doTeleport
+            smoke : jmp smokeScreen
             heal : jmp doHeal
             meso : jmp mesoExplosion
     }
@@ -1115,7 +1123,7 @@ bool isSkillIDMatched(int nSkillID) {
         1501016, 1501012,
 
         // ===== Crusader =====
-        1111009,
+        1111009, 1111015,
 
         // ===== Spearman =====
         1211012, 1211013, 1211014,
@@ -1194,7 +1202,7 @@ bool isSkillIDMatched(int nSkillID) {
         4501005, 4501014, 4501006,
 
         // ===== Chief Bandit =====
-        4211011, 4211015, 4211001,
+        4211011, 4211015, 4211001, 4211016,
 
         // ===== Ninja =====
         4411006, 4411009, 4411019, 4411014,
@@ -1305,6 +1313,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     verdentVeilSL = pGetSkillLevel(_this, charData, 3110022, skillEntry);
     asLevel = pGetSkillLevel(_this, charData, 1411005, skillEntry);
     rsLevel = pGetSkillLevel(_this, charData, 1411006, skillEntry);
+    bsLevel = pGetSkillLevel(_this, charData, 4211015, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1775,6 +1784,7 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         }
     }
     if (iframes > 0) {
+        printf("iframes = %d\n", iframes);
         Patch4(0x009591FE + 1, 1500 + iframes);
     }
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
@@ -2002,29 +2012,39 @@ void moveSkill(CUserLocal* pthis, int skillid) {
     double vy = 0.0;
     int skillLevel = 0;
     int avatar = pthis->m_avatar;
-    if (skillid == 4101009) {
-        vx = 200.0 + 10 * 30;
-        vy = -100.0;
-        if (pthis->m_isLeft % 2) {
-            vx *= -1;
-        }
-        movepath = 14;
-    } else if (skillid >= 1411005) {
+    if (skillid >= 1411005) {
         if (skillid == 1411005) {
             skillLevel = asLevel;
         } else {
             skillLevel = rsLevel;
         }
-        vx = 700.0 + skillLevel * 20;
+        vx = 700.0 + skillLevel * 40;
         if (skillid == 1411006) {
             vx *= -1;
         }
-        if (pthis->m_isLeft % 2) {
-            vx *= -1;
-        }
+    }
+    if (skillid == 4211015) {
+        skillLevel = bsLevel;
+        vx = 1200.0 + skillLevel * 5;
+    }
+    if (pthis->m_isLeft % 2) {
+        vx *= -1;
     }
     SetMovePath(pCv, movepath);
     SetImpactNext(pCv, vx, vy);
+}
+
+bool isMovementSkill(int skillid) {
+    static const int skillIDs[] = {
+        // Duelist
+        1411005, 1411006,
+        // chief bandit
+        4211015,
+        // striker
+        5411021,
+    };
+
+    return std::find(std::begin(skillIDs), std::end(skillIDs), skillid) != std::end(skillIDs);
 }
 
 auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
@@ -2103,33 +2123,12 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         int roll = distribution(generator);
         CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000 + roll, nScanCode, pnConsumeCheck);
     }
-    // if (comboAbility > 0) {
-    //     if (cancelSkill == 0) {
-    //         cancelSkill = nSkillID;
-    //         aniCancelTimer = chrono::steady_clock::now();
-    //     }
-    //     auto skElapsed = chrono::steady_clock::now() - aniCancelTimer;
-    //     cancelStuff(chrono::duration_cast<chrono::milliseconds>(skElapsed), nSkillID);
-    // }
 
-    // if (nSkillID == 5201007) {
-    //     pDoJump(_This, 0);
-    // }
-
-    if (nSkillID == 4211015) {
-        Patch4(0x00952F20 + 3, 4211015);
-    }
     if (nSkillID == 1511003) {
         Patch4(0x00952F20 + 3, 1511003);
     }
-    if (nSkillID == 1411005) {
+    if (isMovementSkill(nSkillID)) {
         moveSkill(_This, nSkillID);
-    }
-    if (nSkillID == 1411006) {
-        moveSkill(_This, nSkillID);
-    }
-    if (nSkillID == 5411021) {
-        Patch4(0x00952F20 + 3, 5411021);
     }
     if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
