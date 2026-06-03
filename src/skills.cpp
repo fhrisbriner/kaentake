@@ -1205,7 +1205,7 @@ bool isSkillIDMatched(int nSkillID) {
         4211011, 4211015, 4211001, 4211016,
 
         // ===== Ninja =====
-        4411006, 4411009, 4411019, 4411014,
+        4411006, 4411009, 4411019, 4411004,
 
         // ===== Bandit 3rd =====
         4511006, 4511013, 4511003, 4511007, 4511001,
@@ -2320,6 +2320,7 @@ void*(__fastcall CalcDamage__PDamage)(
         int a19,
         int a20,
         int a21) {
+            printf("damagePerMob: %d, a9: %d, a10: %d, a14: %d, a19 = %d,", nDamagePerMob, nItemID, a10, a4, a19);
     return calcpdamage_hook(_this, a2, bs, a4, dwMobid, a6, a7, nDamagePerMob, nItemID, a10, a11,
             nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
 }
@@ -3346,6 +3347,51 @@ void AttachOtherHooks() {
 
     // CritBypass
     PatchNop(0x007650B3, 29);
+
+    // Crit damage: multiply the line by crit-damage%, instead of adding a
+    // bonus computed off BASE damage. Vanilla CalcDamage::PDamage @0x790190:
+    //   on crit roll, v329 = (v325-100)/100 * baseDmg + v329
+    // (v325 = crit dmg %, e.g. 200; v329 = skill-scaled line dmg). For a 30%
+    // skill that yields 0.30*base + 1.00*base = 130% of base.
+    // Rewrite to v329 = v325/100 * v329 -> 0.30*base * 2.0 = 60% of base,
+    // i.e. each line multiplied by the crit-damage factor. Crit-mark write
+    // (*(a17+4*weaponID)=1) preserved; 40-byte region, tail padded with NOP.
+    unsigned char CritMul[] = {
+        0x8B, 0x4D, 0x44,                   // mov  ecx, [ebp+arg_3C]   (a17)
+        0x8B, 0x45, 0x24,                   // mov  eax, [ebp+weaponID]
+        0xC7, 0x04, 0x81, 0x01, 0x00, 0x00, 0x00, // mov dword [ecx+eax*4], 1
+        0xDB, 0x45, 0xCC,                   // fild  [ebp+var_34]       (v325)
+        0xDC, 0x4D, 0xE0,                   // fmul  [ebp+var_20]       (v329)
+        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00, // fmul  ds:dbl_AF14F0      (0.01)
+        0xDD, 0x5D, 0xE0,                   // fstp  [ebp+var_20]       (v329)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, // pad to 40 bytes
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+    };
+    Patch1Array(0x00790190, CritMul, sizeof(CritMul));
+
+    // Same crit-damage rework for magic: CalcDamage::MDamage @0x791DC3.
+    // Vanilla on crit roll: v121 = ((v117 - (v117<=200?100:200))/100 + 1.0) * v121
+    // (v117 = crit dmg %, v121 = line dmg). For v117<=200 that already equals
+    // v117/100, but >200 is clamped down by the -200. Rewrite to a plain
+    // v121 = v117/100 * v121 so magic matches physical (line * crit factor,
+    // no clamp). Crit-mark write (*(nDragonFury+a13)=1) preserved; 61-byte
+    // region, tail padded with NOP.
+    unsigned char MCritMul[] = {
+        0x8B, 0x45, 0x40,                   // mov  eax, [ebp+nDragonFury]
+        0x8B, 0x4D, 0x34,                   // mov  ecx, [ebp+arg_2C]   (a13)
+        0xC7, 0x04, 0x01, 0x01, 0x00, 0x00, 0x00, // mov dword [ecx+eax], 1
+        0xDB, 0x45, 0xDC,                   // fild  [ebp+var_24]       (v117)
+        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00, // fmul  ds:dbl_AF14F0      (0.01)
+        0xDC, 0x4D, 0xF4,                   // fmul  [ebp+var_C]        (v121)
+        0xDD, 0x5D, 0xF4,                   // fstp  [ebp+var_C]        (v121)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, // pad to 61 bytes (33 NOP)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90
+    };
+    Patch1Array(0x00791DC3, MCritMul, sizeof(MCritMul));
 
     // uiStat stuff
     // Patch1(0x008C35C9 + 1, 0x2C); // weapon def
