@@ -1057,72 +1057,6 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     return preSkillMitigationDamage;
 }
 
-// --- Mob defense (damage PLAYER deals TO mob) ---------------------------------
-// Replace the stock linear formula  dmg -= mobDEF * rand(0.5..0.6)  with the same
-// diminishing-returns curve used for player defense:  dmg *= 1000 / (1000 + DEF).
-// DEF is clamped to [0, 1999] exactly like the original. Skills that ignore
-// defence skip this code entirely (their branch lands past the cave).
-static const double g_DefDR1000 = 1000.0;
-DWORD g_PDefRet = 0x0078FFF2; // CalcDamage::PDamage rejoin
-DWORD g_MDefRet = 0x00791D6F; // CalcDamage::MDamage rejoin
-
-// CalcDamage::PDamage, cave entry 0x0078FF53. ebp = PDamage frame.
-// mob ptr = [ebp+0x18], damage double = [ebp-0x20], scratch int = [ebp-0x24].
-__declspec(naked) void MobPhysDefenseFormula() {
-    __asm {
-        mov     eax, [ebp+0x18]          // a6 (MobStat*)
-        mov     ecx, [eax+0x34]
-        add     ecx, [eax+0x38]          // PDD = field34 + field38
-        test    ecx, ecx
-        jg      p_store
-        xor     ecx, ecx                 // floor at 0, no 1999 cap
-    p_store:
-        mov     [ebp-0x24], ecx
-        fild    dword ptr [ebp-0x24]     // st0 = DEF
-        fld     qword ptr [g_DefDR1000]  // st0 = 1000, st1 = DEF
-        fadd    st(0), st(1)             // st0 = 1000+DEF, st1 = DEF
-        fdivr   qword ptr [g_DefDR1000]  // st0 = 1000/(1000+DEF), st1 = DEF
-        fld     qword ptr [ebp-0x20]     // st0 = dmg, st1 = ratio, st2 = DEF
-        fmul    st(0), st(1)             // st0 = dmg*ratio
-        fstp    qword ptr [ebp-0x20]     // store scaled damage
-        fstp    st(0)                    // pop ratio
-        fstp    st(0)                    // pop DEF
-        jmp     dword ptr [g_PDefRet]
-    }
-}
-
-// CalcDamage::MDamage, cave entry 0x00791CCF. ebp = MDamage frame.
-// mob ptr = [ebp+0x18], damage double = [ebp-0x0C], scratch int = [ebp-0x24].
-// Rejoin at 0x00791D6F expects arg_14 = mob[0x62] and ZF set from cmp(mob[0x62],0).
-__declspec(naked) void MobMagicDefenseFormula() {
-    __asm {
-        mov     eax, [ebp+0x18]          // a6 (MobStat*)
-        mov     ecx, [eax+0x54]
-        add     ecx, [eax+0x58]          // MDD = field54 + field58
-        test    ecx, ecx
-        jg      m_store
-        xor     ecx, ecx                 // floor at 0, no 1999 cap
-    m_store:
-        mov     [ebp-0x24], ecx
-        fild    dword ptr [ebp-0x24]     // st0 = DEF
-        fld     qword ptr [g_DefDR1000]  // st0 = 1000, st1 = DEF
-        fadd    st(0), st(1)             // st0 = 1000+DEF, st1 = DEF
-        fdivr   qword ptr [g_DefDR1000]  // st0 = 1000/(1000+DEF), st1 = DEF
-        fld     qword ptr [ebp-0x0C]     // st0 = dmg, st1 = ratio, st2 = DEF
-        fmul    st(0), st(1)             // st0 = dmg*ratio
-        fstp    qword ptr [ebp-0x0C]     // store scaled damage
-        fstp    st(0)                    // pop ratio
-        fstp    st(0)                    // pop DEF
-        // restore the mob[0x62] damage-rate state the rejoin point relies on
-        mov     eax, [ebp+0x18]
-        mov     eax, [eax+0xF8]          // mob[0x62]
-        mov     [ebp+0x1C], eax          // arg_14 = mob[0x62]
-        xor     ecx, ecx
-        cmp     eax, ecx                 // set ZF for the jz at 0x791D6F
-        jmp     dword ptr [g_MDefRet]
-    }
-}
-
 
 inline int skipArray[]{
     0x0078E94F + 2,
@@ -2207,7 +2141,60 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         Patch4(0x00952F20 + 3, 1511003);
     }
     if (isMovementSkill(nSkillID)) {
-        moveSkill(_This, nSkillID);
+        bool move = true;
+        bool grounded = false;
+        CVecCtrl* pCv = CVecCtrl::FromInterface(_This->m_pvc);
+        if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut(nSkillID)) {
+            move = false;
+            return 0;
+        }
+        int movepath = 0;
+        double vx = 0.0;
+        double vy = 0.0;
+        int skillLevel = 0;
+        int avatar = _This->m_avatar;
+        if (nSkillID == 1511009 && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
+            movepath = 6;
+            vy = -800;
+            grounded = true;
+        }
+        if (nSkillID == 1511009 && (IsFalling(pCv) || IsFreeFalling(pCv))) {
+            vx = 300.0;
+            vy = 1000.0;
+        }
+        if (nSkillID >= 1411005 && nSkillID <= 1411006) {
+            if (nSkillID == 1411005) {
+                skillLevel = asLevel;
+            } else {
+                skillLevel = rsLevel;
+            }
+            vx = 700.0 + skillLevel * 40;
+            if (nSkillID == 1411006) {
+                vx *= -1;
+            }
+        }
+        if (nSkillID == 4211015) {
+            skillLevel = bsLevel;
+            vx = 1100.0;
+        }
+        if (nSkillID == 5101009) {
+            skillLevel = backflip;
+            vx = -(500.0 + skillLevel * 10);
+            if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
+                vy = -500.0;
+                grounded = true;
+            }
+        }
+        if (_This->m_isLeft % 2) {
+            vx *= -1;
+        }
+        if (move) {
+            SetMovePath(pCv, movepath);
+            SetImpactNext(pCv, vx, vy);
+        }
+        if (grounded) {
+            return 0;
+        }
     }
     if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
@@ -2931,8 +2918,6 @@ void AttachSkillEdits() {
     ATTACH_HOOK(CUserLocal__IsInvincible, CUserLocal__IsInvincible_Hook);
     ATTACH_HOOK(MobPDamage, MobPDamage_Hook);
     ATTACH_HOOK(MobMDamage, MobMDamage_Hook);
-    CodeCave((void*)MobPhysDefenseFormula, 0x0078FF53, 6);  // mob PDD vs player phys dmg
-    CodeCave((void*)MobMagicDefenseFormula, 0x00791CCF, 6); // mob MDD vs player magic dmg
     ATTACH_HOOK(get_vertical_adjust_of_attack_range, vertical);
     ATTACH_HOOK(Avatar_Update, AvatarUpdate);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
