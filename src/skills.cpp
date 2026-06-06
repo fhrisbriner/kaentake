@@ -102,6 +102,8 @@ int lastusedskill = 0;
 int rsLevel = 0;
 int asLevel = 0;
 int bsLevel = 0;
+int backflip = 0;
+int slam = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -566,7 +568,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
-            mov eax, 4411006
+            mov eax, 4411004
             cmp esi, eax
             je melee
 
@@ -746,9 +748,17 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 5101009
+            cmp esi, eax
+            je melee
+
             mov eax, 2211013
             cmp esi, eax
             je buff
+
+            mov eax, 3601009
+            cmp esi, eax
+            je melee
 
             mov eax, 2301005
             jmp doActiveJmpBack
@@ -996,6 +1006,8 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     if (MobACC(ms, cd, bs, ss, misschance)) {
         return 0; // attack missed
     }
+    int invincible = ss->m_invincible.Fuse();
+    int mesoguard = ss->m_mesoGuard.Fuse();
     int mobPD = ms->nPAD;
     double baseDamage = (double)mobPD * mobPD * 0.0085;
     int level = bs->nLevel.Fuse();
@@ -1007,7 +1019,14 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (1000 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
-    return baseDamage - ((baseDamage * reduciton) * leveldiff);
+    int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (invincible > 0) {
+        preSkillMitigationDamage *= (1.0 - (invincible * 0.01));
+    }
+    if (mesoguard > 0) {
+        preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    return preSkillMitigationDamage;
 }
 
 auto magicACC = (int(__stdcall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x007929CA;
@@ -1017,6 +1036,9 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     if (magicACC(ms, cd, bs, ss, misschance)) {
         return 0; // attack missed
     }
+    int mesoguard = ss->m_mesoGuard.Fuse();
+    double mesoGuardReduction = -mesoguard / 100;
+    double reduction = 1.0 + mesoGuardReduction;
     int mobPD = ms->nMAD;                              // Magic Attack Damage (plaintext, no Fuse)
     double baseDamage = (double)mobPD * mobPD * 0.008; // PAD^2 * rand(0.008, 0.0085)
     int level = bs->nLevel.Fuse();
@@ -1028,7 +1050,77 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (1000 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
-    return baseDamage - ((baseDamage * reduciton) * leveldiff);
+    int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (mesoguard > 0) {
+        preSkillMitigationDamage *= (mesoguard * 0.01);
+    }
+    return preSkillMitigationDamage;
+}
+
+// --- Mob defense (damage PLAYER deals TO mob) ---------------------------------
+// Replace the stock linear formula  dmg -= mobDEF * rand(0.5..0.6)  with the same
+// diminishing-returns curve used for player defense:  dmg *= 1000 / (1000 + DEF).
+// DEF is clamped to [0, 1999] exactly like the original. Skills that ignore
+// defence skip this code entirely (their branch lands past the cave).
+static const double g_DefDR1000 = 1000.0;
+DWORD g_PDefRet = 0x0078FFF2; // CalcDamage::PDamage rejoin
+DWORD g_MDefRet = 0x00791D6F; // CalcDamage::MDamage rejoin
+
+// CalcDamage::PDamage, cave entry 0x0078FF53. ebp = PDamage frame.
+// mob ptr = [ebp+0x18], damage double = [ebp-0x20], scratch int = [ebp-0x24].
+__declspec(naked) void MobPhysDefenseFormula() {
+    __asm {
+        mov     eax, [ebp+0x18]          // a6 (MobStat*)
+        mov     ecx, [eax+0x34]
+        add     ecx, [eax+0x38]          // PDD = field34 + field38
+        test    ecx, ecx
+        jg      p_store
+        xor     ecx, ecx                 // floor at 0, no 1999 cap
+    p_store:
+        mov     [ebp-0x24], ecx
+        fild    dword ptr [ebp-0x24]     // st0 = DEF
+        fld     qword ptr [g_DefDR1000]  // st0 = 1000, st1 = DEF
+        fadd    st(0), st(1)             // st0 = 1000+DEF, st1 = DEF
+        fdivr   qword ptr [g_DefDR1000]  // st0 = 1000/(1000+DEF), st1 = DEF
+        fld     qword ptr [ebp-0x20]     // st0 = dmg, st1 = ratio, st2 = DEF
+        fmul    st(0), st(1)             // st0 = dmg*ratio
+        fstp    qword ptr [ebp-0x20]     // store scaled damage
+        fstp    st(0)                    // pop ratio
+        fstp    st(0)                    // pop DEF
+        jmp     dword ptr [g_PDefRet]
+    }
+}
+
+// CalcDamage::MDamage, cave entry 0x00791CCF. ebp = MDamage frame.
+// mob ptr = [ebp+0x18], damage double = [ebp-0x0C], scratch int = [ebp-0x24].
+// Rejoin at 0x00791D6F expects arg_14 = mob[0x62] and ZF set from cmp(mob[0x62],0).
+__declspec(naked) void MobMagicDefenseFormula() {
+    __asm {
+        mov     eax, [ebp+0x18]          // a6 (MobStat*)
+        mov     ecx, [eax+0x54]
+        add     ecx, [eax+0x58]          // MDD = field54 + field58
+        test    ecx, ecx
+        jg      m_store
+        xor     ecx, ecx                 // floor at 0, no 1999 cap
+    m_store:
+        mov     [ebp-0x24], ecx
+        fild    dword ptr [ebp-0x24]     // st0 = DEF
+        fld     qword ptr [g_DefDR1000]  // st0 = 1000, st1 = DEF
+        fadd    st(0), st(1)             // st0 = 1000+DEF, st1 = DEF
+        fdivr   qword ptr [g_DefDR1000]  // st0 = 1000/(1000+DEF), st1 = DEF
+        fld     qword ptr [ebp-0x0C]     // st0 = dmg, st1 = ratio, st2 = DEF
+        fmul    st(0), st(1)             // st0 = dmg*ratio
+        fstp    qword ptr [ebp-0x0C]     // store scaled damage
+        fstp    st(0)                    // pop ratio
+        fstp    st(0)                    // pop DEF
+        // restore the mob[0x62] damage-rate state the rejoin point relies on
+        mov     eax, [ebp+0x18]
+        mov     eax, [eax+0xF8]          // mob[0x62]
+        mov     [ebp+0x1C], eax          // arg_14 = mob[0x62]
+        xor     ecx, ecx
+        cmp     eax, ecx                 // set ZF for the jz at 0x791D6F
+        jmp     dword ptr [g_MDefRet]
+    }
 }
 
 
@@ -1185,7 +1277,7 @@ bool isSkillIDMatched(int nSkillID) {
 
         3601000, 3601001, 3601002,
         3601003, 3601004, 3601005,
-        3601006, 3601007,
+        3601006, 3601007, 3601009,
 
         // ===== Thief =====
         4001004,
@@ -1219,7 +1311,7 @@ bool isSkillIDMatched(int nSkillID) {
         5111013,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
-        5401002, 5401003,
+        5401002, 5401003, 5101009,
 
         // ===== Comboist ====
         5411002, 5411021, 5411022, 5411020,
@@ -1314,6 +1406,8 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     asLevel = pGetSkillLevel(_this, charData, 1411005, skillEntry);
     rsLevel = pGetSkillLevel(_this, charData, 1411006, skillEntry);
     bsLevel = pGetSkillLevel(_this, charData, 4211015, skillEntry);
+    backflip = pGetSkillLevel(_this, charData, 5101009, skillEntry);
+    slam = pGetSkillLevel(_this, charData, 2511009, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1348,7 +1442,7 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if (nSkillID >= 1511000 && nSkillID < 2000000) {
+    if ((nSkillID >= 1511000 && nSkillID < 2000000) || nSkillID == 3601009) {
         if (get_weapon_type() == 40 || get_weapon_type() == 41 || get_weapon_type() == 42) {
             return true;
         }
@@ -1837,6 +1931,7 @@ void changeMagicAttacks() {
     Patch4(0x00955D66 + 1, 2511006);
     Patch4(0x00955D7C + 1, 2411012);
     Patch4(0x00955D87 + 1, 2111013);
+    Patch4(0x00955D92 + 1, 2411011);
 }
 
 bool isCopyCatSkill(int skillId) {
@@ -1878,13 +1973,11 @@ int(__fastcall setInput_hook)(void* _this, void* edx, int XInput, int YInput) {
 auto SetImpactNext = (void(__thiscall*)(CVecCtrl*, double, double))0x7a6353;
 void(__fastcall SetImpactNext_Hook)(CVecCtrl* _this, void* edx, double x, double y) {
     int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-    if (job > 200 && (int)_ReturnAddress() == 0x0096DAFF) {
+    if (job >= 300 && (int)_ReturnAddress() == 0x0096DAFF && job < 400) {
         return SetImpactNext(_this, -x, y);
     }
     return SetImpactNext(_this, x, y);
 }
-
-bool flying = false;
 
 auto isHerosWill = (int(__cdecl*)(int))0x00765E2D;
 int(__cdecl isHerosWillHook)(int skillId) {
@@ -1981,15 +2074,27 @@ void cancelStuff(chrono::milliseconds delay, int nSkillID) {
     }
 }
 
+bool firsthit = false;
 
-bool MovementLockOut() {
+bool MovementLockOut(int nSkillID) {
+int early = 450;
+int late  = 900;
+    if ((nSkillID == 1511009 || nSkillID == 5101009) && !firsthit) {
+        firsthit = true;
+        return true;
+    }
+    if ((nSkillID) == 5101009) {
+        late = 420;
+        early = 250;
+    }
     auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
     auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
-    if (skillelapsed.count() < 450) {
+    if (skillelapsed.count() < early) {
         return false;
     }
-    if (telapsed.count() > 900) {
+    if (telapsed.count() > late) {
         activeTimer = chrono::steady_clock::now();
+        firsthit = false;
         return true;
     }
     return false;
@@ -2002,46 +2107,21 @@ auto IsFalling = (int(__thiscall*)(CVecCtrl*))0x0096c1aa;
 auto SetMovePath = (void(__thiscall*)(CVecCtrl*, int))0x0052EF17;
 
 void moveSkill(CUserLocal* pthis, int skillid) {
-
-    CVecCtrl* pCv = CVecCtrl::FromInterface(pthis->m_pvc);
-    if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut()) {
-        return;
-    }
-    int movepath = 0;
-    double vx = 0.0;
-    double vy = 0.0;
-    int skillLevel = 0;
-    int avatar = pthis->m_avatar;
-    if (skillid >= 1411005) {
-        if (skillid == 1411005) {
-            skillLevel = asLevel;
-        } else {
-            skillLevel = rsLevel;
-        }
-        vx = 700.0 + skillLevel * 40;
-        if (skillid == 1411006) {
-            vx *= -1;
-        }
-    }
-    if (skillid == 4211015) {
-        skillLevel = bsLevel;
-        vx = 1200.0 + skillLevel * 5;
-    }
-    if (pthis->m_isLeft % 2) {
-        vx *= -1;
-    }
-    SetMovePath(pCv, movepath);
-    SetImpactNext(pCv, vx, vy);
 }
 
 bool isMovementSkill(int skillid) {
     static const int skillIDs[] = {
         // Duelist
-        1411005, 1411006,
+        1411005,
+        1411006,
         // chief bandit
         4211015,
         // striker
         5411021,
+        // brawler
+        5101009,
+        1511009,
+        3601009,
     };
 
     return std::find(std::begin(skillIDs), std::end(skillIDs), skillid) != std::end(skillIDs);
@@ -2082,7 +2162,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     // }
 
     if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() >= 541 && CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() < 550 && !animationCancel) {
-        printf("doing it.");
         auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
                 chrono::steady_clock::now() - aniCancelTimer);
         if (comboAbility > 0) {
@@ -2178,7 +2257,6 @@ auto AniCancel = (void(__thiscall*)(void*, int))0x00453A29;
 auto Avatar_Update = (void(__thiscall*)(void*))0x004522A6;
 void(__fastcall AvatarUpdate)(void* _this, void* blah) {
     if (animationCancel) {
-        printf("cancelling");
         AniCancel(_this, 1);
         CUserLocal* cuser = CUserLocal::GetInstance();
         CUserLocal__DoActiveSkill_Hook(cuser, blah, cancelSkill, 0, 0);
@@ -2320,7 +2398,7 @@ void*(__fastcall CalcDamage__PDamage)(
         int a19,
         int a20,
         int a21) {
-            printf("damagePerMob: %d, a9: %d, a10: %d, a14: %d, a19 = %d,", nDamagePerMob, nItemID, a10, a4, a19);
+    printf("damagePerMob: %d, a9: %d, a10: %d, a14: %d, a19 = %d,", nDamagePerMob, nItemID, a10, a4, a19);
     return calcpdamage_hook(_this, a2, bs, a4, dwMobid, a6, a7, nDamagePerMob, nItemID, a10, a11,
             nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
 }
@@ -2853,6 +2931,8 @@ void AttachSkillEdits() {
     ATTACH_HOOK(CUserLocal__IsInvincible, CUserLocal__IsInvincible_Hook);
     ATTACH_HOOK(MobPDamage, MobPDamage_Hook);
     ATTACH_HOOK(MobMDamage, MobMDamage_Hook);
+    CodeCave((void*)MobPhysDefenseFormula, 0x0078FF53, 6);  // mob PDD vs player phys dmg
+    CodeCave((void*)MobMagicDefenseFormula, 0x00791CCF, 6); // mob MDD vs player magic dmg
     ATTACH_HOOK(get_vertical_adjust_of_attack_range, vertical);
     ATTACH_HOOK(Avatar_Update, AvatarUpdate);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
@@ -2867,12 +2947,12 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
     ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
-    ATTACH_HOOK(AddRush, AddRush_Hook);
+    //ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
-    ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
+    // ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(octHook, octopus);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
@@ -2943,6 +3023,8 @@ void AttachSkillEdits() {
     Patch4(0x00957282 + 1, 4210100);
     Patch4(0x00967070 + 1, 4210100);
     // replaceSpark();
+    // don't cancel skills when hit
+    Patch1(0x009592E7, 0xEB);
 }
 
 DWORD Bypass1 = 0x007540A3;
@@ -3357,14 +3439,14 @@ void AttachOtherHooks() {
     // i.e. each line multiplied by the crit-damage factor. Crit-mark write
     // (*(a17+4*weaponID)=1) preserved; 40-byte region, tail padded with NOP.
     unsigned char CritMul[] = {
-        0x8B, 0x4D, 0x44,                   // mov  ecx, [ebp+arg_3C]   (a17)
-        0x8B, 0x45, 0x24,                   // mov  eax, [ebp+weaponID]
+        0x8B, 0x4D, 0x44,                         // mov  ecx, [ebp+arg_3C]   (a17)
+        0x8B, 0x45, 0x24,                         // mov  eax, [ebp+weaponID]
         0xC7, 0x04, 0x81, 0x01, 0x00, 0x00, 0x00, // mov dword [ecx+eax*4], 1
-        0xDB, 0x45, 0xCC,                   // fild  [ebp+var_34]       (v325)
-        0xDC, 0x4D, 0xE0,                   // fmul  [ebp+var_20]       (v329)
-        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00, // fmul  ds:dbl_AF14F0      (0.01)
-        0xDD, 0x5D, 0xE0,                   // fstp  [ebp+var_20]       (v329)
-        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, // pad to 40 bytes
+        0xDB, 0x45, 0xCC,                         // fild  [ebp+var_34]       (v325)
+        0xDC, 0x4D, 0xE0,                         // fmul  [ebp+var_20]       (v329)
+        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00,       // fmul  ds:dbl_AF14F0      (0.01)
+        0xDD, 0x5D, 0xE0,                         // fstp  [ebp+var_20]       (v329)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,       // pad to 40 bytes
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90
     };
     Patch1Array(0x00790190, CritMul, sizeof(CritMul));
@@ -3377,14 +3459,14 @@ void AttachOtherHooks() {
     // no clamp). Crit-mark write (*(nDragonFury+a13)=1) preserved; 61-byte
     // region, tail padded with NOP.
     unsigned char MCritMul[] = {
-        0x8B, 0x45, 0x40,                   // mov  eax, [ebp+nDragonFury]
-        0x8B, 0x4D, 0x34,                   // mov  ecx, [ebp+arg_2C]   (a13)
+        0x8B, 0x45, 0x40,                         // mov  eax, [ebp+nDragonFury]
+        0x8B, 0x4D, 0x34,                         // mov  ecx, [ebp+arg_2C]   (a13)
         0xC7, 0x04, 0x01, 0x01, 0x00, 0x00, 0x00, // mov dword [ecx+eax], 1
-        0xDB, 0x45, 0xDC,                   // fild  [ebp+var_24]       (v117)
-        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00, // fmul  ds:dbl_AF14F0      (0.01)
-        0xDC, 0x4D, 0xF4,                   // fmul  [ebp+var_C]        (v121)
-        0xDD, 0x5D, 0xF4,                   // fstp  [ebp+var_C]        (v121)
-        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, // pad to 61 bytes (33 NOP)
+        0xDB, 0x45, 0xDC,                         // fild  [ebp+var_24]       (v117)
+        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00,       // fmul  ds:dbl_AF14F0      (0.01)
+        0xDC, 0x4D, 0xF4,                         // fmul  [ebp+var_C]        (v121)
+        0xDD, 0x5D, 0xF4,                         // fstp  [ebp+var_C]        (v121)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,       // pad to 61 bytes (33 NOP)
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
@@ -3466,7 +3548,7 @@ void AttachOtherHooks() {
     ATTACH_HOOK(get_cool_time, get_cool_time_t);
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
-    //ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
+    // ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
     ATTACH_HOOK(SetImpactNext, SetImpactNext_Hook);
     ATTACH_HOOK(CanSendExclRequest, CanSendExclRequest_Hook);
