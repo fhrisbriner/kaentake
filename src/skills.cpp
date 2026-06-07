@@ -2674,7 +2674,6 @@ void __fastcall ShowSkillEffect(
             wspeed = weaponSpeed;
         }
     }
-    DebugMessage("NAction %d", wspeed);
     return ShowSkillEffect_hook(_this, pSkill, nSLV, wspeed, bLeft, nLast, pPtOffset);
 }
 
@@ -2838,7 +2837,6 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
 
     Mob* mob = reinterpret_cast<Mob*>(reinterpret_cast<char*>(a3) - 0x1A0);
     MobTemplate* tmpl = (a3 && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_pTemplate : nullptr;
-    DebugMessage("[summon] statTerm=%d attack=%d skill%%=%d magicDef=%d a3=%p mob=%p tmpl=%p",
             (int)statTerm, attack, skillDmgPct, magicDefense, a3, mob, tmpl);
 
     // Same level + defense mitigation as non-summon skills.
@@ -2862,7 +2860,6 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
     if (result <= 0 && base > 0.0) {
         result = 1; // never collapse a real hit into a 0 (engine treats 0 as a miss)
     }
-    DebugMessage("[summon] -> %d", result);
     return result;
 }
 
@@ -2930,7 +2927,6 @@ int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, v
         // ~500. v7[12] (+0x30) is a small edge offset (~-18), NOT a range -- leave it alone.
         *reinterpret_cast<int*>(attackInfo + 0x34) = summonReach;
     }
-    DebugMessage("[loadAtkInfo] info=%p v13before=%d wrote=%d", attackInfo, before, summonReach);
     return ret;
 }
 
