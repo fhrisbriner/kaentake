@@ -104,6 +104,7 @@ int asLevel = 0;
 int bsLevel = 0;
 int backflip = 0;
 int slam = 0;
+int sharpenlevel = 0;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
@@ -752,6 +753,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 5101010
+            cmp esi, eax
+            je melee
+
             mov eax, 2211013
             cmp esi, eax
             je buff
@@ -1017,7 +1022,7 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 40;
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
-    double reduciton = (PDD / (1000 + PDD));
+    double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
     int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
     if (invincible > 0) {
@@ -1048,11 +1053,11 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 10;
     double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
-    double reduciton = (PDD / (1000 + PDD));
+    double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
     int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
     if (mesoguard > 0) {
-        preSkillMitigationDamage *= (mesoguard * 0.01);
+        preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
     }
     return preSkillMitigationDamage;
 }
@@ -1245,7 +1250,7 @@ bool isSkillIDMatched(int nSkillID) {
         5111013,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
-        5401002, 5401003, 5101009,
+        5401002, 5401003, 5101009, 5101010,
 
         // ===== Comboist ====
         5411002, 5411021, 5411022, 5411020,
@@ -1342,6 +1347,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     bsLevel = pGetSkillLevel(_this, charData, 4211015, skillEntry);
     backflip = pGetSkillLevel(_this, charData, 5101009, skillEntry);
     slam = pGetSkillLevel(_this, charData, 2511009, skillEntry);
+    sharpenlevel = pGetSkillLevel(_this, charData, 3200013, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -2011,15 +2017,14 @@ void cancelStuff(chrono::milliseconds delay, int nSkillID) {
 bool firsthit = false;
 
 bool MovementLockOut(int nSkillID) {
-int early = 450;
-int late  = 900;
-    if ((nSkillID == 1511009 || nSkillID == 5101009) && !firsthit) {
+    int early = 450;
+    int late = 750;
+    if ((nSkillID == 1511009 && !firsthit)) {
         firsthit = true;
         return true;
     }
-    if ((nSkillID) == 5101009) {
-        late = 420;
-        early = 250;
+    if (nSkillID == 5101010 || nSkillID == 5101009) {
+        return true;
     }
     auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
     auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
@@ -2054,10 +2059,9 @@ bool isMovementSkill(int skillid) {
         5411021,
         // brawler
         5101009,
+        5101010,
         1511009,
-        3601009,
     };
-
     return std::find(std::begin(skillIDs), std::end(skillIDs), skillid) != std::end(skillIDs);
 }
 
@@ -2068,6 +2072,16 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
         job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
         comboStuff();
+    }
+    if (job >= 151 && job <= 152) {
+        Patch4(0x0074D165 + 3, 1511009);
+        auto elapsed = chrono::steady_clock::now() - jumptimer;
+        if (elapsed < chrono::milliseconds(150)) {
+            return 0;
+        }
+    }
+    if (job >= 510 && job <= 600) {
+        Patch4(0x0074D165 + 3, 1511009);
     }
     if (timerRunning == false) {
         aniCancelTimer = chrono::steady_clock::now();
@@ -2080,6 +2094,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 14101006, nScanCode, pnConsumeCheck);
         }
         if (nSkillID == 3411004) {
+            auto elapsed = chrono::steady_clock::now() - jumptimer;
+            if (elapsed < chrono::milliseconds(150)) {
+                return 0;
+            }
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 5201005, nScanCode, pnConsumeCheck);
         }
         if (nSkillID == 2211013) {
@@ -2124,9 +2142,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
-    if (siegeMode && nSkillID == 3211015) {
-        return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601007, nScanCode, pnConsumeCheck);
-    }
+
     if (siegeMode && nSkillID == 3211015) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601007, nScanCode, pnConsumeCheck);
     }
@@ -2145,7 +2161,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         bool grounded = false;
         CVecCtrl* pCv = CVecCtrl::FromInterface(_This->m_pvc);
         if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut(nSkillID)) {
-            move = false;
             return 0;
         }
         int movepath = 0;
@@ -2156,9 +2171,13 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 1511009 && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
             movepath = 6;
             vy = -800;
+            auto elapsed = chrono::steady_clock::now() - jumptimer;
+            if (elapsed < chrono::milliseconds(250)) {
+                return 0;
+            }
             grounded = true;
         }
-        if (nSkillID == 1511009 && (IsFalling(pCv) || IsFreeFalling(pCv))) {
+        if (nSkillID == 1511009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
             vx = 300.0;
             vy = 1000.0;
         }
@@ -2178,20 +2197,26 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             vx = 1100.0;
         }
         if (nSkillID == 5101009) {
-            skillLevel = backflip;
-            vx = -(500.0 + skillLevel * 10);
+            vx = -700.0;
+            auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
+        chrono::steady_clock::now() - aniCancelTimer);
+            if (!IsFreeFalling(pCv) || !IsFalling(pCv) || skElapsed.count() < 150) {
+                return 0;
+            }
+        }
+        if (nSkillID == 5101010) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
-                vy = -500.0;
-                grounded = true;
+                aniCancelTimer = chrono::steady_clock::now();
+                vy = -555.0;
+            } else {
+                return 0;
             }
         }
         if (_This->m_isLeft % 2) {
             vx *= -1;
         }
-        if (move) {
-            SetMovePath(pCv, movepath);
-            SetImpactNext(pCv, vx, vy);
-        }
+        SetMovePath(pCv, movepath);
+        SetImpactNext(pCv, vx, vy);
         if (grounded) {
             return 0;
         }
@@ -2733,14 +2758,23 @@ void __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nO
     nSkillID = a1->skillId;
     double dMultiplier = 1.0;
     double incRate = 0.0;
-    if (nSkillID == 3601007) {
-        incRate = 0.2;
+    if (nSkillID == 3601007 || nSkillID == 3211015) {
+        incRate = 0.1;
     }
-    if (nSkillID == 3101005 || nSkillID == 321005) {
-        incRate = -0.1;
+    if (nSkillID == 3001004 || nSkillID == 3201005 || nSkillID == 321015) {
+        incRate = -0.2;
+    }
+    dMultiplier = 1.0;
+    if (sharpenlevel > 0) {
+        incRate += sharpenlevel * 0.01;
     }
     for (i = 0; i < 15; i++) {
-        dMultiplier = (incRate * nOrder) + 1.0;
+        if (incRate != 0.0) {
+            dMultiplier += nOrder * incRate;
+        }
+        if (dMultiplier <= 0) {
+            dMultiplier = .05;
+        }
         aDamage[i] = (int)((double)aDamage[i] * dMultiplier);
         if (aDamage[i] == 0) {
             return;
@@ -2797,7 +2831,7 @@ int(__cdecl is_keydown_skill_t)(int nSkillID) {
     if (nSkillID == 1201013 || nSkillID == 1201016 || nSkillID == 2411011) {
         return 1;
     }
-    return 0;
+    return is_keydown_skill(nSkillID);
 }
 
 auto GetOneTimeAction = (int(__thiscall*)(void*))0x00451B6A;
@@ -2932,7 +2966,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
     ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
-    //ATTACH_HOOK(AddRush, AddRush_Hook);
+    // ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
