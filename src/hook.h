@@ -102,8 +102,6 @@ inline void AttachClientHooks() {
     (AttachMapObjectFade());
     (BGMOverride());
 }
-
-
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {
     union {

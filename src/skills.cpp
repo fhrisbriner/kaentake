@@ -116,6 +116,9 @@ int topMAD = 0;
 int botMAD = 0;
 int totmagic = 0;
 int pad = 0;
+int summonSeekRangeX = 800; // gate-1 (sub_678ECC cave) search half-width around player (known-good value)
+int summonSeekRangeY = 400; // gate-1 (sub_678ECC cave) search half-height around player
+int summonReach = 1500;     // gate-2 summon attack reach written into v7[13] (+0x34); default ~500
 double clMultiplier = 1.25;
 
 int get_weapon_type() {
@@ -633,7 +636,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5511017
             cmp esi, eax
-            je shoot
+            je melee
 
             mov eax, 3601001
             cmp esi, eax
@@ -1726,7 +1729,6 @@ void __fastcall SetFromWhenDoom_Hook(MobStat* pThis, void* edx, MobTemplate* pTe
     pThis->nEVA = 0;
     pThis->nACC = 0;
     pThis->nSpeed = 0;
-    DebugMessage(".");
 }
 
 
@@ -1737,7 +1739,6 @@ void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom) {
     if (bDoom) {
         auto it = g_TemplateIdByPtr.find(pThis->m_pTemplate);
         templateId = (it != g_TemplateIdByPtr.end()) ? it->second : 0;
-        printf("templateId: %d\n", templateId);
         if (templateId != 0) {
             Patch4(0x0066D722 + 1, templateId);
         }
@@ -1818,7 +1819,6 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         }
     }
     if (iframes > 0) {
-        printf("iframes = %d\n", iframes);
         Patch4(0x009591FE + 1, 1500 + iframes);
     }
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
@@ -2497,7 +2497,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006 || nSkillID == 3601007) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006 || nSkillID == 3601007 || nSkillID == 5111017) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -2754,7 +2754,6 @@ auto chainLightning_Hook = (void(__thiscall*)(SKILLENTRY*, int, int, int*, int))
 void __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOrder, int* aDamage, int a6) {
     int i;
     int nSkillID;
-    int v5;
     nSkillID = a1->skillId;
     double dMultiplier = 1.0;
     double incRate = 0.0;
@@ -2764,10 +2763,39 @@ void __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nO
     if (nSkillID == 3001004 || nSkillID == 3201005 || nSkillID == 321015) {
         incRate = -0.2;
     }
-    dMultiplier = 1.0;
     if (sharpenlevel > 0) {
         incRate += sharpenlevel * 0.01;
     }
+
+    // Level-based outgoing reduction: deal 2% less damage per level the player is BELOW the target
+    // mob. At or above the mob's level there is no level penalty.
+    // The caller (CUserLocal::TryDoingMeleeAttack @ 0x951e52) passes aDamage == perTargetStruct +
+    // 0x18, and *(Mob**)perTargetStruct is the target Mob* (same ptr CalcDamage::PDamage derefs to
+    // reach mob->m_pTemplate @ +0x188). So recover the mob by backing up 0x18 bytes.
+    double levelMult = 1.0;
+    double defMult = 1.0;
+    Mob* mob = *reinterpret_cast<Mob**>(reinterpret_cast<char*>(aDamage) - 0x18);
+    if (mob) {
+        int playerLevel = CWvsContext::GetInstance()->get_m_basicStat().nLevel.Fuse();
+        int mobLevel = mob->m_stat.nLevel;
+        if (playerLevel + 5 < mobLevel) {
+            levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
+            if (levelMult < 0.05) {
+                levelMult = 0.05; // floor so high-level mobs are hard, not literally immune
+            }
+        }
+        // Defense, applied always: mirror the incoming PDD/(500+PDD) mitigation curve from
+        // MobPDamage_Hook, but with the MOB's physical defense (PDDamage). It lives only in the
+        // template, so read it via m_pTemplate. defMult = 500/(500+PDD) -> never zeroes, scales
+        // smoothly. Tune the 500 constant to taste.
+        if (mob->m_pTemplate) {
+            double mobPDD = mob->m_pTemplate->nPDDamage.Fuse();
+            if (mobPDD > 0.0) {
+                defMult = 1000.0 / (1000.0 + mobPDD);
+            }
+        }
+    }
+
     for (i = 0; i < 15; i++) {
         if (incRate != 0.0) {
             dMultiplier += nOrder * incRate;
@@ -2775,10 +2803,158 @@ void __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nO
         if (dMultiplier <= 0) {
             dMultiplier = .05;
         }
-        aDamage[i] = (int)((double)aDamage[i] * dMultiplier);
+        aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult);
         if (aDamage[i] == 0) {
             return;
         }
+    }
+}
+
+
+// Summon damage rework. Replaces CalcDamage::PDamage/MDamage-for-summons (sub_79216D / sub_792595),
+// which used a PAD-or-MAD / (1 + levelDiff) curve. Now mirrors regular player skills:
+//   dmg = (statMult*primary + secondary) * attack / 100 * skillDmg%
+// then the same level + def/(500+def) mitigation we apply to non-summon skills (see
+// drop_off_damage_skills). __thiscall original args (from CSummoned::TryDoingAttackManual):
+//   this=CalcDamage, a2=mobStatFused, a3=&MobStat, a4=CharacterData, a5=BasicStat, a6=SecondaryStat,
+//   a7=skill, a8=skillBonusParam, a9=skillDamage%. a3 == &mob->m_stat (Mob+0x1A0), so recover Mob*
+//   by backing up 0x1A0 to reach m_pTemplate (for PDDamage/MDDamage).
+
+// Shared finisher: takes the player-stat term (statMult*primary + secondary), the attack stat
+// (WATK for physical, MAD for magic) and the skill damage node %, then applies the mastery range
+// roll plus level + defense mitigation. magicDefense picks MDDamage over PDDamage for the mob.
+static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int attack, int skillDmgPct,
+        bool magicDefense) {
+    double base = statTerm * attack / 100.0;
+    double dmg = base * (skillDmgPct / 100.0);
+
+    // Mastery damage range, per line (matches MesoFormula / redoMagic in this file).
+    double minMult = 0.1 + mastery * 0.05;
+    if (minMult > 1.0) {
+        minMult = 1.0;
+    }
+    std::uniform_real_distribution<double> dist(minMult, 1.0);
+    dmg *= dist(rng);
+
+    Mob* mob = reinterpret_cast<Mob*>(reinterpret_cast<char*>(a3) - 0x1A0);
+    MobTemplate* tmpl = (a3 && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_pTemplate : nullptr;
+    DebugMessage("[summon] statTerm=%d attack=%d skill%%=%d magicDef=%d a3=%p mob=%p tmpl=%p",
+            (int)statTerm, attack, skillDmgPct, magicDefense, a3, mob, tmpl);
+
+    // Same level + defense mitigation as non-summon skills.
+    int playerLevel = a5->nLevel.Fuse();
+    int mobLevel = a3->nLevel;
+    if (playerLevel + 5 < mobLevel) {
+        double levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
+        if (levelMult < 0.05) {
+            levelMult = 0.05;
+        }
+        dmg *= levelMult;
+    }
+    if (tmpl && !IsBadReadPtr(tmpl, sizeof(MobTemplate))) {
+        double mobDef = magicDefense ? tmpl->nMDDamage.Fuse() : tmpl->nPDDamage.Fuse();
+        if (mobDef > 0.0) {
+            dmg *= 1000.0 / (1000.0 + mobDef);
+        }
+    }
+
+    int result = (int)dmg;
+    if (result <= 0 && base > 0.0) {
+        result = 1; // never collapse a real hit into a 0 (engine treats 0 as a miss)
+    }
+    DebugMessage("[summon] -> %d", result);
+    return result;
+}
+
+auto summonPDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x0079216D;
+int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
+        SecondaryStat* a6, int a7, int a8, int a9) {
+    int str = a5->nSTR.Fuse();
+    int dex = a5->nDEX.Fuse();
+
+    // Weapon stat multiplier + primary/secondary. Others fall through to a sane default.
+    double statMult = 3.0;
+    double primary = dex;
+    double secondary = str;
+    switch (get_weapon_type()) {
+    case 43: // spear
+    case 44: // polearm
+        statMult = 4.6;
+        primary = str;
+        secondary = dex;
+        break;
+    case 45: // bow
+    case 49: // gun
+        statMult = 4.0;
+        primary = dex;
+        secondary = str;
+        break;
+    }
+
+    double statTerm = statMult * primary + secondary;
+    return finishSummonDamage(a3, a5, statTerm, pad, a9, false);
+}
+
+// Magic summons: 4.5 * INT, scaled by the actual total magic attack from equips/buffs
+// (m_magic + m_bonusMagic), then the skill damage node %. Mitigated by the mob's MDDamage.
+auto summonMDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x00792595;
+int __fastcall summonMDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
+        SecondaryStat* a6, int a7, int a8, int a9) {
+    int int_ = a5->nINT.Fuse();
+    int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
+    int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    int mad = magic + bonusMagic;
+    if (mad < 0) {
+        mad = 0;
+    }
+
+    double statTerm = 4.5 * int_;
+    return finishSummonDamage(a3, a5, statTerm, mad, a9, true);
+}
+
+// Gate 2 of summon seeking: the summon's own attack reach. After sub_678ECC finds a candidate mob
+// near the player, TryDoingAttackManual rejects it (via sub_679084) unless it's within the summon's
+// reach box = SummonedAttackInfo +0x30 (v7[12], X) / +0x34 (v7[13], Y). Those are the small WZ
+// defaults, so the summon -- which hugs the player -- can't hit anything you walk away from.
+// CSummonedBase::LoadAttackInfo builds that struct; inflate the reach to summonSeekRange X/Y.
+// __thiscall + NRV: ecx = this (CSummonedBase), stack = retbuf, bstr, attackIdx; returns retbuf in
+// eax, with the attackInfo pointer at *(retbuf + 4).
+auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A;
+int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, void* bstr, int attackIdx) {
+    int ret = loadSummonAttackInfo(thisCSB, retbuf, bstr, attackIdx);
+    int attackInfo = *reinterpret_cast<int*>(ret + 4);
+    int before = -1;
+    if (attackInfo && !IsBadWritePtr(reinterpret_cast<void*>(attackInfo), 0x84)) {
+        before = *reinterpret_cast<int*>(attackInfo + 0x34);
+        // v7[13] (+0x34) is the summon's horizontal reach (sweep is +-this from the summon). Default
+        // ~500. v7[12] (+0x30) is a small edge offset (~-18), NOT a range -- leave it alone.
+        *reinterpret_cast<int*>(attackInfo + 0x34) = summonReach;
+    }
+    DebugMessage("[loadAtkInfo] info=%p v13before=%d wrote=%d", attackInfo, before, summonReach);
+    return ret;
+}
+
+// Summon seek code cave. Replaces the 4 coordinate lea/push pairs in sub_678ECC (0x678EDB..0x678EF1)
+// that build the player +-300/+-100 mob-search box. Rebuilds the same 4 pushes (bottom,right,top,left
+// -- the arg order dword_BF040C expects) but with the configurable summonSeekRange X/Y, then jumps
+// back to the &rect push + call. At cave entry edi = playerY, ebx = playerX (loaded just above), and
+// ecx is not yet touched (saved after our region), so only eax is clobbered -- safe.
+DWORD summonSeekRectBack = 0x00678EF1;
+void __declspec(naked) summonSeekRect() {
+    __asm {
+        mov eax, edi
+        add eax, summonSeekRangeY   // bottom = playerY + rangeY
+        push eax
+        mov eax, ebx
+        add eax, summonSeekRangeX   // right  = playerX + rangeX
+        push eax
+        mov eax, edi
+        sub eax, summonSeekRangeY   // top    = playerY - rangeY
+        push eax
+        mov eax, ebx
+        sub eax, summonSeekRangeX   // left   = playerX - rangeX
+        push eax
+        jmp [summonSeekRectBack]
     }
 }
 
@@ -2938,7 +3114,7 @@ int(__cdecl isMoveableSkillt)(int nSkillID) {
 auto _is_attack_area_set_by_data = (int(__cdecl*)(int))0x7666CB;
 
 int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
-    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3411006) {
+    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3411006 || nSkillID == 5511017) {
         return 1;
     }
     return _is_attack_area_set_by_data(nSkillID);
@@ -2952,6 +3128,16 @@ void AttachSkillEdits() {
     ATTACH_HOOK(CUserLocal__IsInvincible, CUserLocal__IsInvincible_Hook);
     ATTACH_HOOK(MobPDamage, MobPDamage_Hook);
     ATTACH_HOOK(MobMDamage, MobMDamage_Hook);
+    ATTACH_HOOK(summonPDamage, summonPDamage_hook);
+    ATTACH_HOOK(summonMDamage, summonMDamage_hook);
+
+    // Summon target seeking. The summon's attack mob-finder (sub_678ECC) only scans a hardcoded box
+    // of player +-300px X / +-100px Y, then picks the nearest mob in it -- that's the "idles unless a
+    // mob is right next to you" behavior. Cave over the box construction to widen it to
+    // summonSeekRangeX/Y on both axes (X is disp32, but Y is disp8 and can't grow in place, so a cave
+    // is needed to reach mobs on platforms above/below too).
+    CodeCave((void*)summonSeekRect, 0x00678EDB, 22);
+    ATTACH_HOOK(loadSummonAttackInfo, loadSummonAttackInfo_hook);
     ATTACH_HOOK(get_vertical_adjust_of_attack_range, vertical);
     ATTACH_HOOK(Avatar_Update, AvatarUpdate);
     // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
