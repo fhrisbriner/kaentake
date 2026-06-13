@@ -79,6 +79,8 @@ DWORD ohsword = 0x00AFE858;
 int LastMapID = 777777777;
 int MapID = 0;
 bool immune = false;
+bool g_inOneTimeAction = false;  // true while the LOCAL player is in a one-time action (attack/skill
+                                 // anim); set by tGetOneTimeAction. -1 from GetOneTimeAction == none.
 int myCharacterid = 0;
 bool firstLoad = true;
 bool AttackMove = false;
@@ -624,6 +626,12 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+
+            mov eax, 5411026
+            cmp esi, eax
+            je buff
+
+
             mov eax, 5511015
             cmp esi, eax
             je summons
@@ -747,10 +755,6 @@ void __declspec(naked) doActiveSkills() {
             je buff
 
             mov eax, 4501006
-            cmp esi, eax
-            je buff
-
-            mov eax, 4201006
             cmp esi, eax
             je buff
 
@@ -1238,7 +1242,7 @@ bool isSkillIDMatched(int nSkillID) {
         4111020, 4111021,
 
         // ===== Bandit =====
-        4201014, 4201016,
+        4201014, 4201016, 4201006,
         4501005, 4501014, 4501006,
 
         // ===== Chief Bandit =====
@@ -1262,7 +1266,7 @@ bool isSkillIDMatched(int nSkillID) {
         5401002, 5401003, 5101009, 5101010,
 
         // ===== Comboist ====
-        5411002, 5411021, 5411022, 5411020,
+        5411002, 5411021, 5411022, 5411020, 5411026,
 
         // ===== Summoner ====
         5511015, 5511002, 5511014, 5511017, 5511006,
@@ -1500,7 +1504,6 @@ bool isCorrectWeapon(int nSkillID) {
 
 void doSpearPA() {
     WriteDouble(0x00BED58C, tbw);
-    WriteDouble(0x00BED90C, oaxe);
     WriteDouble(0x00BED90C, taxe);
     switch (get_weapon_type()) {
     case 30:
@@ -1512,10 +1515,10 @@ void doSpearPA() {
         Patch4(0x008C2E46 + 2, 0x00AFE850);
         break;
     case 32:
-        Patch4(0x0078F60A + 2, oaxeaddr);
-        Patch4(0x0078F6B0 + 2, oaxeaddr);
-        Patch4(0x008C2DFD + 2, oaxeaddr);
-        Patch4(0x008C2E46 + 2, oaxeaddr);
+        Patch4(0x0078F60A + 2, 0x00AFE850);
+        Patch4(0x0078F6B0 + 2, 0x00AFE850);
+        Patch4(0x008C2DFD + 2, 0x00AFE850);
+        Patch4(0x008C2E46 + 2, 0x00AFE850);
         break;
     case 33:
         Patch4(0x0078F84F + 2, ohsword);
@@ -1791,13 +1794,13 @@ int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, BasicStat* bs, Seco
 
 
     nAttackCount = 0;
-    for (i = 0; i < 15; ++i) {
+    for (i = 0; i < 30; ++i) {
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
         owo = dist(gen);
         if (((1 << i) & dwDropFlag) != 0) {
-            ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
+            ratio = ((4.0 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
             __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
             *aDamage = damage;
             ++nAttackCount;
@@ -1862,7 +1865,7 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
 auto missileSpeed = (int(__cdecl*)(int, int, int))0x00942831;
 
 int(__cdecl missileSpeed_Hook)(int a1, int a2, int a3) {
-    if (a2 == 3211016 || a2 == 3601000) {
+    if (a2 == 3211016 || a2 == 3601000 || a2 == 3411007) {
         return 60;
     } if (a2 == 3511003) {
         return 120;
@@ -1974,49 +1977,6 @@ bool thirdJob(int nSkillID) {
     return nSkillID / 10000 == 541;
 }
 
-int setSkillDelay(int skillId) {
-    int initialDelay = 0;
-    switch (skillId) {
-    case 5001001:
-        initialDelay = 600;
-        break;
-    case 5001002:
-    case 5101003:
-    case 5101002:
-    case 5411002:
-        initialDelay = 840;
-        break;
-    case 5411021:
-        initialDelay = 930;
-        break;
-    case 5411020:
-        initialDelay = 900;
-    default:
-        initialDelay = 810;
-    }
-    return initialDelay * (weaponSpeed + 10) / 16;
-}
-
-int setCancelDelay(int skillId) {
-    int initialDelay = 0;
-    switch (skillId) {
-    case 5001002:
-    case 5001003:
-    case 5101003:
-        initialDelay = 360;
-    case 5411002:
-    case 5101002:
-    case 5411021:
-        initialDelay = 480;
-        break;
-    case 5411020:
-        initialDelay = 300;
-        break;
-    default:
-        initialDelay = 900;
-    }
-    return initialDelay * (weaponSpeed + 10) / 16;
-}
 
 auto pDoJump = (int(__thiscall*)(CUserLocal*, int))0x0094C383;
 
@@ -2034,45 +1994,23 @@ int(__fastcall CUserLocal_Jump)(CUserLocal* _this, void* edx, int a2) {
     return pDoJump(_this, a2);
 }
 
-int cancelSkill = 0;
-int activeSequence = 0;
-
-void cancelStuff(chrono::milliseconds delay, int nSkillID) {
-    if (delay > chrono::milliseconds(setSkillDelay(cancelSkill))) {
-        aniCancelTimer = chrono::steady_clock::now();
-        cancelSkill = 0;
-    } else if (delay > chrono::milliseconds(setCancelDelay(cancelSkill)) && delay < milliseconds(setSkillDelay(cancelSkill))) {
-        if (cancelSkill != nSkillID) {
-            cancelSkill = nSkillID;
-            animationCancel = true;
-        }
-        aniCancelTimer = chrono::steady_clock::now();
-    }
-}
-
 bool firsthit = false;
 
 bool MovementLockOut(int nSkillID) {
-    int early = 450;
     int late = 750;
     if ((nSkillID == 1511009 && !firsthit)) {
         firsthit = true;
         return true;
     }
-    if (nSkillID == 5101010 || nSkillID == 5101009) {
+    if (nSkillID == 5101010) {
         return true;
     }
     auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
     auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
-    if (skillelapsed.count() < early) {
+    if (skillelapsed.count() < 220) {
         return false;
     }
-    if (telapsed.count() > late) {
-        activeTimer = chrono::steady_clock::now();
-        firsthit = false;
-        return true;
-    }
-    return false;
+    return true;
 }
 
 auto IsOnRope = (int(__thiscall*)(CVecCtrl*))0x00705343;
@@ -2100,6 +2038,15 @@ bool isMovementSkill(int skillid) {
     };
     return std::find(std::begin(skillIDs), std::end(skillIDs), skillid) != std::end(skillIDs);
 }
+
+bool isFallingSkill(int nSkillID) {
+    return nSkillID == 5411021 || nSkillID == 5101009 || nSkillID == 3601009;
+}
+
+bool isRisingSkill(int nSkillID) {
+    return nSkillID == 5101010 || nSkillID == 1511009;
+}
+
 
 auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
@@ -2145,27 +2092,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (!isCorrectWeapon(nSkillID)) {
         return 0;
     }
-    // if (nSkillID == 4101009) {
-    //     moveSkill(_This, nSkillID);
-    // }
-
-    if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() >= 541 && CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() < 550 && !animationCancel) {
-        auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
-                chrono::steady_clock::now() - aniCancelTimer);
-        if (comboAbility > 0) {
-            auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
-                    chrono::steady_clock::now() - aniCancelTimer);
-            if (skElapsed.count() > setCancelDelay(cancelSkill) && nSkillID != cancelSkill && skElapsed.count() < setSkillDelay(cancelSkill)) {
-                cancelSkill = nSkillID;
-                animationCancel = true;
-            } else if (skElapsed.count() >= setSkillDelay(cancelSkill)) {
-                aniCancelTimer = chrono::steady_clock::now();
-                cancelSkill = nSkillID;
-            } else {
-                return 0;
-            }
-        }
-    }
 
     unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
     if (nSkillID == 3411006) {
@@ -2192,7 +2118,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (nSkillID == 1511003) {
         Patch4(0x00952F20 + 3, 1511003);
     }
-    if (isMovementSkill(nSkillID)) {
+    if (isMovementSkill(nSkillID) && !g_inOneTimeAction) {
         bool move = true;
         bool grounded = false;
         CVecCtrl* pCv = CVecCtrl::FromInterface(_This->m_pvc);
@@ -2232,13 +2158,12 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             skillLevel = bsLevel;
             vx = 1100.0;
         }
-        if (nSkillID == 5101009) {
+        if (nSkillID == 5101009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
             vx = -700.0;
-            auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
-        chrono::steady_clock::now() - aniCancelTimer);
-            if (!IsFreeFalling(pCv) || !IsFalling(pCv) || skElapsed.count() < 150) {
-                return 0;
-            }
+        }
+        if (nSkillID == 5411021 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+            vx = 700.0;
+            vy = -20.0;
         }
         if (nSkillID == 5101010) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
@@ -2251,6 +2176,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (_This->m_isLeft % 2) {
             vx *= -1;
         }
+        if (isFallingSkill(nSkillID) && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
+            return 0;
+        }
+        if (isRisingSkill(nSkillID) )
         SetMovePath(pCv, movepath);
         SetImpactNext(pCv, vx, vy);
         if (grounded) {
@@ -2300,25 +2229,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
 }
 
-auto AniCancel = (void(__thiscall*)(void*, int))0x00453A29;
-
-auto Avatar_Update = (void(__thiscall*)(void*))0x004522A6;
-void(__fastcall AvatarUpdate)(void* _this, void* blah) {
-    if (animationCancel) {
-        AniCancel(_this, 1);
-        CUserLocal* cuser = CUserLocal::GetInstance();
-        CUserLocal__DoActiveSkill_Hook(cuser, blah, cancelSkill, 0, 0);
-        animationCancel = false;
-    }
-    Avatar_Update(_this);
-}
-
-auto LoadSkillRoot_hook = (int(__cdecl*)(int, int, void*, int))0x0076119A;
-
-int(__cdecl LoadSkillRoot)(int skillid, int exception, void* a4, int a5) {
-    return LoadSkillRoot_hook(skillid, exception, a4, a5);
-}
-
 auto is_guided_skill = (int(__cdecl*)(int))0x0076662D;
 
 int(__cdecl is_guided_skill_hook)(int skillid) {
@@ -2338,7 +2248,13 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
         return 900;
     }
     if (nSkillID == 5201006) {
-        return 900;
+        return 700;
+    }
+    if (nSkillID == 5411002) {
+        return 750;
+    }
+    if (nSkillID == 5411021) {
+        return 750;
     }
     return (get_cool_time(nSkillID));
 }
@@ -2458,7 +2374,23 @@ void*(__fastcall CalcDamage__PDamage)(
 auto skillDelayHook = (int(__cdecl*)(int))0x00765047;
 
 int(__cdecl summondelay)(int nSkillID) {
-    return 0;
+    // Summon attack period = 2500ms minus 50ms per learned level of the summon skill (higher level
+    // -> attacks faster). Look up the player's level in nSkillID via CSkillInfo::GetSkillLevel.
+    int lvl = 0;
+    SkillInfo* si = SkillInfo::GetInstance();
+    if (si) {
+        void* zref[2] = {nullptr, nullptr};
+        GetCharacterData(CWvsContext::GetInstance(), zref);   // ZRef<CharacterData>; ptr at zref[1]
+        if (zref[1]) {
+            lvl = pGetSkillLevel(reinterpret_cast<int>(si), zref[1], nSkillID, 0);
+            reinterpret_cast<void(__thiscall*)(void*, void*)>(0x00428C44)(zref, nullptr); // ZRef::_ReleaseRaw
+        }
+    }
+    if (nSkillID == 5511015) {
+        return 300;
+    }
+    int delay = 2500 - 50 * lvl;
+    return delay < 0 ? 0 : delay;
 }
 
 auto MakeIncDecHpEffect = (void*(__thiscall*)(void*, int, int))0x0092EC50;
@@ -2536,7 +2468,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -2548,7 +2480,7 @@ int(__cdecl vertical)(int nSkillID) {
     if (nSkillID == 3601007 || nSkillID == 3511003) {
         return 100;
     }
-    if (nSkillID == 3001004 || nSkillID == 3411006) {
+    if (nSkillID == 3001004) {
         return 30;
     }
     return get_vertical_adjust_of_attack_range(nSkillID);
@@ -2839,7 +2771,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         if (playerLevel + 5 < mobLevel) {
             levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
             if (playerLevel + 20 < mobLevel) {
-                levelMult = .8 + (mobLevel - playerLevel + 20) * -0.02;
+                levelMult = .8 + (mobLevel - playerLevel - 20) * -0.02;
             }
             if (levelMult < 0.00) {
                 levelMult = 0.00; // floor so high-level mobs are hard, not literally immune
@@ -3150,6 +3082,13 @@ auto GetOneTimeAction = (int(__thiscall*)(void*))0x00451B6A;
 
 int(__fastcall tGetOneTimeAction)(void* _this) {
     int ota = GetOneTimeAction(_this);
+    // Only track the LOCAL player's avatar, which lives at CUserLocal::ms_pInstance + 0x88 (see
+    // sub_74CB84 @ 0x74cc73: GetOneTimeAction(ms_pInstance + 136)). ota > -1 means an attack/skill
+    // one-time action is currently playing; -1 means none.
+    void* localUser = *reinterpret_cast<void**>(0x00BEBF98);
+    if (localUser && _this == reinterpret_cast<char*>(localUser) + 0x88) {
+        g_inOneTimeAction = (ota > -1);
+    }
     return ota;
 }
 
@@ -3275,16 +3214,6 @@ void AttachSkillEdits() {
     CodeCave((void*)summonSeekRect, 0x00678EDB, 22);
     ATTACH_HOOK(loadSummonAttackInfo, loadSummonAttackInfo_hook);
     ATTACH_HOOK(get_vertical_adjust_of_attack_range, vertical);
-    ATTACH_HOOK(Avatar_Update, AvatarUpdate);
-    // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
-    // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
-    // ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
-    // ATTACH_HOOK(tGetOneTimeAction, tGetOneTimeAction);
-    // // ATTACH_HOOK(tSetOneTimeAction, tSetOneTimeAction);
-    // // ATTACH_HOOK(tOnResolveMoveAction, tOnResolveMoveAction);
-    // // ATTACH_HOOK(tget_flipX, tget_flipX);
-    // ATTACH_HOOK(tOnSkillKeyDownEnd, tOnSkillKeyDownEnd);
-    // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
     ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
@@ -3309,6 +3238,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
     ATTACH_HOOK(isHerosWill, isHerosWillHook);
     ATTACH_HOOK(skillDelayHook, summondelay);
+    ATTACH_HOOK(GetOneTimeAction, tGetOneTimeAction);   // keeps g_inOneTimeAction current
     ATTACH_HOOK(thingyWindArcher, windarcherhook);
     ATTACH_HOOK(SetDamaged_Hook, SetDamaged);
     ATTACH_HOOK(elementCharge, elementChargeHook);
@@ -3356,7 +3286,7 @@ void AttachSkillEdits() {
     Patch1(0x00a2948a, 0xeb);
     Patch4(0x00A294D0 + 1, 2510000);
     Patch4(0x00937B02 + 1, 2510000);
-    //Patch4(0x009817AB + 1, 3411006);
+    Patch4(0x009817AB + 1, 3411006);
     // TryDoingShootAttack @ 0x9548b9: 3111004 and 3211004 both `jz loc_954947`, which gives the
     // attack the extended +0x190 line-travel reach (the Avenger projectile behavior). Repurpose the
     // 3211004 slot (cmp ecx,imm32 @ 0x9548C5, imm at +2) so 3411006 takes that same path. 3111004

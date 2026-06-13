@@ -20,6 +20,11 @@ struct GW_ItemSlotBase : public ZRefCounted {
 class CUserLocal : public TSingleton<CUserLocal, 0x00BEBF98> {
 };
 
+// cashweapon.cpp: fill missing weapon-type stance subnodes so the cash weapon
+// equip check (and avatar overlay) resolves for any base weapon type. Called at
+// inventory icon-draw time, i.e. before the user can drag the item to a slot.
+void FixCashWeaponImg(int nItemID);
+
 ZRef<GW_ItemSlotBase> GetActivePetItemSlot(int nIndex) {
     // CUser::GetActivePetItemSlot
     ZRef<GW_ItemSlotBase> pItemSlot;
@@ -28,6 +33,7 @@ ZRef<GW_ItemSlotBase> GetActivePetItemSlot(int nIndex) {
 }
 
 void __fastcall CItemInfo__DrawItemIconForSlot_helper(CItemInfo* pThis, void* _EDX, GW_ItemSlotBase* pItem, IWzCanvasPtr pCanvas, int nItemID, int x, int y, int bProtectedItem, int bMag2, int bPetDead, int bHideCashIcon, int nEquipItemQuality, int bHideQualityIcon) {
+    FixCashWeaponImg(nItemID);
     int nPetIndex = -1;
     if (pItem->GetType() == 3) {
         for (int i = 0; i < 3; ++i) {

@@ -7,6 +7,7 @@ add_library(injector SHARED
         resman.cpp
         avatar.cpp
         itemeff.cpp
+        cashweapon.cpp
         resolution.cpp
         mobhptag.cpp
         tooltip.cpp

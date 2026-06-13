@@ -27,7 +27,7 @@ endif ()
 if (DEFINED ENV{CUSTOM_BINARY_DIR})
     set(KAEN_OUTPUT_DIR "$ENV{CUSTOM_BINARY_DIR}")
 else ()
-    set(KAEN_OUTPUT_DIR "D:/SkirchData2")
+    set(KAEN_OUTPUT_DIR "D:/MapleNightLocal")
 endif ()
 message(STATUS "Output dir: ${KAEN_OUTPUT_DIR}")
 
