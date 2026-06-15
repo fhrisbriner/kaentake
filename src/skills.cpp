@@ -108,6 +108,11 @@ int backflip = 0;
 int slam = 0;
 int sharpenlevel = 0;
 int poisonBonusLevel = 0;                       // level of the poison-damage passive (read in GetSkillLevel hook)
+int rangerShred = 0;
+int sniperShred = 0;
+int duelistShred = 0;
+int galeShot = 0;
+int masterSkies = 0;
 constexpr int POISON_PASSIVE_SKILLID = 2110009;
 
 // NOT A SKILL
@@ -115,6 +120,7 @@ int doActiveJmpBack = 0x0096793B; // return to our existing code.
 
 int pleasejmpout = 0x00791C6C;
 double int_multiplier = 4.2;
+double str_multiplier = 4.0;
 double Hundred = 100;
 int topMAD = 0;
 int botMAD = 0;
@@ -147,6 +153,12 @@ void setMAD() {
     case 38:
         int_multiplier = 5.2;
         break;
+    case 43:
+        str_multiplier = 4.6;
+        break;
+    case 44:
+        str_multiplier = 4.0;
+        break;
     default:
         int_multiplier = 1.0;
         break;
@@ -155,6 +167,13 @@ void setMAD() {
     int int_ = CWvsContext::GetInstance()->get_m_basicStat().nINT.Fuse();
     int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
     int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    if (job == 121 || job == 122) {
+        int_ = CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
+        magic = pad;
+        topMAD = (int_ * magic) / 100;
+        botMAD = topMAD * .6;
+        return;
+    }
     if (magic < 0) {
         bonusMagic = 0;
     }
@@ -214,6 +233,11 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 1211000
+            cmp esi, eax
+            je melee
+
+
             mov eax, 1201012
             cmp esi, eax
             je melee
@@ -236,6 +260,10 @@ void __declspec(naked) doActiveSkills() {
             je smoke
 
                 // Spearman
+            mov eax, 1211012
+            cmp esi, eax
+            je melee
+
             mov eax, 1211012
             cmp esi, eax
             je melee
@@ -425,6 +453,9 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je summons
 
+            mov eax, 3111018
+            cmp esi, eax
+            je summons
                 // hunter
             mov eax, 3101007
             cmp esi, eax
@@ -498,6 +529,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 3411010
+            cmp esi, eax
+            je summons
+
             mov eax, 3411005
             cmp esi, eax
             je buff
@@ -519,6 +554,11 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 3511019
             cmp esi, eax
             je shoot
+
+            mov eax, 3511002
+            cmp esi, eax
+            je buff
+
 
 
                 // Thief 2nd
@@ -553,6 +593,10 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 4501014
             cmp esi, eax
             je melee
+
+            mov eax, 4111017
+            cmp esi, eax
+            je summons
 
                 // CB
             mov eax, 4211011
@@ -688,6 +732,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 5211016
+            cmp esi, eax
+            je buff
+
+            mov eax, 5211017
+            cmp esi, eax
+            je shoot
+
 
                 // Pirate 3rd
             mov eax, 5111010
@@ -719,6 +771,10 @@ void __declspec(naked) doActiveSkills() {
             je shoot
 
             mov eax, 5111017
+            cmp esi, eax
+            je shoot
+
+            mov eax, 5511016
             cmp esi, eax
             je shoot
 
@@ -1163,14 +1219,14 @@ bool isSkillIDMatched(int nSkillID) {
         // ===== Knight =====
         1101016, 1101015,
         1401007, 1401015, 1401016,
-        1201016, 1201012,
+        1201016, 1201012, 1211000,
         1501016, 1501012,
 
         // ===== Crusader =====
         1111009, 1111015,
 
         // ===== Spearman =====
-        1211012, 1211013, 1211014,
+        1211012, 1211013, 1211014, 1211000,
 
         // ===== Duelist =====
         1411003, 1411005, 1411006, 1411008,
@@ -1220,7 +1276,7 @@ bool isSkillIDMatched(int nSkillID) {
         3501005, 3501003, 3501016,
 
         // ===== Wind Archer =====
-        3411006, 3411007, 3411005,
+        3411006, 3411007, 3411005, 3411010,
 
         // ===== Sniper =====
         3511003, 3511008, 3511004, 3511019,
@@ -1239,7 +1295,7 @@ bool isSkillIDMatched(int nSkillID) {
         4401009, 4401008, 4401006,
 
         // ===== Hermit =====
-        4111020, 4111021,
+        4111020, 4111021, 4111017,
 
         // ===== Bandit =====
         4201014, 4201016, 4201006,
@@ -1386,6 +1442,11 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     slam = pGetSkillLevel(_this, charData, 2511009, skillEntry);
     sharpenlevel = pGetSkillLevel(_this, charData, 3200013, skillEntry);
     poisonBonusLevel = GetRawSkillLevel(charData, POISON_PASSIVE_SKILLID);  // raw: WZ caps at 20
+    duelistShred = pGetSkillLevel(_this, charData, 1410012, skillEntry);
+    rangerShred = pGetSkillLevel(_this, charData, 3110000, skillEntry);
+    sniperShred = pGetSkillLevel(_this, charData, 3210018, skillEntry);
+    galeShot = pGetSkillLevel(_this, charData, 3411007, skillEntry);
+    masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1852,6 +1913,16 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
             Patch1(0x009584F6 + 2, 0x56);
             Patch1(0x009584F6 + 3, 0x01);
             Patch4(0x00958535 + 2, 3410002);
+            jobPatchesApplied = true;
+        } else if (jobID == 441) {
+            Patch1(0x009584F6 + 2, 0xB9);
+            Patch1(0x009584F6 + 3, 0x01);
+            Patch4(0x00958535 + 2, 4410002);
+            jobPatchesApplied = true;
+        } else if (jobID == 442) {
+            Patch1(0x009584F6 + 2, 0xBA);
+            Patch1(0x009584F6 + 3, 0x01);
+            Patch4(0x00958535 + 2, 4410002);
             jobPatchesApplied = true;
         }
     }
@@ -2451,6 +2522,9 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
     int nWeaponDegree = nDegree;
     if (mastery > 0) {
         nWeaponDegree -= 2;
+        if (nWeaponBooster != 0) {
+            weaponSpeed += nWeaponBooster;
+        }
     }
     weaponSpeed = nWeaponDegree;
     return nWeaponDegree;
@@ -2459,7 +2533,7 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
 auto octHook = (int(__cdecl*)(int))0x00766612;
 
 int(__cdecl octopus)(int nSkillID) {
-    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015) {
+    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010) {
         return 1;
     }
     return octHook(nSkillID);
@@ -2738,6 +2812,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
     nSkillID = a1->skillId;
     double dMultiplier = 1.0;
     double incRate = 0.0;
+    double defenseShred = 1.0;
     if (nSkillID == 3601007 || nSkillID == 3211015) {
         incRate = 0.1;
     }
@@ -2748,6 +2823,8 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         incRate += sharpenlevel * 0.01;
     }
 
+
+
     // Level-based outgoing reduction: deal 2% less damage per level the player is BELOW the target
     // mob. At or above the mob's level there is no level penalty.
     // The caller (CUserLocal::TryDoingMeleeAttack @ 0x951e52) passes aDamage == perTargetStruct +
@@ -2756,6 +2833,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
     double levelMult = 1.0;
     double defMult = 1.0;
     double poisonMult = 1.0;
+    double air = 1.0;
     // NOTE: aDamage == perTargetStruct + 0x18 with *(perTargetStruct) == Mob* only on the MELEE /
     // SHOOT paths. TryDoingMagicAttack passes a different damage-array pointer, so aDamage-0x18 is
     // NOT a Mob* there -- validate before any deref or magic attacks fault.
@@ -2783,8 +2861,15 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         // smoothly. Tune the 500 constant to taste.
         if (mob->m_pTemplate && !IsBadReadPtr(mob->m_pTemplate, sizeof(MobTemplate))) {
             double mobPDD = mob->m_pTemplate->nPDDamage.Fuse();
+            if (sniperShred > 0 || rangerShred > 0 || duelistShred > 0 || galeShot > 0) {
+                if (nSkillID == 3411007) {
+                    defenseShred -= 0.02 * galeShot;
+                } else {
+                    defenseShred -= (0.02 * (sniperShred + rangerShred + duelistShred));
+                }
+            }
             if (mobPDD > 0.0) {
-                defMult = 1000.0 / (1000.0 + mobPDD);
+                defMult = 1000.0 / (1000.0 + (mobPDD * defenseShred));
             }
         }
 
@@ -2794,6 +2879,20 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         int poisonReason = *reinterpret_cast<int*>(reinterpret_cast<char*>(&mob->m_stat) + 0xB0);
         if (poisonBonusLevel > 0 && poisonReason != 0) {
             poisonMult = 1.0 + 0.02 * poisonBonusLevel;
+        }
+    }
+
+    // Master Skies: +2% damage vs mobs per skill level, but only while the player is airborne.
+    // Read the local player's CVecCtrl off ms_pInstance (0x00BEBF98) and gate on IsFalling /
+    // IsFreeFalling (covers the rise of a jump and the fall). No mob deref needed -- applies on
+    // every path. masterSkies is the learned level of 3410000, read in GetSkillLevel.
+    if (masterSkies > 0) {
+        CUserLocal* localUser = *reinterpret_cast<CUserLocal**>(0x00BEBF98);
+        if (localUser) {
+            CVecCtrl* pCv = CVecCtrl::FromInterface(localUser->m_pvc);
+            if (pCv && (IsFalling(pCv) || IsFreeFalling(pCv))) {
+                air = 1.0 + 0.02 * masterSkies;
+            }
         }
     }
 
@@ -2812,7 +2911,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
     // array, and bailing there left every later line at full damage (no reduction). Unused trailing
     // slots are already 0 and stay 0 (0 * mult == 0), so scanning the whole array is harmless.
     for (i = 0; i < 15; i++) {
-        aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult * poisonMult);
+        aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult * poisonMult * air);
     }
     return 0; // BOOL: 0 = let the caller run the normal damage-number display path
 }
