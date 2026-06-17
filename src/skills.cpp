@@ -2379,8 +2379,8 @@ void flashJump() {
 
 auto elementCharge = (int(__cdecl*)(int))0x007908E7;
 int __cdecl elementChargeHook(int skillid) {
-    if (skillid == 4101006) {
-        return 4;
+    if (skillid == 3111018) {
+        return 2;
     }
     return 0;
 }
@@ -3451,7 +3451,6 @@ void AttachSkillEdits() {
     Patch4(0x0094E335 + 1, 4210100);
     Patch4(0x00957282 + 1, 4210100);
     Patch4(0x00967070 + 1, 4210100);
-    // replaceSpark();
     // don't cancel skills when hit
     Patch1(0x009592E7, 0xEB);
 }
