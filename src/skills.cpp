@@ -1811,24 +1811,12 @@ typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTempla
 typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
 static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
 
-// Intentionally leaked + lock-guarded. GetMobTemplate runs on game worker threads (resource loading),
-// so the old `static unordered_map` was (a) corruptible by concurrent inserts and (b) destroyed at
-// DLL_PROCESS_DETACH, where its destructor faulted walking a corrupted node (0xC0000005 during
-// teardown). Construct-on-first-use with no destructor (never freed) removes the unload-time dtor
-// crash; the critical section serializes all access so a race can't corrupt the buckets.
-static CRITICAL_SECTION g_TemplateIdLock;
-static bool g_TemplateIdLockReady = false;
-static std::unordered_map<MobTemplate*, int>& TemplateIdMap() {
-    static auto* m = new std::unordered_map<MobTemplate*, int>(); // leaked on purpose (see above)
-    return *m;
-}
+static std::unordered_map<MobTemplate*, int> g_TemplateIdByPtr;
 
 MobTemplate* __cdecl GetMobTemplate_Hook(int templateId) {
     MobTemplate* p = GetMobTemplate(templateId);
-    if (p && g_TemplateIdLockReady) {
-        EnterCriticalSection(&g_TemplateIdLock);
-        TemplateIdMap()[p] = templateId;
-        LeaveCriticalSection(&g_TemplateIdLock);
+    if (p) {
+        g_TemplateIdByPtr[p] = templateId;
     }
     return p;
 }
@@ -1852,12 +1840,9 @@ auto onDoomed = (void(__thiscall*)(Mob*, int))0x0066D6D4;
 
 void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom) {
     int templateId = 0;
-    if (bDoom && g_TemplateIdLockReady) {
-        EnterCriticalSection(&g_TemplateIdLock);
-        auto& m = TemplateIdMap();
-        auto it = m.find(pThis->m_pTemplate);
-        templateId = (it != m.end()) ? it->second : 0;
-        LeaveCriticalSection(&g_TemplateIdLock);
+    if (bDoom) {
+        auto it = g_TemplateIdByPtr.find(pThis->m_pTemplate);
+        templateId = (it != g_TemplateIdByPtr.end()) ? it->second : 0;
         if (templateId != 0) {
             Patch4(0x0066D722 + 1, templateId);
         }
@@ -3358,8 +3343,6 @@ void __declspec(naked) summonNullBulletGuard() {
 }
 
 void AttachSkillEdits() {
-    InitializeCriticalSection(&g_TemplateIdLock);
-    g_TemplateIdLockReady = true;
     // Skip bullet-sprite render for summons whose attack has no bullet-effect WZ node (null path),
     // else IWzResMan::GetObjectA derefs null -> crash. 5 bytes (lea ecx,[ebx+1Ch]; xor edi,edi).
     CodeCave((void*)summonNullBulletGuard, 0x007A44FC, 0);
