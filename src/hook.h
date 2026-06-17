@@ -61,6 +61,7 @@ void AttachStringPoolMod();
 void AttachResManMod();
 void AttachAvatarDataMod();
 void AttachItemEffectMod();
+void AttachCashWeaponMod();
 void AttachResolutionMod();
 void AttachMobHpTagMod();
 void AttachToolTipMod();
@@ -90,6 +91,7 @@ inline void AttachClientHooks() {
     (AttachResManMod());
     (AttachAvatarDataMod());
     (AttachItemEffectMod());
+    (AttachCashWeaponMod());
     (AttachResolutionMod());
     (AttachMobHpTagMod());
     (AttachToolTipMod());

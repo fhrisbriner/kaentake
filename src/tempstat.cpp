@@ -76,7 +76,7 @@ void __fastcall TEMPORARY_STAT__UpdateShadowIndex_hook(CTemporaryStatView::TEMPO
     pCanvas->Create(32, 32);
     pCanvas->Copy(0, 0, CUIStatusBar::GetInstance()->m_aCanvasSkillCooltime[nShadowIndex]);
 
-    if (pThis->nID != 5221006) {
+    if (pThis->nID != 5211016) {
         DrawDuration(pCanvas, nSeconds);
     }
     pThis->pLayerShadow->InsertCanvas(pCanvas, 500, 210, 64);

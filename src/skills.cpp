@@ -432,6 +432,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+            mov eax, 2411023
+            cmp esi, eax
+            je buff
+
             mov eax, 2411011
             cmp esi, eax
             je prepare
@@ -455,7 +459,8 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 3111018
             cmp esi, eax
-            je summons
+            je buff
+
                 // hunter
             mov eax, 3101007
             cmp esi, eax
@@ -1256,7 +1261,7 @@ bool isSkillIDMatched(int nSkillID) {
         2211012, 2211014, 2221015, 2211016, 2211013,
 
         // ===== IL Mage =====
-        2411010, 2411011, 2411012, 2411013,
+        2411010, 2411011, 2411012, 2411013, 2411023,
 
         // ===== Holy Knight =====
         2511006, 2511004, 2511001,
@@ -1264,11 +1269,12 @@ bool isSkillIDMatched(int nSkillID) {
         // ===== Priest =====
         2211004,
 
-        // ===== Bowman =====
+        // ===== Bowman =====z
         3001013,
 
         // ===== Hunter =====
         3101007, 3101012, 3111015,
+        3111018,
         3401005, 3401007, 3401012,
 
         // ===== Crossbowman =====
@@ -1395,7 +1401,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             critSkillID = 4100001;
             iframes = pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
         }
-        if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 421 || jobID == 422) {
+        if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 451 || jobID == 452) {
             mastery = pGetSkillLevel(_this, charData, 4200000, skillEntry);
         }
         if (jobID == 110 || jobID == 111 || jobID == 112 || jobID == 141 || jobID == 142) {
@@ -1805,12 +1811,24 @@ typedef void(__fastcall* SetFromWhenDoom_t)(MobStat* pThis, void* edx, MobTempla
 typedef MobTemplate*(__cdecl* GetMobTemplate_t)(int templateId);
 static auto GetMobTemplate = reinterpret_cast<GetMobTemplate_t>(0x0067CD28);
 
-static std::unordered_map<MobTemplate*, int> g_TemplateIdByPtr;
+// Intentionally leaked + lock-guarded. GetMobTemplate runs on game worker threads (resource loading),
+// so the old `static unordered_map` was (a) corruptible by concurrent inserts and (b) destroyed at
+// DLL_PROCESS_DETACH, where its destructor faulted walking a corrupted node (0xC0000005 during
+// teardown). Construct-on-first-use with no destructor (never freed) removes the unload-time dtor
+// crash; the critical section serializes all access so a race can't corrupt the buckets.
+static CRITICAL_SECTION g_TemplateIdLock;
+static bool g_TemplateIdLockReady = false;
+static std::unordered_map<MobTemplate*, int>& TemplateIdMap() {
+    static auto* m = new std::unordered_map<MobTemplate*, int>(); // leaked on purpose (see above)
+    return *m;
+}
 
 MobTemplate* __cdecl GetMobTemplate_Hook(int templateId) {
     MobTemplate* p = GetMobTemplate(templateId);
-    if (p) {
-        g_TemplateIdByPtr[p] = templateId;
+    if (p && g_TemplateIdLockReady) {
+        EnterCriticalSection(&g_TemplateIdLock);
+        TemplateIdMap()[p] = templateId;
+        LeaveCriticalSection(&g_TemplateIdLock);
     }
     return p;
 }
@@ -1834,9 +1852,12 @@ auto onDoomed = (void(__thiscall*)(Mob*, int))0x0066D6D4;
 
 void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom) {
     int templateId = 0;
-    if (bDoom) {
-        auto it = g_TemplateIdByPtr.find(pThis->m_pTemplate);
-        templateId = (it != g_TemplateIdByPtr.end()) ? it->second : 0;
+    if (bDoom && g_TemplateIdLockReady) {
+        EnterCriticalSection(&g_TemplateIdLock);
+        auto& m = TemplateIdMap();
+        auto it = m.find(pThis->m_pTemplate);
+        templateId = (it != m.end()) ? it->second : 0;
+        LeaveCriticalSection(&g_TemplateIdLock);
         if (templateId != 0) {
             Patch4(0x0066D722 + 1, templateId);
         }
@@ -2531,6 +2552,9 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
 }
 
 auto octHook = (int(__cdecl*)(int))0x00766612;
+int(__cdecl ltrbOcto)(int nSKillID) {
+    return nSKillID == 3211002 || nSKillID == 3411010 || nSKillID == 4111017;
+}
 
 int(__cdecl octopus)(int nSkillID) {
     if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010) {
@@ -2973,8 +2997,14 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
 auto summonPDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x0079216D;
 int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
         SecondaryStat* a6, int a7, int a8, int a9) {
+    // Summon attacks are autonomous; on a bad hit (e.g. a stale/garbage mob or stat pointer) the
+    // engine can hand us junk a3/a5. Deref them unguarded smashes the client, so bail to 0 damage.
+    if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
+        return 0;
+    }
     int str = a5->nSTR.Fuse();
     int dex = a5->nDEX.Fuse();
+    int luk = a5->nLUK.Fuse();
 
     // Weapon stat multiplier + primary/secondary. Others fall through to a sane default.
     double statMult = 3.0;
@@ -2993,7 +3023,13 @@ int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, in
         primary = dex;
         secondary = str;
         break;
+    case 47:
+        statMult = 4.0;
+        primary = luk;
+        secondary = dex;
+        break;
     }
+
 
     double statTerm = statMult * primary + secondary;
     return finishSummonDamage(a3, a5, statTerm, pad, a9, false);
@@ -3004,6 +3040,9 @@ int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, in
 auto summonMDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x00792595;
 int __fastcall summonMDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
         SecondaryStat* a6, int a7, int a8, int a9) {
+    if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
+        return 0;
+    }
     int int_ = a5->nINT.Fuse();
     int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
     int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
@@ -3073,30 +3112,30 @@ auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A
 int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, void* bstr, int attackIdx) {
     int ret = loadSummonAttackInfo(thisCSB, retbuf, bstr, attackIdx);
     int attackInfo = *reinterpret_cast<int*>(ret + 4);
-    int before = -1;
-    if (attackInfo && !IsBadWritePtr(reinterpret_cast<void*>(attackInfo), 0x88)) {
-        before = *reinterpret_cast<int*>(attackInfo + 0x34);
-        // v7[13] (+0x34) is the summon's horizontal reach (sweep is +-this from the summon). Default
-        // ~500. v7[12] (+0x30) is a small edge offset (~-18), NOT a range -- leave it alone.
+    // bstr.m_Data holds the summon skill id. Regular octopus/bullet summons (octopus()/sub_766612)
+    // worked fine BEFORE these edits precisely because the original code left their attack-info
+    // untouched: forcing them onto the +0x80 rect path (and overriding mobCount/reach) is what broke
+    // them. So only modify attack-info for summons we actually want changed: non-octopus summons (the
+    // original behavior) PLUS the ltrb custom octopus summons (which want multi-hit and are covered by
+    // the summonNullBulletGuard cave). Untouched regular octopus => behaves exactly as if this hook
+    // were absent.
+    bool modify = !octopus(reinterpret_cast<int>(bstr)) || ltrbOcto(reinterpret_cast<int>(bstr));
+    if (modify && attackInfo && !IsBadWritePtr(reinterpret_cast<void*>(attackInfo), 0x88)) {
+        // v7[13] (+0x34) is the summon's horizontal reach (sweep is +-this from the summon).
         *reinterpret_cast<int*>(attackInfo + 0x34) = summonReach;
 
-        // bstr (a2) is a Ztl_bstr_t whose m_Data holds the summon skill id (LoadAttackInfo compares
-        // a2.m_Data against skill ids directly). Bullet/octopus summons (octopus()/sub_766612) must
-        // stay single-target, so the multi-mob override is gated to non-octopus summons only.
-        if (!octopus(reinterpret_cast<int>(bstr))) {
-            // Override mobCount (+0x24, v7[9]) with the skill's WZ mobCount so the summon hits as
-            // many mobs as the skill says. 0 -> keep WZ default.
-            int mobCount = GetSkillMobCount(reinterpret_cast<int>(bstr));
-            if (mobCount > 0) {
-                *reinterpret_cast<int*>(attackInfo + 0x24) = mobCount;
-            }
-
-            // Force the area-attack flag (+0x80, v7[32]). TryDoingAttackManual otherwise takes the
-            // single-target seek path (find ONE mob, fan out only for a hardcoded list of summon
-            // skill ids) and caps HitMobInRect at 1. With v7[32]=1 it runs FindHitMobInRect over the
-            // attack rect for up to the full mobCount, so the summon actually hits multiple mobs.
-            *reinterpret_cast<int*>(attackInfo + 0x80) = 1;
+        // Override mobCount (+0x24, v7[9]) with the skill's WZ mobCount so the summon hits as many
+        // mobs as the skill says. ONLY accept a sane [1,14] value: GetSkillMobCount reads
+        // SKILLLEVELDATA +0x130, and skills with no `mobCount` level node read a garbage slot;
+        // v140.bSelfDestruct (= this field) caps FindHitMobInRect's writes into fixed 15-slot stack
+        // arrays, so an out-of-range value would smash the stack. Out of range -> keep the WZ default.
+        int mobCount = GetSkillMobCount(reinterpret_cast<int>(bstr));
+        if (mobCount >= 1 && mobCount <= 14) {
+            *reinterpret_cast<int*>(attackInfo + 0x24) = mobCount;
         }
+
+        // Area-attack flag (+0x80, v7[32]): take the rect (FindHitMobInRect) multi-hit path.
+        *reinterpret_cast<int*>(attackInfo + 0x80) = 1;
     }
     return ret;
 }
@@ -3124,7 +3163,6 @@ void __declspec(naked) summonSeekRect() {
         jmp [summonSeekRectBack]
     }
 }
-
 
 auto hook_bstr_t = (void(__thiscall*)(void*, const char*))0x00425ADD;
 
@@ -3294,7 +3332,37 @@ int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
     return _is_attack_area_set_by_data(nSkillID);
 }
 
+// Null-bullet-sprite guard for CSummoned::ProcessAttack (0x7A4424). Each frame it walks the summon's
+// pending bullet ATTACKEFFECTs and calls IWzResMan::GetObjectA(path) (0x7A47E4) to load each bullet's
+// sprite, where path = ATTACKEFFECT+0x20 = attackInfo+0x74 (the summon attack's bullet-effect WZ
+// node). Octopus/bullet summons whose WZ lacks that node (no `ball`/effect) get a NULL path, and
+// RESMAN derefs it -> 0xC0000005 (crash @ RESMAN+0x38C0). The damage was already dealt in
+// TryDoingAttackManual; ProcessAttack only renders the projectile, so when the path is null we skip
+// the whole render block for that effect and continue the loop. Cave entry (0x7A44FC) replicates
+// `lea ecx,[ebx+1Ch]; xor edi,edi` (ebx = effect node), then null-checks [ebx+0x20]: jump to the
+// loop-continue (0x7A4D27) if null, else fall back into the original path at 0x7A4501. At this point
+// no COM objects have been created (v109 unwind index = -1), so skipping is unwind-safe. Runs for
+// every summon's effects but only diverts when the bullet path is genuinely null.
+DWORD procAttackBack = 0x007A4501;       // continue original (cmp [ecx],edi; ...)
+DWORD procAttackSkip = 0x007A4D27;       // loop-continue (cmp [var_38],0; jnz next)
+void __declspec(naked) summonNullBulletGuard() {
+    __asm {
+        lea ecx, [ebx+1Ch]            // replicate overwritten instruction (v104 = effect+0x1C)
+        xor edi, edi                  // replicate (edi = 0, needed by original cmp [ecx],edi)
+        cmp dword ptr [ebx+20h], 0    // bullet sprite path (attackInfo+0x74 copy) null?
+        jz skipRender
+        jmp [procAttackBack]
+    skipRender:
+        jmp [procAttackSkip]
+    }
+}
+
 void AttachSkillEdits() {
+    InitializeCriticalSection(&g_TemplateIdLock);
+    g_TemplateIdLockReady = true;
+    // Skip bullet-sprite render for summons whose attack has no bullet-effect WZ node (null path),
+    // else IWzResMan::GetObjectA derefs null -> crash. 5 bytes (lea ecx,[ebx+1Ch]; xor edi,edi).
+    CodeCave((void*)summonNullBulletGuard, 0x007A44FC, 0);
     // ATTACH_HOOK(MesoFormula, mesoFormulaHook);
     ATTACH_HOOK(getPAD, getPAD_hook);
     ATTACH_HOOK(hook_bstr_t, bstrt);
@@ -3312,6 +3380,9 @@ void AttachSkillEdits() {
     // is needed to reach mobs on platforms above/below too).
     CodeCave((void*)summonSeekRect, 0x00678EDB, 22);
     ATTACH_HOOK(loadSummonAttackInfo, loadSummonAttackInfo_hook);
+    // NOTE: the octoMultiHit seek-routing cave (0x7A5062) is intentionally NOT installed. All summons
+    // now get the +0x80 rect path in loadSummonAttackInfo_hook, which gives stationary octopus
+    // summons their multi-hit via FindHitMobInRect without the fragile seek/cave detour.
     ATTACH_HOOK(get_vertical_adjust_of_attack_range, vertical);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
