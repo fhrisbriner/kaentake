@@ -51,7 +51,11 @@ static_assert(offsetof(MobStat, nEVA) == 0x84, "MobStat::nEVA offset mismatch");
 // 0x00789EFD reads PADamage from tmpl+0xB8. Read with .Fuse(). These live ONLY in the template
 // (the engine CMobStat copies PAD/MAD/ACC/EVA but NOT PDD/MDD), so reach them via Mob::m_pTemplate.
 struct MobTemplate {
-    unsigned char    _pad0[0xB8];
+    unsigned char    _pad0[0x64];
+    ZtlSecure<int>   bIsBoss;                      // +0x64  boss flag (0/1). Parse @ 0x0067CF06
+                                                   //         stores (get_int32("boss") != 0) here:
+                                                   //         *(tmpl+0x6C) = ZtlSecureTear<int>(val, tmpl+0x64).
+    unsigned char    _pad0b[0xB8 - 0x70];         // +0x70 .. +0xB7
     ZtlSecure<long>  nPADamage;                   // +0xB8
     ZtlSecure<long>  nPDDamage;                   // +0xC4  physical defense
     ZtlSecure<long>  nMADamage;                   // +0xD0
@@ -62,6 +66,7 @@ struct MobTemplate {
     int              aDamagedElemAttr[8];         // +0x118
 };
 
+static_assert(offsetof(MobTemplate, bIsBoss)          == 0x64,  "MobTemplate::bIsBoss offset mismatch");
 static_assert(offsetof(MobTemplate, nPADamage)        == 0xB8,  "MobTemplate::nPADamage offset mismatch");
 static_assert(offsetof(MobTemplate, nPDDamage)        == 0xC4,  "MobTemplate::nPDDamage offset mismatch");
 static_assert(offsetof(MobTemplate, nMDDamage)        == 0xDC,  "MobTemplate::nMDDamage offset mismatch");
