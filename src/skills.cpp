@@ -688,7 +688,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5111014
             cmp esi, eax
-            je shoot
+            je summons
 
             mov eax, 5111015
             cmp esi, eax
@@ -1216,7 +1216,7 @@ bool isSkillIDMatched(int nSkillID) {
         5501001,
 
         // ===== Marauder 3rd =====
-        5111013,
+        5111013, 5111016, 5111014,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
         5401002, 5401003,
@@ -1844,7 +1844,7 @@ bool isCopyCatSkill(int skillId) {
     int secondDigit = (job / 10) % 10;
     int third = skillId / 1000;
     int thirdDigit = (third / 10) % 10;
-    if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013) {
+    if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013 || skillId == 5111016) {
         return true;
     }
     if (thirdDigit == 0) {
@@ -2070,6 +2070,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         }
         if (nSkillID == 2211013) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
+        }
+        if (nSkillID == 5111016) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 15101006, nScanCode, pnConsumeCheck);
         }
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
