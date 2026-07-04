@@ -117,8 +117,12 @@ std::wstring JoinUrl(std::wstring base, const std::wstring& tail) {
 class WinHttpSession {
 public:
     WinHttpSession() {
+        // DEFAULT_PROXY (static system/registry proxy), NOT AUTOMATIC_PROXY: the latter runs WPAD
+        // auto-discovery on the first request and blocks ~1-2 min on DHCP/DNS WPAD lookups when no
+        // WPAD server exists (the "stuck downloading manifest" hang). WinHttpSetTimeouts does not
+        // bound proxy resolution. DEFAULT_PROXY still honors an explicitly configured proxy.
         session_ = WinHttpOpen(L"MapleNightUpdater/1.0",
-                               WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                               WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (session_) {
             DWORD timeout = 30000;
@@ -482,6 +486,45 @@ void WaitForParentExit(DWORD pid) {
     CloseHandle(h);
 }
 
+// Full image path of a still-running process. Used to capture the patcher's exe
+// before it exits so we can relaunch the exact same file after a runtime update,
+// even if the player renamed MapleNight.exe.
+std::wstring GetProcessImagePath(DWORD pid) {
+    if (pid == 0) return L"";
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return L"";
+    wchar_t buf[MAX_PATH] = {};
+    DWORD sz = MAX_PATH;
+    std::wstring out;
+    if (QueryFullProcessImageNameW(h, 0, buf, &sz)) out.assign(buf, sz);
+    CloseHandle(h);
+    return out;
+}
+
+// Relaunch the patcher after a runtime update/repair applies. Without this the
+// patcher just vanishes (CheckAndStartRuntimeUpdaterIfNeeded exits 0 with no
+// window) and the player must manually reopen -- looks like an instant crash.
+void RelaunchPatcher(const std::wstring& exePath, const std::wstring& installDir) {
+    std::wstring exe = exePath;
+    if (exe.empty()) {
+        std::wstring dir = installDir.empty() ? L"." : installDir;
+        exe = dir + L"\\MapleNight.exe";
+    }
+    std::wstring cmd = L"\"" + exe + L"\"";
+    std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back(0);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(exe.c_str(), cmdBuf.data(), nullptr, nullptr, FALSE, 0,
+                       nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    } else {
+        Logf("relaunch failed exe=%ls err=%lu", exe.c_str(), GetLastError());
+    }
+}
+
 bool ReplaceFileAtomic(const std::wstring& src, const std::wstring& dst) {
     for (int attempt = 0; attempt < 40; ++attempt) {
         if (MoveFileExW(src.c_str(), dst.c_str(),
@@ -675,6 +718,11 @@ int RunSync(const SyncOptions& opt) {
 
     if (failed.load(std::memory_order_relaxed)) return 4;
 
+    // Capture the patcher's exe path while it's still alive, so we can relaunch it
+    // after applying the runtime update (it exits without showing a window).
+    std::wstring patcherExe;
+    if (opt.isRuntime) patcherExe = GetProcessImagePath(opt.parentPid);
+
     WaitForParentExit(opt.parentPid);
 
     const char* applyPhase = opt.repair ? "repair" : "apply";
@@ -697,6 +745,12 @@ int RunSync(const SyncOptions& opt) {
 
     if (!opt.localVersionFile.empty()) {
         WriteAllBytes(opt.localVersionFile, latest);
+    }
+
+    // Runtime update/repair done -> reopen the patcher so the player isn't left
+    // staring at a window that never appears.
+    if (opt.isRuntime) {
+        RelaunchPatcher(patcherExe, opt.destDir);
     }
     return 0;
 }
@@ -736,12 +790,11 @@ int CmdRuntimeUpdate(const Args& a) {
 // `Updater.exe verify --data-dir Data ...` with no --base-url and no --local-version
 // — reads base URL from env, resolves local version from <data-dir>\version.
 //
-// Scope: only Mob/, Map/, Skill/ are verified. Other manifest entries are skipped
-// to keep launch-time CRC fast; tamper risk on other dirs is accepted.
+// Scope: only Skill/ and the Map/Map/ subtree are verified. Everything else (incl. Mob/ and the bulk
+// Map/ art dirs Obj/Back/Tile) is skipped to keep launch-time CRC fast; tamper risk elsewhere accepted.
 static bool IsVerifyScopedPath(const std::string& p) {
-    return p.rfind("Mob/", 0) == 0
-        || p.rfind("Map/", 0) == 0
-        || p.rfind("Skill/", 0) == 0;
+    return p.rfind("Skill/", 0) == 0
+        || p.rfind("Map/Map/", 0) == 0;
 }
 
 int CmdVerify(const Args& a) {

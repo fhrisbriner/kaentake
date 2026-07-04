@@ -134,7 +134,6 @@ std::string WideToUtf8(const std::wstring &value) {
     return result;
 }
 
-#ifdef _DEBUG
 std::mutex g_logMutex;
 
 void DebugLog(const wchar_t *format, ...) {
@@ -177,9 +176,6 @@ void DebugLog(const wchar_t *format, ...) {
     WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
     CloseHandle(file);
 }
-#else
-void DebugLog(const wchar_t *, ...) {}
-#endif
 
 std::wstring Utf8ToWide(const char *value) {
     if (!value || !*value) {
@@ -1726,6 +1722,61 @@ int WINAPI PatchExecutionLevel() {
 }
 
 
+// A Windows "Run as administrator" compatibility shim (AppCompatFlags\Layers value with
+// the RUNASADMIN token) overrides the asInvoker manifest and makes CreateProcess fail
+// with ERROR_ELEVATION_REQUIRED (740) when the launcher runs non-elevated -- which blocks
+// DLL injection entirely. v83 players are routinely told to "run as admin", so strip the
+// RUNASADMIN token from MapleStory.exe's shim (keeping any other compat flags) before launch.
+static void StripRunAsAdminShimFrom(HKEY root, const char *exePath) {
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExA(root, "Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers",
+                      0, KEY_QUERY_VALUE | KEY_SET_VALUE, &hKey) != ERROR_SUCCESS) {
+        return;
+    }
+
+    char data[1024] = {};
+    DWORD type = 0;
+    DWORD cb = sizeof(data) - 1;
+    const LSTATUS status = RegQueryValueExA(hKey, exePath, nullptr, &type, reinterpret_cast<LPBYTE>(data), &cb);
+    if (status == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ) && strstr(data, "RUNASADMIN") != nullptr) {
+        // Rebuild the space-delimited token list without RUNASADMIN (the leading "~" is re-added).
+        std::string rebuilt;
+        size_t start = 0;
+        const std::string value(data);
+        while (start <= value.size()) {
+            const size_t sp = value.find(' ', start);
+            const std::string token = value.substr(start, sp == std::string::npos ? std::string::npos : sp - start);
+            if (!token.empty() && token != "~" && token != "RUNASADMIN") {
+                if (!rebuilt.empty()) rebuilt += ' ';
+                rebuilt += token;
+            }
+            if (sp == std::string::npos) break;
+            start = sp + 1;
+        }
+
+        if (rebuilt.empty()) {
+            RegDeleteValueA(hKey, exePath);
+            DebugLog(L"Removed RUNASADMIN compatibility shim (root=0x%p) for %S", reinterpret_cast<void *>(root), exePath);
+        } else {
+            const std::string newValue = "~ " + rebuilt;
+            RegSetValueExA(hKey, exePath, 0, REG_SZ, reinterpret_cast<const BYTE *>(newValue.c_str()), static_cast<DWORD>(newValue.size() + 1));
+            DebugLog(L"Stripped RUNASADMIN from compatibility shim (root=0x%p) -> '%S'", reinterpret_cast<void *>(root), newValue.c_str());
+        }
+    }
+    RegCloseKey(hKey);
+}
+
+static void StripRunAsAdminShim() {
+    char full[MAX_PATH] = {};
+    if (GetFullPathNameA("MapleStory.exe", MAX_PATH, full, nullptr) == 0) {
+        DebugLog(L"StripRunAsAdminShim: GetFullPathNameA failed error=%lu", GetLastError());
+        return;
+    }
+    StripRunAsAdminShimFrom(HKEY_CURRENT_USER, full);   // per-user shim (no elevation needed to edit)
+    StripRunAsAdminShimFrom(HKEY_LOCAL_MACHINE, full);  // machine-wide shim (best-effort; needs admin)
+}
+
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
     g_launcherExitRequested = false;
     DebugLog(L"Launcher start commandLine=%s", GetCommandLineW());
@@ -1794,6 +1845,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
 
+    // Clear any "run as administrator" shim that would make CreateProcess fail with 740.
+    StripRunAsAdminShim();
+
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
@@ -1817,6 +1871,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         DWORD dwError = GetLastError();
         DebugLog(L"DetourCreateProcessWithDllExA failed error=%lu", dwError);
         LogCrashReport(dwError, "DetourCreateProcessWithDllExA(MapleStory.exe, " CONSTANTS_DLL_NAME ")");
+        if (dwError == ERROR_ELEVATION_REQUIRED) {
+            // 740: a leftover machine-wide (HKLM) RUNASADMIN shim we couldn't remove without
+            // admin, or "Run as administrator" still ticked on MapleStory.exe / the launcher.
+            ErrorMessage(
+                "Could not start MapleStory.exe [740: elevation required].\n\n"
+                "Right-click MapleStory.exe AND MapleNight.exe -> Properties -> Compatibility,\n"
+                "then UNCHECK \"Run this program as an administrator\" and try again.");
+            return 1;
+        }
         LPSTR sErrorMessage = nullptr;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, dwError, 0, (LPSTR)&sErrorMessage, 0, nullptr);
         ErrorMessage("Could not start MapleStory.exe [%d]\n%s", dwError, sErrorMessage);

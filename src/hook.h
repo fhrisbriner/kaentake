@@ -61,6 +61,7 @@ void AttachStringPoolMod();
 void AttachResManMod();
 void AttachAvatarDataMod();
 void AttachItemEffectMod();
+void AttachCashWeaponMod();
 void AttachResolutionMod();
 void AttachMobHpTagMod();
 void AttachToolTipMod();
@@ -77,7 +78,7 @@ void BGMOverride();
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
 
 inline void AttachClientHooks() {
-    AllocConsole();
+    //AllocConsole();
     FILE* fDummy;
     freopen_s(&fDummy, "CONOUT$", "w", stdout);
     freopen_s(&fDummy, "CONOUT$", "w", stderr);
@@ -90,6 +91,7 @@ inline void AttachClientHooks() {
     (AttachResManMod());
     (AttachAvatarDataMod());
     (AttachItemEffectMod());
+    (AttachCashWeaponMod());
     (AttachResolutionMod());
     (AttachMobHpTagMod());
     (AttachToolTipMod());
@@ -102,8 +104,6 @@ inline void AttachClientHooks() {
     (AttachMapObjectFade());
     (BGMOverride());
 }
-
-
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {
     union {

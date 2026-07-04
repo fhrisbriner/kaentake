@@ -66,7 +66,7 @@ bool jumping = false;
 bool wtfnot = false;
 double tbw = 5.2;
 double taxe = 4.9;
-double oaxe = 4.3;
+double oaxe = 4.2;
 int mesos = 0;
 bool doPath = false;
 int xPath = 0;
@@ -79,6 +79,8 @@ DWORD ohsword = 0x00AFE858;
 int LastMapID = 777777777;
 int MapID = 0;
 bool immune = false;
+bool g_inOneTimeAction = false; // true while the LOCAL player is in a one-time action (attack/skill
+                                // anim); set by tGetOneTimeAction. -1 from GetOneTimeAction == none.
 int myCharacterid = 0;
 bool firstLoad = true;
 bool AttackMove = false;
@@ -102,17 +104,31 @@ int lastusedskill = 0;
 int rsLevel = 0;
 int asLevel = 0;
 int bsLevel = 0;
+int backflip = 0;
+int slam = 0;
+int sharpenlevel = 0;
+int poisonBonusLevel = 0; // level of the poison-damage passive (read in GetSkillLevel hook)
+int rangerShred = 0;
+int sniperShred = 0;
+int duelistShred = 0;
+int galeShot = 0;
+int masterSkies = 0;
+constexpr int POISON_PASSIVE_SKILLID = 2110009;
 
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
 
 int pleasejmpout = 0x00791C6C;
 double int_multiplier = 4.2;
+double str_multiplier = 4.0;
 double Hundred = 100;
 int topMAD = 0;
 int botMAD = 0;
 int totmagic = 0;
 int pad = 0;
+int summonSeekRangeX = 800; // gate-1 (sub_678ECC cave) search half-width around player (known-good value)
+int summonSeekRangeY = 400; // gate-1 (sub_678ECC cave) search half-height around player
+int summonReach = 1500;     // gate-2 summon attack reach written into v7[13] (+0x34); default ~500
 double clMultiplier = 1.25;
 
 int get_weapon_type() {
@@ -137,6 +153,12 @@ void setMAD() {
     case 38:
         int_multiplier = 5.2;
         break;
+    case 43:
+        str_multiplier = 4.6;
+        break;
+    case 44:
+        str_multiplier = 4.0;
+        break;
     default:
         int_multiplier = 1.0;
         break;
@@ -145,6 +167,13 @@ void setMAD() {
     int int_ = CWvsContext::GetInstance()->get_m_basicStat().nINT.Fuse();
     int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
     int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    if (job == 121 || job == 122) {
+        int_ = CWvsContext::GetInstance()->get_m_basicStat().nSTR.Fuse();
+        magic = pad;
+        topMAD = (int_ * magic) / 100;
+        botMAD = topMAD * .6;
+        return;
+    }
     if (magic < 0) {
         bonusMagic = 0;
     }
@@ -204,6 +233,11 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 1211000
+            cmp esi, eax
+            je melee
+
+
             mov eax, 1201012
             cmp esi, eax
             je melee
@@ -230,13 +264,17 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 1211012
+            cmp esi, eax
+            je melee
+
             mov eax, 1211013
             cmp esi, eax
             je melee
 
             mov eax, 1211014
             cmp esi, eax
-            je buff
+            je melee
 
             mov eax, 1201017
             cmp esi, eax
@@ -394,6 +432,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+            mov eax, 2411023
+            cmp esi, eax
+            je buff
+
             mov eax, 2411011
             cmp esi, eax
             je prepare
@@ -414,6 +456,10 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 3111015
             cmp esi, eax
             je summons
+
+            mov eax, 3111018
+            cmp esi, eax
+            je buff
 
                 // hunter
             mov eax, 3101007
@@ -488,6 +534,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 3411010
+            cmp esi, eax
+            je summons
+
             mov eax, 3411005
             cmp esi, eax
             je buff
@@ -509,6 +559,10 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 3511019
             cmp esi, eax
             je shoot
+
+            mov eax, 3511002
+            cmp esi, eax
+            je buff
 
 
                 // Thief 2nd
@@ -544,6 +598,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 4111017
+            cmp esi, eax
+            je summons
+
                 // CB
             mov eax, 4211011
             cmp esi, eax
@@ -566,7 +624,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
-            mov eax, 4411006
+            mov eax, 4411004
             cmp esi, eax
             je melee
 
@@ -616,9 +674,19 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+
+            mov eax, 5411026
+            cmp esi, eax
+            je buff
+
+
             mov eax, 5511015
             cmp esi, eax
             je summons
+
+            mov eax, 5511006
+            cmp esi, eax
+            je shoot
 
             mov eax, 5511002
             cmp esi, eax
@@ -630,7 +698,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5511017
             cmp esi, eax
-            je shoot
+            je melee
 
             mov eax, 3601001
             cmp esi, eax
@@ -668,6 +736,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 5211016
+            cmp esi, eax
+            je buff
+
+            mov eax, 5211017
+            cmp esi, eax
+            je shoot
+
 
                 // Pirate 3rd
             mov eax, 5111010
@@ -699,6 +775,10 @@ void __declspec(naked) doActiveSkills() {
             je shoot
 
             mov eax, 5111017
+            cmp esi, eax
+            je shoot
+
+            mov eax, 5511016
             cmp esi, eax
             je shoot
 
@@ -738,15 +818,27 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
-            mov eax, 4201006
-            cmp esi, eax
-            je buff
-
             mov eax, 4511001
             cmp esi, eax
             je buff
 
+            mov eax, 5101009
+            cmp esi, eax
+            je melee
+
+            mov eax, 5101010
+            cmp esi, eax
+            je melee
+
             mov eax, 2211013
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601009
+            cmp esi, eax
+            je melee
+
+            mov eax, 3601010
             cmp esi, eax
             je buff
 
@@ -987,6 +1079,64 @@ void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCoun
     Patch4(dwOriginAddress + 1, (int)(((int)ptrCodeCave - (int)dwOriginAddress) - 5));
 }
 
+// Mob WATK/MATK buffstat (attack up/down debuff), mirror of applyMobDefenseStat. Same temp-stat
+// table (MobStat::DecodeTemporary @0x78B0B1): PAD(#1) nOption @ +0x28, reason @ +0x2C; MAD(#3)
+// nOption @ +0x48, reason @ +0x4C. nOption is a FLAT delta ADDED to the base attack (down debuff is
+// negative -> we take less damage). reason==0 -> inactive, base passes through unchanged. ms->nPAD /
+// ms->nMAD hold the template-copied base (no temp stat folded in), so add the delta here.
+static int applyMobAttackStat(const MobStat* stat, int baseAtk, bool magic) {
+    if (!stat || IsBadReadPtr(const_cast<MobStat*>(stat), sizeof(MobStat))) {
+        return baseAtk;
+    }
+    const char* base = reinterpret_cast<const char*>(stat);
+    int option = *reinterpret_cast<const int*>(base + (magic ? 0x48 : 0x28));
+    int reason = *reinterpret_cast<const int*>(base + (magic ? 0x4C : 0x2C));
+    if (reason == 0) {
+        return baseAtk; // stat not active -> no modifier
+    }
+    int adjusted = baseAtk + option;
+    return adjusted < 0 ? 0 : adjusted;
+}
+
+// Hack B tunables: the defense-down debuffs are NOT broadcast to the client (only the paired attack
+// down is). We mirror the broadcast attack-down onto the matching defense -- MAD->MDEF for magic,
+// PAD->PDEF for physical. The ratio scales the borrowed magnitude: 1.0 == apply the same flat delta
+// the attack slot carries. Raise/lower to taste.
+double mdefDebuffRatio = 1.0;
+double pdefDebuffRatio = 1.0;
+
+// Mob WDEF/MDEF buffstat (defense up/down debuff). Runtime MobStat lays each combat stat out as a
+// 16-byte block [effective, nOption@+4, reason@+8, expire@+0xC] (verified by dumping a live mob):
+//   PAD eff@0x24 opt@0x28 reason@0x2C    PDD eff@0x34 opt@0x38 reason@0x3C
+//   MAD eff@0x44 opt@0x48 reason@0x4C    MDD eff@0x54 opt@0x58 reason@0x5C
+// nOption is a FLAT delta ADDED to the template defense (defense-DOWN debuff is negative). reason==0
+// -> the stat has no active temp modifier and the template defense passes through unchanged.
+static double  applyMobDefenseStat(const MobStat* stat, double templateDef, bool magic) {
+    if (!stat || IsBadReadPtr(const_cast<MobStat*>(stat), sizeof(MobStat))) {
+        return templateDef;
+    }
+    const char* base = reinterpret_cast<const char*>(stat);
+    int option = *reinterpret_cast<const int*>(base + (magic ? 0x58 : 0x38));
+    int reason = *reinterpret_cast<const int*>(base + (magic ? 0x5C : 0x3C));
+    // Hack B: the debuff skills lower BOTH attack and defense, but the server only broadcasts the
+    // attack temp stat (MAD opt@0x48/reason@0x4C, PAD opt@0x28/reason@0x2C). When there's no native
+    // defense temp stat, mirror the active attack-down onto the matching defense so client damage
+    // reflects the (server-side) defense reduction. MAD->MDEF for magic, PAD->PDEF for physical.
+    if (reason == 0) {
+        int atkOption = *reinterpret_cast<const int*>(base + (magic ? 0x48 : 0x28));
+        int atkReason = *reinterpret_cast<const int*>(base + (magic ? 0x4C : 0x2C));
+        if (atkReason != 0) {
+            option = (int)(atkOption * (magic ? mdefDebuffRatio : pdefDebuffRatio));
+            reason = atkReason;
+        }
+    }
+    if (reason == 0) {
+        return templateDef; // stat not active -> no modifier
+    }
+    double adjusted = templateDef + option;
+    return adjusted < 0.0 ? 0.0 : adjusted;
+}
+
 auto MobACC = (int(__stdcall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x0079286E;
 auto GetPDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E067;
 auto GetMDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E141;
@@ -996,8 +1146,10 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     if (MobACC(ms, cd, bs, ss, misschance)) {
         return 0; // attack missed
     }
-    int mobPD = ms->nPAD;
-    double baseDamage = (double)mobPD * mobPD * 0.0085;
+    int invincible = ss->m_invincible.Fuse();
+    int mesoguard = ss->m_mesoGuard.Fuse();
+    int mobPD = applyMobAttackStat(ms, ms->nPAD, false); // fold WATK up/down debuff
+    double baseDamage = mobPD;
     int level = bs->nLevel.Fuse();
     int mobLevel = ms->nLevel;
     int str = bs->nSTR.Fuse() / 10;
@@ -1005,9 +1157,16 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 40;
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
-    double reduciton = (PDD / (1000 + PDD));
+    double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
-    return baseDamage - ((baseDamage * reduciton) * leveldiff);
+    int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (invincible > 0) {
+        preSkillMitigationDamage *= (1.0 - (invincible * 0.01));
+    }
+    if (mesoguard > 0) {
+        preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    return preSkillMitigationDamage;
 }
 
 auto magicACC = (int(__stdcall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x007929CA;
@@ -1017,8 +1176,11 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     if (magicACC(ms, cd, bs, ss, misschance)) {
         return 0; // attack missed
     }
-    int mobPD = ms->nMAD;                              // Magic Attack Damage (plaintext, no Fuse)
-    double baseDamage = (double)mobPD * mobPD * 0.008; // PAD^2 * rand(0.008, 0.0085)
+    int mesoguard = ss->m_mesoGuard.Fuse();
+    double mesoGuardReduction = -mesoguard / 100;
+    double reduction = 1.0 + mesoGuardReduction;
+    int mobPD = applyMobAttackStat(ms, ms->nMAD, true); // fold MATK up/down debuff
+    double baseDamage = mobPD;
     int level = bs->nLevel.Fuse();
     int mobLevel = ms->nLevel;
     int str = bs->nSTR.Fuse() / 40;
@@ -1026,9 +1188,13 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 10;
     double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
-    double reduciton = (PDD / (1000 + PDD));
+    double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
-    return baseDamage - ((baseDamage * reduciton) * leveldiff);
+    int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (mesoguard > 0) {
+        preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    return preSkillMitigationDamage;
 }
 
 
@@ -1056,6 +1222,7 @@ int requiredComboCount_hook(int skillID) {
     if (skillID == 5511014) {
         return 300;
     }
+    return 0;
 }
 
 void comboStuff() {
@@ -1108,109 +1275,216 @@ void skillHacks() {
                                      // ReplaceValue("8F A1 12 00", 1511003, skipArray, 4); // rush
     Patch1(0x009584F6 + 2, 0x51);    // eavsion boost skill WA
     Patch1(0x00958523 + 2, 0x52);    // eavsion boost skill WA
+    Patch4(0x0078E1EB + 1, 1110010);
+
+    // restore skill id 5221006 -> 5211016 at all 14 client refs
+    Patch4(0x007665F1 + 4, 5211016);
+    Patch4(0x007B2875 + 3, 5211016);
+    Patch4(0x007B4839 + 3, 5211016);
+    Patch4(0x00934481 + 2, 5211016);
+    Patch4(0x00936B20 + 1, 5211016);
+    Patch4(0x00936C4C + 1, 5211016);
+    Patch4(0x00967173 + 1, 5211016);
+    Patch4(0x009682CC + 1, 5211016);
+    Patch4(0x00969E6C + 1, 5211016);
+    Patch4(0x0096A2FA + 1, 5211016);
+    Patch4(0x0096D8D0 + 2, 5211016);
+    Patch4(0x00A123F4 + 1, 5211016);
+    Patch4(0x00A12479 + 1, 5211016);
+    Patch4(0x00A20384 + 1, 5211016);
 }
 
 bool isSkillIDMatched(int nSkillID) {
     static const int skillIDs[] = {
 
         // ===== Warrior =====
-        1001006, 1001007,
+        1001006,
+        1001007,
 
         // ===== Knight =====
-        1101016, 1101015,
-        1401007, 1401015, 1401016,
-        1201016, 1201012,
-        1501016, 1501012,
+        1101016,
+        1101015,
+        1401007,
+        1401015,
+        1401016,
+        1201016,
+        1201012,
+        1211000,
+        1501016,
+        1501012,
 
         // ===== Crusader =====
-        1111009, 1111015,
+        1111009,
+        1111015,
 
         // ===== Spearman =====
-        1211012, 1211013, 1211014,
+        1211012,
+        1211013,
+        1211014,
+        1211000,
 
         // ===== Duelist =====
-        1411003, 1411005, 1411006, 1411008,
+        1411003,
+        1411005,
+        1411006,
+        1411008,
 
         // ====== Crusher =====
-        1201017, 1210007, 1201018,
+        1201017,
+        1210007,
+        1201018,
 
         // ===== Barbarian =====
-        1511008, 1511003, 1511007, 1511006, 1511009,
+        1511008,
+        1511003,
+        1511007,
+        1511006,
+        1511009,
 
         // ===== Magician =====
         2001010,
 
         // ===== Elementalist =====
-        2101008, 2101007,
-        2401005, 2401004, 2401008, 2401007,
+        2101008,
+        2101007,
+        2401005,
+        2401004,
+        2401008,
+        2401007,
 
         // ===== Cleric =====
-        2201010, 2201011, 2201012, 2201013,
-        2501010, 2501011, 2501012, 2501013,
+        2201010,
+        2201011,
+        2201012,
+        2201013,
+        2501010,
+        2501011,
+        2501012,
+        2501013,
 
         // ===== FP Mage =====
-        2111011, 2111010, 2111012, 2111013,
+        2111011,
+        2111010,
+        2111012,
+        2111013,
 
         // ===== Priest =====
         2211011,
-        2211012, 2211014, 2221015, 2211016, 2211013,
+        2211012,
+        2211014,
+        2221015,
+        2211016,
+        2211013,
 
         // ===== IL Mage =====
-        2411010, 2411011, 2411012, 2411013,
+        2411010,
+        2411011,
+        2411012,
+        2411013,
+        2411023,
 
         // ===== Holy Knight =====
-        2511006, 2511004, 2511001,
+        2511006,
+        2511004,
+        2511001,
 
         // ===== Priest =====
         2211004,
 
-        // ===== Bowman =====
+        // ===== Bowman =====z
         3001013,
 
         // ===== Hunter =====
-        3101007, 3101012, 3111015,
-        3401005, 3401007, 3401012,
+        3101007,
+        3101012,
+        3111015,
+        3111018,
+        3401005,
+        3401007,
+        3401012,
 
         // ===== Crossbowman =====
-        3201016, 3201006,
-        3501005, 3501003, 3501016,
+        3201016,
+        3201006,
+        3501005,
+        3501003,
+        3501016,
 
         // ===== Wind Archer =====
-        3411006, 3411007, 3411005,
+        3411006,
+        3411007,
+        3411005,
+        3411010,
 
         // ===== Sniper =====
-        3511003, 3511008, 3511004, 3511019,
+        3511003,
+        3511008,
+        3511004,
+        3511019,
+        3511002,
 
-        3211014, 3211016, 3211015,
+        3211014,
+        3211016,
+        3211015,
 
-        3601000, 3601001, 3601002,
-        3601003, 3601004, 3601005,
-        3601006, 3601007,
+        3601000,
+        3601001,
+        3601002,
+        3601003,
+        3601004,
+        3601005,
+        3601006,
+        3601007,
+        3601009,
+        3601010,
 
         // ===== Thief =====
         4001004,
 
         // ===== Assassin =====
-        4101009, 4101008, 4101006,
-        4401009, 4401008, 4401006,
+        4101009,
+        4101008,
+        4101006,
+        4401009,
+        4401008,
+        4401006,
 
         // ===== Hermit =====
-        4111020, 4111021,
+        4111020,
+        4111021,
+        4111017,
 
         // ===== Bandit =====
-        4201014, 4201016,
-        4501005, 4501014, 4501006,
+        4201014,
+        4201016,
+        4201006,
+        4501005,
+        4501014,
+        4501006,
 
         // ===== Chief Bandit =====
-        4211011, 4211015, 4211001, 4211016,
+        4211011,
+        4211015,
+        4211001,
+        4211016,
 
         // ===== Ninja =====
-        4411006, 4411009, 4411019, 4411014,
+        4411006,
+        4411009,
+        4411019,
+        4411004,
 
         // ===== Bandit 3rd =====
-        4511006, 4511013, 4511003, 4511007, 4511001,
+        4511006,
+        4511013,
+        4511003,
+        4511007,
+        4511001,
 
-        5211012, 5211016, 5111007, 5201007,
+        5211012,
+        5211016,
+        5111007,
+        5201007,
 
         // ===== Gunslinger 2nd =====
         5501001,
@@ -1219,13 +1493,25 @@ bool isSkillIDMatched(int nSkillID) {
         5111013, 5111016, 5111014,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
-        5401002, 5401003,
+        5401002,
+        5401003,
+        5101009,
+        5101010,
+        5211017,
 
         // ===== Comboist ====
-        5411002, 5411021, 5411022, 5411020,
+        5411002,
+        5411021,
+        5411022,
+        5411020,
+        5411026,
 
         // ===== Summoner ====
-        5511015, 5511002, 5511014, 5511017
+        5511015,
+        5511002,
+        5511014,
+        5511017,
+        5511006,
     };
 
     return std::find(std::begin(skillIDs), std::end(skillIDs), nSkillID) != std::end(skillIDs);
@@ -1253,6 +1539,30 @@ int __fastcall isDashingHook(void* pthis, void* edx) {
 
 auto pGetSkillLevel = (int(__thiscall*)(int, void*, int, int))0x007616F6;
 
+// ZMap<long,long,long>::GetAt(this, &key, &out) -> non-null on hit. Used to read skill maps raw.
+auto pZMapJJJ_GetAt = (int*(__thiscall*)(void* self, const int* key, int* out))0x004E86A0;
+
+// Learned skill level read RAW, bypassing CSkillInfo::GetSkillLevel's master-level clamp. That
+// clamp (sub_4FB30C) caps the result at the number of level/N nodes defined in Skill.wz, so a skill
+// with only 20 WZ level entries reads as 20 even when 40 points are learned. For passives whose
+// effect we compute ourselves in C++ (the poison bonus) we want the true point count. Mirrors the
+// tail of GetSkillLevel @ 0x7617D0: base map @ CharacterData+0x467, level-bonus map @ +0x47F.
+int GetRawSkillLevel(void* charData, int skillID) {
+    if (!charData) {
+        return 0;
+    }
+    int key = skillID;
+    int level = 0;
+    if (!pZMapJJJ_GetAt(reinterpret_cast<char*>(charData) + 0x467, &key, &level)) {
+        return 0;
+    }
+    int bonus = 0;
+    if (pZMapJJJ_GetAt(reinterpret_cast<char*>(charData) + 0x47F, &key, &bonus)) {
+        level += bonus;
+    }
+    return level;
+}
+
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
@@ -1271,7 +1581,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             critSkillID = 4100001;
             iframes = pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
         }
-        if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 421 || jobID == 422) {
+        if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 451 || jobID == 452) {
             mastery = pGetSkillLevel(_this, charData, 4200000, skillEntry);
         }
         if (jobID == 110 || jobID == 111 || jobID == 112 || jobID == 141 || jobID == 142) {
@@ -1314,6 +1624,15 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     asLevel = pGetSkillLevel(_this, charData, 1411005, skillEntry);
     rsLevel = pGetSkillLevel(_this, charData, 1411006, skillEntry);
     bsLevel = pGetSkillLevel(_this, charData, 4211015, skillEntry);
+    backflip = pGetSkillLevel(_this, charData, 5101009, skillEntry);
+    slam = pGetSkillLevel(_this, charData, 2511009, skillEntry);
+    sharpenlevel = pGetSkillLevel(_this, charData, 3200013, skillEntry);
+    poisonBonusLevel = GetRawSkillLevel(charData, POISON_PASSIVE_SKILLID); // raw: WZ caps at 20
+    duelistShred = pGetSkillLevel(_this, charData, 1410012, skillEntry);
+    rangerShred = pGetSkillLevel(_this, charData, 3110000, skillEntry);
+    sniperShred = pGetSkillLevel(_this, charData, 3210018, skillEntry);
+    galeShot = pGetSkillLevel(_this, charData, 3411007, skillEntry);
+    masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1348,7 +1667,7 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if (nSkillID >= 1511000 && nSkillID < 2000000) {
+    if ((nSkillID >= 1511000 && nSkillID < 2000000) || nSkillID == 3601009) {
         if (get_weapon_type() == 40 || get_weapon_type() == 41 || get_weapon_type() == 42) {
             return true;
         }
@@ -1398,13 +1717,12 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-
     if ((nSkillID >= 5101000 && nSkillID < 5200000) || (nSkillID >= 5401000 && nSkillID < 5500000)) {
         if (get_weapon_type() == 48) {
             return true;
         }
     }
-    if ((nSkillID >= 5200000 && nSkillID < 5300000) || (nSkillID >= 5500000 && nSkillID < 5600000)) {
+    if ((nSkillID >= 5200000 && nSkillID < 5300000) || (nSkillID >= 5500000 && nSkillID < 5600000) || nSkillID == 3601010) {
         if (get_weapon_type() == 49) {
             return true;
         }
@@ -1424,12 +1742,14 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
+    if (nSkillID >= 3601001 && nSkillID <= 3601006) {
+        return true;
+    }
     return false;
 }
 
 void doSpearPA() {
     WriteDouble(0x00BED58C, tbw);
-    WriteDouble(0x00BED90C, oaxe);
     WriteDouble(0x00BED90C, taxe);
     switch (get_weapon_type()) {
     case 30:
@@ -1441,10 +1761,10 @@ void doSpearPA() {
         Patch4(0x008C2E46 + 2, 0x00AFE850);
         break;
     case 32:
-        Patch4(0x0078F60A + 2, oaxeaddr);
-        Patch4(0x0078F6B0 + 2, oaxeaddr);
-        Patch4(0x008C2DFD + 2, oaxeaddr);
-        Patch4(0x008C2E46 + 2, oaxeaddr);
+        Patch4(0x0078F60A + 2, 0x00AFE850);
+        Patch4(0x0078F6B0 + 2, 0x00AFE850);
+        Patch4(0x008C2DFD + 2, 0x00AFE850);
+        Patch4(0x008C2E46 + 2, 0x00AFE850);
         break;
     case 33:
         Patch4(0x0078F84F + 2, ohsword);
@@ -1692,7 +2012,6 @@ void __fastcall SetFromWhenDoom_Hook(MobStat* pThis, void* edx, MobTemplate* pTe
     pThis->nEVA = 0;
     pThis->nACC = 0;
     pThis->nSpeed = 0;
-    DebugMessage(".");
 }
 
 
@@ -1703,7 +2022,6 @@ void __fastcall OnDoomed_Hook(Mob* pThis, void* edx, int bDoom) {
     if (bDoom) {
         auto it = g_TemplateIdByPtr.find(pThis->m_pTemplate);
         templateId = (it != g_TemplateIdByPtr.end()) ? it->second : 0;
-        printf("templateId: %d\n", templateId);
         if (templateId != 0) {
             Patch4(0x0066D722 + 1, templateId);
         }
@@ -1722,13 +2040,13 @@ int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, BasicStat* bs, Seco
 
 
     nAttackCount = 0;
-    for (i = 0; i < 15; ++i) {
+    for (i = 0; i < 30; ++i) {
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
         owo = dist(gen);
         if (((1 << i) & dwDropFlag) != 0) {
-            ratio = ((3.6 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
+            ratio = ((4.0 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
             __int64 damage = (__int64)(ratio * (0.6 + (0.02 * mesos)));
             *aDamage = damage;
             ++nAttackCount;
@@ -1781,10 +2099,19 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
             Patch1(0x009584F6 + 3, 0x01);
             Patch4(0x00958535 + 2, 3410002);
             jobPatchesApplied = true;
+        } else if (jobID == 441) {
+            Patch1(0x009584F6 + 2, 0xB9);
+            Patch1(0x009584F6 + 3, 0x01);
+            Patch4(0x00958535 + 2, 4410002);
+            jobPatchesApplied = true;
+        } else if (jobID == 442) {
+            Patch1(0x009584F6 + 2, 0xBA);
+            Patch1(0x009584F6 + 3, 0x01);
+            Patch4(0x00958535 + 2, 4410002);
+            jobPatchesApplied = true;
         }
     }
     if (iframes > 0) {
-        printf("iframes = %d\n", iframes);
         Patch4(0x009591FE + 1, 1500 + iframes);
     }
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
@@ -1794,8 +2121,11 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
 auto missileSpeed = (int(__cdecl*)(int, int, int))0x00942831;
 
 int(__cdecl missileSpeed_Hook)(int a1, int a2, int a3) {
-    if (a2 == 3211016 || a2 == 3601000) {
+    if (a2 == 3211016 || a2 == 3601000 || a2 == 3411007) {
         return 60;
+    }
+    if (a2 == 3511003 || a2 == 5211017) {
+        return 180;
     }
     return missileSpeed(a1, a2, a3);
 }
@@ -1837,6 +2167,7 @@ void changeMagicAttacks() {
     Patch4(0x00955D66 + 1, 2511006);
     Patch4(0x00955D7C + 1, 2411012);
     Patch4(0x00955D87 + 1, 2111013);
+    Patch4(0x00955D92 + 1, 2411011);
 }
 
 bool isCopyCatSkill(int skillId) {
@@ -1878,19 +2209,18 @@ int(__fastcall setInput_hook)(void* _this, void* edx, int XInput, int YInput) {
 auto SetImpactNext = (void(__thiscall*)(CVecCtrl*, double, double))0x7a6353;
 void(__fastcall SetImpactNext_Hook)(CVecCtrl* _this, void* edx, double x, double y) {
     int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
-    if (job > 200 && (int)_ReturnAddress() == 0x0096DAFF) {
+    if (job >= 300 && (int)_ReturnAddress() == 0x0096DAFF && job < 400) {
         return SetImpactNext(_this, -x, y);
     }
     return SetImpactNext(_this, x, y);
 }
-
-bool flying = false;
 
 auto isHerosWill = (int(__cdecl*)(int))0x00765E2D;
 int(__cdecl isHerosWillHook)(int skillId) {
     if (skillId == 3101012) {
         return 1;
     }
+    return 0;
 }
 
 bool firstjob(int nSkillID) {
@@ -1905,49 +2235,6 @@ bool thirdJob(int nSkillID) {
     return nSkillID / 10000 == 541;
 }
 
-int setSkillDelay(int skillId) {
-    int initialDelay = 0;
-    switch (skillId) {
-    case 5001001:
-        initialDelay = 600;
-        break;
-    case 5001002:
-    case 5101003:
-    case 5101002:
-    case 5411002:
-        initialDelay = 840;
-        break;
-    case 5411021:
-        initialDelay = 930;
-        break;
-    case 5411020:
-        initialDelay = 900;
-    default:
-        initialDelay = 810;
-    }
-    return initialDelay * (weaponSpeed + 10) / 16;
-}
-
-int setCancelDelay(int skillId) {
-    int initialDelay = 0;
-    switch (skillId) {
-    case 5001002:
-    case 5001003:
-    case 5101003:
-        initialDelay = 360;
-    case 5411002:
-    case 5101002:
-    case 5411021:
-        initialDelay = 480;
-        break;
-    case 5411020:
-        initialDelay = 300;
-        break;
-    default:
-        initialDelay = 900;
-    }
-    return initialDelay * (weaponSpeed + 10) / 16;
-}
 
 auto pDoJump = (int(__thiscall*)(CUserLocal*, int))0x0094C383;
 
@@ -1965,34 +2252,23 @@ int(__fastcall CUserLocal_Jump)(CUserLocal* _this, void* edx, int a2) {
     return pDoJump(_this, a2);
 }
 
-int cancelSkill = 0;
-int activeSequence = 0;
+bool firsthit = false;
 
-void cancelStuff(chrono::milliseconds delay, int nSkillID) {
-    if (delay > chrono::milliseconds(setSkillDelay(cancelSkill))) {
-        aniCancelTimer = chrono::steady_clock::now();
-        cancelSkill = 0;
-    } else if (delay > chrono::milliseconds(setCancelDelay(cancelSkill)) && delay < milliseconds(setSkillDelay(cancelSkill))) {
-        if (cancelSkill != nSkillID) {
-            cancelSkill = nSkillID;
-            animationCancel = true;
-        }
-        aniCancelTimer = chrono::steady_clock::now();
-    }
-}
-
-
-bool MovementLockOut() {
-    auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
-    auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
-    if (skillelapsed.count() < 450) {
-        return false;
-    }
-    if (telapsed.count() > 900) {
-        activeTimer = chrono::steady_clock::now();
+bool MovementLockOut(int nSkillID) {
+    int late = 750;
+    if ((nSkillID == 1511009 && !firsthit)) {
+        firsthit = true;
         return true;
     }
-    return false;
+    if (nSkillID == 5101010) {
+        return true;
+    }
+    auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
+    auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
+    if (skillelapsed.count() < 220) {
+        return false;
+    }
+    return true;
 }
 
 auto IsOnRope = (int(__thiscall*)(CVecCtrl*))0x00705343;
@@ -2002,58 +2278,99 @@ auto IsFalling = (int(__thiscall*)(CVecCtrl*))0x0096c1aa;
 auto SetMovePath = (void(__thiscall*)(CVecCtrl*, int))0x0052EF17;
 
 void moveSkill(CUserLocal* pthis, int skillid) {
-
-    CVecCtrl* pCv = CVecCtrl::FromInterface(pthis->m_pvc);
-    if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut()) {
-        return;
-    }
-    int movepath = 0;
-    double vx = 0.0;
-    double vy = 0.0;
-    int skillLevel = 0;
-    int avatar = pthis->m_avatar;
-    if (skillid >= 1411005) {
-        if (skillid == 1411005) {
-            skillLevel = asLevel;
-        } else {
-            skillLevel = rsLevel;
-        }
-        vx = 700.0 + skillLevel * 40;
-        if (skillid == 1411006) {
-            vx *= -1;
-        }
-    }
-    if (skillid == 4211015) {
-        skillLevel = bsLevel;
-        vx = 1200.0 + skillLevel * 5;
-    }
-    if (pthis->m_isLeft % 2) {
-        vx *= -1;
-    }
-    SetMovePath(pCv, movepath);
-    SetImpactNext(pCv, vx, vy);
 }
 
 bool isMovementSkill(int skillid) {
     static const int skillIDs[] = {
         // Duelist
-        1411005, 1411006,
+        1411005,
+        1411006,
         // chief bandit
         4211015,
         // striker
         5411021,
+        // brawler
+        5101009,
+        5101010,
+        1511009,
     };
-
     return std::find(std::begin(skillIDs), std::end(skillIDs), skillid) != std::end(skillIDs);
 }
+
+bool isFallingSkill(int nSkillID) {
+    return nSkillID == 5411021 || nSkillID == 5101009 || nSkillID == 3601009;
+}
+
+bool isRisingSkill(int nSkillID) {
+    return nSkillID == 5101010 || nSkillID == 1511009;
+}
+
+DWORD dwShipSkills = 0x0096719D;
+DWORD dwShipSkillsRet = 0x009671A3;
+
+void __declspec(naked) shipSkills() {
+
+    int nSkillID;
+    DWORD nJumpBack;
+
+    __asm mov[nSkillID], esi
+
+
+    if (nSkillID == 5211017 || nSkillID == 5201006 || nSkillID == 5201007) {
+        nJumpBack = 0x009673CF;
+    }
+    else if (nSkillID == 5211002) {
+        nJumpBack = 0x009673CF;
+    }
+    else if (nSkillID == 20001050) {
+        nJumpBack = 0x009673CF;
+    }
+    else if (nSkillID == 1054) {
+        nJumpBack = 0x009673CF;
+    }
+    else if (nSkillID == 10001054) {
+        nJumpBack = 0x009673CF;
+    }
+    else if (nSkillID == 20001054) {
+        nJumpBack = 0x009673CF;
+    }
+
+    else {
+        __asm cmp esi, 5211002
+        nJumpBack = dwShipSkillsRet;
+    }
+    __asm jmp dword ptr[nJumpBack]
+}
+
 
 auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
         int pnConsumeCheck) {
+    // Torpedo (5211017) is mount-only, mirroring the native battleship skills (e.g. 5221007): it may
+    // only be cast while riding a vehicle. CUserLocal+0x544 = riding vehicle id; /10000 yields the
+    // prefix (190 = tamed mount, 193 = battleship). Off a mount it falls to the 0x9673CF allow path,
+    // so block it here before the original DoActiveSkill runs.
+    if (nSkillID == 5211017) {
+        int nRidingVehicleID = *(int*)((char*)_This + 0x544);
+        int nPrefix = nRidingVehicleID / 10000;
+        if (nPrefix != 190 && nPrefix != 193) {
+            return 0;
+        }
+    }
     if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
         job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
         comboStuff();
+    }
+    if (job >= 151 && job <= 152) {
+        Patch4(0x0074D165 + 3, 1511009);
+        auto elapsed = chrono::steady_clock::now() - jumptimer;
+        if (elapsed < chrono::milliseconds(150)) {
+            return 0;
+        }
+    }
+    if (job >= 510 && job <= 600) {
+        Patch4(0x0074D165 + 3, 1511009);
     }
     if (timerRunning == false) {
         aniCancelTimer = chrono::steady_clock::now();
@@ -2066,6 +2383,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 14101006, nScanCode, pnConsumeCheck);
         }
         if (nSkillID == 3411004) {
+            auto elapsed = chrono::steady_clock::now() - jumptimer;
+            if (elapsed < chrono::milliseconds(150)) {
+                return 0;
+            }
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 5201005, nScanCode, pnConsumeCheck);
         }
         if (nSkillID == 2211013) {
@@ -2080,28 +2401,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (!isCorrectWeapon(nSkillID)) {
         return 0;
     }
-    // if (nSkillID == 4101009) {
-    //     moveSkill(_This, nSkillID);
-    // }
 
-    if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() >= 541 && CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() < 550 && !animationCancel) {
-        printf("doing it.");
-        auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
-                chrono::steady_clock::now() - aniCancelTimer);
-        if (comboAbility > 0) {
-            auto skElapsed = chrono::duration_cast<chrono::milliseconds>(
-                    chrono::steady_clock::now() - aniCancelTimer);
-            if (skElapsed.count() > setCancelDelay(cancelSkill) && nSkillID != cancelSkill && skElapsed.count() < setSkillDelay(cancelSkill)) {
-                cancelSkill = nSkillID;
-                animationCancel = true;
-            } else if (skElapsed.count() >= setSkillDelay(cancelSkill)) {
-                aniCancelTimer = chrono::steady_clock::now();
-                cancelSkill = nSkillID;
-            } else {
-                return 0;
-            }
-        }
-    }
 
     unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
     if (nSkillID == 3411006) {
@@ -2114,9 +2414,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
-    if (siegeMode && nSkillID == 3211015) {
-        return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601007, nScanCode, pnConsumeCheck);
-    }
+
     if (siegeMode && nSkillID == 3211015) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601007, nScanCode, pnConsumeCheck);
     }
@@ -2130,8 +2428,74 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     if (nSkillID == 1511003) {
         Patch4(0x00952F20 + 3, 1511003);
     }
-    if (isMovementSkill(nSkillID)) {
-        moveSkill(_This, nSkillID);
+
+    if (isMovementSkill(nSkillID) && !g_inOneTimeAction) {
+        bool move = true;
+        bool grounded = false;
+        CVecCtrl* pCv = CVecCtrl::FromInterface(_This->m_pvc);
+        if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut(nSkillID)) {
+            return 0;
+        }
+        int movepath = 0;
+        double vx = 0.0;
+        double vy = 0.0;
+        int skillLevel = 0;
+        int avatar = _This->m_avatar;
+        if (nSkillID == 1511009 && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
+            movepath = 6;
+            vy = -800;
+            auto elapsed = chrono::steady_clock::now() - jumptimer;
+            if (elapsed < chrono::milliseconds(250)) {
+                return 0;
+            }
+            grounded = true;
+        }
+        if (nSkillID == 1511009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+            vx = 300.0;
+            vy = 1000.0;
+        }
+        if (nSkillID >= 1411005 && nSkillID <= 1411006) {
+            if (nSkillID == 1411005) {
+                skillLevel = asLevel;
+            } else {
+                skillLevel = rsLevel;
+            }
+            vx = 700.0 + skillLevel * 40;
+            if (nSkillID == 1411006) {
+                vx *= -1;
+            }
+        }
+        if (nSkillID == 4211015) {
+            skillLevel = bsLevel;
+            vx = 1100.0;
+        }
+        if (nSkillID == 5101009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+            vx = -700.0;
+        }
+        if (nSkillID == 5411021 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+            vx = 700.0;
+            vy = -20.0;
+        }
+        if (nSkillID == 5101010) {
+            if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
+                aniCancelTimer = chrono::steady_clock::now();
+                vy = -555.0;
+            } else {
+                return 0;
+            }
+        }
+        if (_This->m_isLeft % 2) {
+            vx *= -1;
+        }
+        if (isFallingSkill(nSkillID) && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
+            return 0;
+        }
+        if (isRisingSkill(nSkillID))
+            SetMovePath(pCv, movepath);
+        SetImpactNext(pCv, vx, vy);
+        if (grounded) {
+            return 0;
+        }
     }
     if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
@@ -2176,26 +2540,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
 }
 
-auto AniCancel = (void(__thiscall*)(void*, int))0x00453A29;
-
-auto Avatar_Update = (void(__thiscall*)(void*))0x004522A6;
-void(__fastcall AvatarUpdate)(void* _this, void* blah) {
-    if (animationCancel) {
-        printf("cancelling");
-        AniCancel(_this, 1);
-        CUserLocal* cuser = CUserLocal::GetInstance();
-        CUserLocal__DoActiveSkill_Hook(cuser, blah, cancelSkill, 0, 0);
-        animationCancel = false;
-    }
-    Avatar_Update(_this);
-}
-
-auto LoadSkillRoot_hook = (int(__cdecl*)(int, int, void*, int))0x0076119A;
-
-int(__cdecl LoadSkillRoot)(int skillid, int exception, void* a4, int a5) {
-    return LoadSkillRoot_hook(skillid, exception, a4, a5);
-}
-
 auto is_guided_skill = (int(__cdecl*)(int))0x0076662D;
 
 int(__cdecl is_guided_skill_hook)(int skillid) {
@@ -2214,12 +2558,47 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
     if (nSkillID == 1411005 || nSkillID == 1411006) {
         return 900;
     }
+    if (nSkillID == 5201006) {
+        return 700;
+    }
+    if (nSkillID == 5411002) {
+        return 750;
+    }
+    if (nSkillID == 5411021) {
+        return 750;
+    }
+    if (nSkillID == 1211000 || nSkillID == 1211014) {
+        return 1720;
+    }
     return (get_cool_time(nSkillID));
+}
+
+// Shared cooldown LOCKOUT for the Charged-Blow group (1211000 / 1211014). get_cool_time only adds a
+// per-skill attack DELAY (swing rate), which can't be shared across skills -- a real "using one locks
+// out the other" needs a single expiry timer. DoActiveSkill_MeleeAttack @ 0x00969465 is the one
+// chokepoint every melee attack skill passes through (it gates then calls TryDoingMeleeAttack), so we
+// detour it: if either skill is on the shared cooldown, block; otherwise run the original and, if the
+// attack fired, arm the shared timer for get_cool_time_t(skill) ms.
+auto DoActiveSkill_MeleeAttack = (int(__thiscall*)(void*, const void*, void*))0x00969465;
+static DWORD g_chargedBlowCdExpiry = 0; // GetTickCount() value until which 1211000/1211014 are locked
+
+int __fastcall DoActiveSkill_MeleeAttack_hook(void* _this, void* edx, const void* pSkill, void* a3) {
+    int skillId = pSkill ? *reinterpret_cast<const int*>(pSkill) : 0; // SKILLENTRY: skill id is first
+    bool shared = (skillId == 1211000 || skillId == 1211014);
+    DWORD now = GetTickCount();
+    if (shared && now < g_chargedBlowCdExpiry) {
+        return 0; // one of the pair is still cooling down -> block both
+    }
+    int result = DoActiveSkill_MeleeAttack(_this, pSkill, a3);
+    if (shared && result) {
+        g_chargedBlowCdExpiry = now + get_cool_time_t(skillId); // arm shared timer (1720ms)
+    }
+    return result;
 }
 
 auto hitMobInRect = (int(__cdecl*)(int))0x00766722;
 int(__cdecl hitMobInRect_hook)(int skillId) {
-    if (skillId == 4101008 || skillId == 3511003 || skillId == 3411006) {
+    if (skillId == 4101008 || skillId == 3411006) {
         return 1;
     }
     return hitMobInRect(skillId);
@@ -2228,7 +2607,7 @@ int(__cdecl hitMobInRect_hook)(int skillId) {
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
-    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006) {
+    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006 || nSkillID == 3511003) {
         return 1;
     }
     return (remove_bullet_skill_hook(nSkillID));
@@ -2260,8 +2639,8 @@ void flashJump() {
 
 auto elementCharge = (int(__cdecl*)(int))0x007908E7;
 int __cdecl elementChargeHook(int skillid) {
-    if (skillid == 4101006) {
-        return 4;
+    if (skillid == 3111018) {
+        return 2;
     }
     return 0;
 }
@@ -2323,6 +2702,7 @@ void*(__fastcall CalcDamage__PDamage)(
         int a19,
         int a20,
         int a21) {
+    printf("damagePerMob: %d, a9: %d, a10: %d, a14: %d, a19 = %d,", nDamagePerMob, nItemID, a10, a4, a19);
     return calcpdamage_hook(_this, a2, bs, a4, dwMobid, a6, a7, nDamagePerMob, nItemID, a10, a11,
             nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
 }
@@ -2331,7 +2711,23 @@ void*(__fastcall CalcDamage__PDamage)(
 auto skillDelayHook = (int(__cdecl*)(int))0x00765047;
 
 int(__cdecl summondelay)(int nSkillID) {
-    return 600;
+    // Summon attack period = 2500ms minus 50ms per learned level of the summon skill (higher level
+    // -> attacks faster). Look up the player's level in nSkillID via CSkillInfo::GetSkillLevel.
+    int lvl = 0;
+    SkillInfo* si = SkillInfo::GetInstance();
+    if (si) {
+        void* zref[2] = { nullptr, nullptr };
+        GetCharacterData(CWvsContext::GetInstance(), zref); // ZRef<CharacterData>; ptr at zref[1]
+        if (zref[1]) {
+            lvl = pGetSkillLevel(reinterpret_cast<int>(si), zref[1], nSkillID, 0);
+            reinterpret_cast<void(__thiscall*)(void*, void*)>(0x00428C44)(zref, nullptr); // ZRef::_ReleaseRaw
+        }
+    }
+    if (nSkillID == 5511015) {
+        return 300;
+    }
+    int delay = 2500 - 50 * lvl;
+    return delay < 0 ? 0 : delay;
 }
 
 auto MakeIncDecHpEffect = (void*(__thiscall*)(void*, int, int))0x0092EC50;
@@ -2381,7 +2777,6 @@ void(__fastcall skipShowDamage)(void* cuser, void* edx, int nDamage,
     return CMob_ShowDamage_Hook(cuser, nDamage, nAttackIdx, bCriticalAttack, bHalfHeight);
 }
 
-// auto SecondaryStat__SetFrom_Hook = (void(__thiscall*)(int, int, int, int, int, int, int))0x0077F4C9;
 // int(__fastcall SecondaryStat__SetFrom)(int ss, void* edx, int cd, int bs, int fs, int a3, int a4, int a5) {
 //
 // }
@@ -2392,15 +2787,21 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
     int nWeaponDegree = nDegree;
     if (mastery > 0) {
         nWeaponDegree -= 2;
+        if (nWeaponBooster != 0) {
+            weaponSpeed += nWeaponBooster;
+        }
     }
     weaponSpeed = nWeaponDegree;
     return nWeaponDegree;
 }
 
 auto octHook = (int(__cdecl*)(int))0x00766612;
+int(__cdecl ltrbOcto)(int nSKillID) {
+    return nSKillID == 3211002 || nSKillID == 3411010 || nSKillID == 4111017;
+}
 
 int(__cdecl octopus)(int nSkillID) {
-    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015) {
+    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010) {
         return 1;
     }
     return octHook(nSkillID);
@@ -2409,7 +2810,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3411006 || nSkillID == 3601007) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -2418,11 +2819,14 @@ int(__cdecl ltrb)(int nSkillID) {
 auto get_vertical_adjust_of_attack_range = (int(__cdecl*)(int))0x0076664D;
 
 int(__cdecl vertical)(int nSkillID) {
-    if (nSkillID == 3601007) {
+    if (nSkillID == 3601007 || nSkillID == 3511003) {
         return 100;
     }
     if (nSkillID == 3001004) {
         return 30;
+    }
+    if (nSkillID == 4111005) {
+        return 120;
     }
     return get_vertical_adjust_of_attack_range(nSkillID);
 }
@@ -2586,7 +2990,6 @@ void __fastcall ShowSkillEffect(
             wspeed = weaponSpeed;
         }
     }
-    DebugMessage("NAction %d", wspeed);
     return ShowSkillEffect_hook(_this, pSkill, nSLV, wspeed, bLeft, nLast, pPtOffset);
 }
 
@@ -2636,12 +3039,21 @@ int __fastcall getPAD_hook(void* thisptr, void* edx, int a2, int a3) {
     return getPAD(thisptr, a2, a3);
 }
 
-double ropebase = 4.0;
+double ropebase = 5.0;
+
+auto getSpeed = (int(__thiscall*)(void*))0x008C457C;
 
 void ropeFormula() {
-    double rope;
+    // Keep the global `speed` exactly as before -- the wings CalcFloat hook reads it.
     speed = 100 + PassiveSpeed + CWvsContext::GetInstance()->get_m_secondaryStat().m_speed.Fuse();
-    rope = 4.0 * (speed / 100.0);
+
+    // Rope uses the engine's effective move speed (SecondaryStat::GetSpeed: the 100-based value,
+    // already clamped + bonuses) of the LOCAL player. The old formula fed rope from m_speed.Fuse()
+    // which decodes to 0, so rope was pinned at the 4.0 floor for everyone and never reflected the
+    // character's speed. getSpeed is the original trampoline, so calling it does not re-enter the hook.
+    void* ss = &CWvsContext::GetInstance()->get_m_secondaryStat();
+    int moveSpeed = getSpeed(ss) + PassiveSpeed; // GetSpeed already includes the 100 base
+    double rope = 4.0 + (moveSpeed / 100.0);
     if (rope < 4.0) {
         rope = 4.0;
     }
@@ -2653,38 +3065,362 @@ void ropeFormula() {
 }
 
 
-auto getSpeed = (int(__thiscall*)(void*))0x008C457C;
-
 int __fastcall getSpeed_hook(void* thisptr, void* edx) {
     ropeFormula();
     return getSpeed(thisptr);
 }
 
 
-auto chainLightning_Hook = (void(__thiscall*)(SKILLENTRY*, int, int, int*, int))0x0075BF50;
+auto chainLightning_Hook = (int(__thiscall*)(SKILLENTRY*, int, int, int*, int))0x0075BF50;
 
-void __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOrder, int* aDamage, int a6) {
+// Returns the original AdjustDamageDecRate's BOOL. The caller (TryDoingMeleeAttack @ 0x951e68) does
+// `test eax,eax; jnz` and SKIPS the damage-number display when this is non-zero. A void return left
+// garbage in eax -- non-zero whenever the poison/status branch ran -- so damage numbers vanished on
+// status-ailmented mobs even though the hit packet still sent. Always return 0 (normal: display).
+int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOrder, int* aDamage, int a6) {
     int i;
     int nSkillID;
-    int v5;
     nSkillID = a1->skillId;
     double dMultiplier = 1.0;
     double incRate = 0.0;
-    if (nSkillID == 3601007) {
-        incRate = 0.2;
+    double defenseShred = 1.0;
+    if (nSkillID == 3601007 || nSkillID == 3211015) {
+        incRate = 0.1;
     }
-    if (nSkillID == 3101005 || nSkillID == 321005) {
-        incRate = -0.1;
+    if (nSkillID == 3001004 || nSkillID == 3201005 || nSkillID == 321015) {
+        incRate = -0.2;
     }
-    for (i = 0; i < 15; i++) {
-        dMultiplier = (incRate * nOrder) + 1.0;
-        aDamage[i] = (int)((double)aDamage[i] * dMultiplier);
-        if (aDamage[i] == 0) {
-            return;
+    if (sharpenlevel > 0) {
+        incRate += sharpenlevel * 0.01;
+    }
+
+
+    // Level-based outgoing reduction: deal 2% less damage per level the player is BELOW the target
+    // mob. At or above the mob's level there is no level penalty.
+    // The caller (CUserLocal::TryDoingMeleeAttack @ 0x951e52) passes aDamage == perTargetStruct +
+    // 0x18, and *(Mob**)perTargetStruct is the target Mob* (same ptr CalcDamage::PDamage derefs to
+    // reach mob->m_pTemplate @ +0x188). So recover the mob by backing up 0x18 bytes.
+    double levelMult = 1.0;
+    double defMult = 1.0;
+    double poisonMult = 1.0;
+    double air = 1.0;
+    double bossMult = 1.0;
+    bool isBoss = false;
+    // NOTE: aDamage == perTargetStruct + 0x18 with *(perTargetStruct) == Mob* only on the MELEE /
+    // SHOOT paths. TryDoingMagicAttack passes a different damage-array pointer, so aDamage-0x18 is
+    // NOT a Mob* there -- validate before any deref or magic attacks fault.
+    Mob* mob = *reinterpret_cast<Mob**>(reinterpret_cast<char*>(aDamage) - 0x18);
+    // The recovered Mob* is only real on the MELEE/SHOOT paths. On other paths aDamage-0x18 is some
+    // unrelated value (e.g. a status-effect pointer) that can still survive IsBadReadPtr, giving a
+    // garbage mobLevel. That garbage drives levelMult hugely negative -> floored to 0 -> the target
+    // takes 0 damage (false immunity) for EVERY class, independent of the poison level. Require a
+    // sane monster level (1..400) before trusting the mob for any level/def/poison adjustment.
+    int mobLevel = (mob && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_stat.nLevel : 0;
+    if (mob && mobLevel >= 1 && mobLevel <= 400) {
+        int playerLevel = CWvsContext::GetInstance()->get_m_basicStat().nLevel.Fuse();
+        if (playerLevel + 5 < mobLevel) {
+            levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
+            if (playerLevel + 20 < mobLevel) {
+                levelMult = .8 + (mobLevel - playerLevel - 20) * -0.02;
+            }
+            if (levelMult < 0.00) {
+                levelMult = 0.00; // floor so high-level mobs are hard, not literally immune
+            }
+        }
+        // Defense, applied always: mirror the incoming PDD/(500+PDD) mitigation curve from
+        // MobPDamage_Hook, but with the MOB's defense (template PDDamage/MDDamage + WDEF/MDEF debuff).
+        // Magic vs physical is decided by the equipped weapon (wand 37 / staff 38 / 32 == magic), the
+        // only reliable per-attack signal -- the magic CalcDamage::MDamage is invoked with a NULL mob
+        // for AoE skills, so this drop-off hook (which always sees the real per-target mob) is the one
+        // place mob magic defense can be applied. defMult = 1000/(1000+def) -> never zeroes.
+        if (mob->m_pTemplate && !IsBadReadPtr(mob->m_pTemplate, sizeof(MobTemplate))) {
+            // Boss flag lives in the template at +0x64 (0/1). EDIT bossMult below to taste.
+            isBoss = (mob->m_pTemplate->bIsBoss.Fuse() != 0);
+            if (isBoss) {
+                bossMult = 1.0; // <-- set your boss damage modifier here
+            }
+            int wt = get_weapon_type();
+            bool magic = (wt == 32 || wt == 37 || wt == 38);
+            double mobDef = magic ? mob->m_pTemplate->nMDDamage.Fuse()
+                                  : mob->m_pTemplate->nPDDamage.Fuse();
+            mobDef = applyMobDefenseStat(&mob->m_stat, mobDef, magic); // fold WDEF/MDEF up/down debuff
+            // Armor-break shreds are physical (archer/thief) only -- never amplify magic.
+            if (!magic && (sniperShred > 0 || rangerShred > 0 || duelistShred > 0 || galeShot > 0)) {
+                if (nSkillID == 3411007) {
+                    defenseShred -= 0.02 * galeShot;
+                } else {
+                    defenseShred -= (0.02 * (sniperShred + rangerShred + duelistShred));
+                }
+            }
+            if (mobDef > 0.0) {
+                defMult = 1000.0 / (1000.0 + (mobDef * defenseShred));
+            }
+        }
+
+        int poisonReason = *reinterpret_cast<int*>(reinterpret_cast<char*>(&mob->m_stat) + 0xB0);
+        if (poisonBonusLevel > 0 && poisonReason != 0) {
+            poisonMult = 1.0 + 0.02 * poisonBonusLevel;
         }
     }
+
+    // Master Skies: +2% damage vs mobs per skill level, but only while the player is airborne.
+    // Read the local player's CVecCtrl off ms_pInstance (0x00BEBF98) and gate on IsFalling /
+    // IsFreeFalling (covers the rise of a jump and the fall). No mob deref needed -- applies on
+    // every path. masterSkies is the learned level of 3410000, read in GetSkillLevel.
+    if (masterSkies > 0) {
+        CUserLocal* localUser = *reinterpret_cast<CUserLocal**>(0x00BEBF98);
+        if (localUser) {
+            CVecCtrl* pCv = CVecCtrl::FromInterface(localUser->m_pvc);
+            if (pCv && (IsFalling(pCv) || IsFreeFalling(pCv))) {
+                air = 1.0 + 0.02 * masterSkies;
+            }
+        }
+    }
+
+    // Order-based drop-off is per TARGET, not per damage line: compute the multiplier once from
+    // nOrder so every line of this hit shares it. (Previously this accumulated inside the loop, so
+    // each successive line compounded nOrder*incRate again -> damage per hit fell off even though
+    // incRate/nOrder were unchanged.)
+    if (incRate != 0.0) {
+        dMultiplier += nOrder * incRate;
+    }
+    if (dMultiplier <= 0) {
+        dMultiplier = 0;
+    }
+
+    // Apply to ALL 15 lines. Do NOT early-out on a zero line: a missed hit is 0 in the middle of the
+    // array, and bailing there left every later line at full damage (no reduction). Unused trailing
+    // slots are already 0 and stay 0 (0 * mult == 0), so scanning the whole array is harmless.
+    for (i = 0; i < 15; i++) {
+        aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult * poisonMult * air * bossMult);
+    }
+    return 0; // BOOL: 0 = let the caller run the normal damage-number display path
 }
 
+
+// Summon damage rework. Replaces CalcDamage::PDamage/MDamage-for-summons (sub_79216D / sub_792595),
+// which used a PAD-or-MAD / (1 + levelDiff) curve. Now mirrors regular player skills:
+//   dmg = (statMult*primary + secondary) * attack / 100 * skillDmg%
+// then the same level + def/(500+def) mitigation we apply to non-summon skills (see
+// drop_off_damage_skills). __thiscall original args (from CSummoned::TryDoingAttackManual):
+//   this=CalcDamage, a2=mobStatFused, a3=&MobStat, a4=CharacterData, a5=BasicStat, a6=SecondaryStat,
+//   a7=skill, a8=skillBonusParam, a9=skillDamage%. a3 == &mob->m_stat (Mob+0x1A0), so recover Mob*
+//   by backing up 0x1A0 to reach m_pTemplate (for PDDamage/MDDamage).
+
+// Shared finisher: takes the player-stat term (statMult*primary + secondary), the attack stat
+// (WATK for physical, MAD for magic) and the skill damage node %, then applies the mastery range
+// roll plus level + defense mitigation. magicDefense picks MDDamage over PDDamage for the mob.
+static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int attack, int skillDmgPct,
+        bool magicDefense) {
+    double base = statTerm * attack / 100.0;
+    double dmg = base * (skillDmgPct / 100.0);
+
+    // Mastery damage range, per line (matches MesoFormula / redoMagic in this file).
+    double minMult = 0.1 + mastery * 0.05;
+    if (minMult > 1.0) {
+        minMult = 1.0;
+    }
+    std::uniform_real_distribution<double> dist(minMult, 1.0);
+    dmg *= dist(rng);
+
+    Mob* mob = reinterpret_cast<Mob*>(reinterpret_cast<char*>(a3) - 0x1A0);
+    MobTemplate* tmpl = (a3 && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_pTemplate : nullptr;
+    (int)statTerm, attack, skillDmgPct, magicDefense, a3, mob, tmpl;
+
+    // Same level + defense mitigation as non-summon skills.
+    int playerLevel = a5->nLevel.Fuse();
+    int mobLevel = a3->nLevel;
+    if (playerLevel + 5 < mobLevel) {
+        double levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
+        if (levelMult < 0.05) {
+            levelMult = 0.05;
+        }
+        dmg *= levelMult;
+    }
+    if (tmpl && !IsBadReadPtr(tmpl, sizeof(MobTemplate))) {
+        double mobDef = magicDefense ? tmpl->nMDDamage.Fuse() : tmpl->nPDDamage.Fuse();
+        mobDef = applyMobDefenseStat(a3, mobDef, magicDefense); // fold WDEF/MDEF up/down debuff
+        if (mobDef > 0.0) {
+            dmg *= 1000.0 / (1000.0 + mobDef);
+        }
+    }
+
+    int result = (int)dmg;
+    if (result <= 0 && base > 0.0) {
+        result = 1; // never collapse a real hit into a 0 (engine treats 0 as a miss)
+    }
+    return result;
+}
+
+auto summonPDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x0079216D;
+int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
+        SecondaryStat* a6, int a7, int a8, int a9) {
+    // Summon attacks are autonomous; on a bad hit (e.g. a stale/garbage mob or stat pointer) the
+    // engine can hand us junk a3/a5. Deref them unguarded smashes the client, so bail to 0 damage.
+    if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
+        return 0;
+    }
+    int str = a5->nSTR.Fuse();
+    int dex = a5->nDEX.Fuse();
+    int luk = a5->nLUK.Fuse();
+
+    // Weapon stat multiplier + primary/secondary. Others fall through to a sane default.
+    double statMult = 3.0;
+    double primary = dex;
+    double secondary = str;
+    switch (get_weapon_type()) {
+    case 43: // spear
+    case 44: // polearm
+        statMult = 4.6;
+        primary = str;
+        secondary = dex;
+        break;
+    case 45: // bow
+    case 49: // gun
+        statMult = 4.0;
+        primary = dex;
+        secondary = str;
+        break;
+    case 47:
+        statMult = 4.0;
+        primary = luk;
+        secondary = dex;
+        break;
+    }
+
+
+    double statTerm = statMult * primary + secondary;
+    return finishSummonDamage(a3, a5, statTerm, pad, a9, false);
+}
+
+// Magic summons: 4.5 * INT, scaled by the actual total magic attack from equips/buffs
+// (m_magic + m_bonusMagic), then the skill damage node %. Mitigated by the mob's MDDamage.
+auto summonMDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x00792595;
+int __fastcall summonMDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
+        SecondaryStat* a6, int a7, int a8, int a9) {
+    if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
+        return 0;
+    }
+    int int_ = a5->nINT.Fuse();
+    int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
+    int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
+    int mad = magic + bonusMagic;
+    if (mad < 0) {
+        mad = 0;
+    }
+
+    double statTerm = 4.5 * int_;
+    return finishSummonDamage(a3, a5, statTerm, mad, a9, true);
+}
+
+// Gate 2 of summon seeking: the summon's own attack reach. After sub_678ECC finds a candidate mob
+// near the player, TryDoingAttackManual rejects it (via sub_679084) unless it's within the summon's
+// reach box = SummonedAttackInfo +0x30 (v7[12], X) / +0x34 (v7[13], Y). Those are the small WZ
+// defaults, so the summon -- which hugs the player -- can't hit anything you walk away from.
+// CSummonedBase::LoadAttackInfo builds that struct; inflate` the reach to summonSeekRange X/Y.
+// __thiscall + NRV: ecx = this (CSummonedBase), stack = retbuf, bstr, attackIdx; returns retbuf in
+// eax, with the attackInfo pointer at *(retbuf + 4).
+// Summon mobCount comes from the summon's own attack-info node (SummonedAttackInfo +0x24, loaded
+// from the "mobCount" WZ node), which on custom summons is missing/1 -- so the summon only ever hits
+// one mob. Instead pull it from the player skill's level data, the same field the player's own
+// attacks read: SKILLENTRY::GetLevelData(skill, level) -> SKILLLEVELDATA. Each field is a secured
+// long: value at `valueOff`, key at valueOff+8, decoded with _ZtlSecureFuse<long>. mobCount lives at
+// +0x130 and bulletCount/attackCount at +0x100 (see TryDoingMeleeAttack @ 0x9514a1 / 0x951bf0).
+// Returns 0 on any failure so callers can keep their default.
+auto summonGetLevelData = (int(__thiscall*)(void* skill, int level))0x00760F23;
+auto summonSecureFuseLong = (int(__cdecl*)(const int* at, unsigned int key))0x00416563;
+auto summonReleaseZRef = (void(__thiscall*)(void* zref, void* p))0x00428C44;
+
+int GetSkillLevelDataLong(int skillId, int valueOff) {
+    SkillInfo* si = SkillInfo::GetInstance();
+    if (!si) {
+        return 0;
+    }
+    SKILLENTRY* skill = si->GetSkill(skillId);
+    if (!skill) {
+        return 0;
+    }
+
+    // Player's learned level in this skill (clamped to master level -> always a valid level-data
+    // index). GetCharacterData returns a ZRef<CharacterData>; CharacterData* is at zref[1].
+    void* zref[2] = { nullptr, nullptr };
+    GetCharacterData(CWvsContext::GetInstance(), zref);
+    void* charData = zref[1];
+    int level = charData ? pGetSkillLevel(reinterpret_cast<int>(si), charData, skillId, 0) : 0;
+    if (zref[1]) {
+        summonReleaseZRef(zref, nullptr);
+    }
+    if (level <= 0) {
+        return 0;
+    }
+
+    int levelData = summonGetLevelData(skill, level);
+    if (!levelData || IsBadReadPtr(reinterpret_cast<void*>(levelData), valueOff + 0xC)) {
+        return 0;
+    }
+    return summonSecureFuseLong(reinterpret_cast<const int*>(levelData + valueOff),
+            *reinterpret_cast<unsigned int*>(levelData + valueOff + 8));
+}
+
+int GetSkillMobCount(int skillId) {
+    return GetSkillLevelDataLong(skillId, 0x130);
+}
+
+auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A;
+int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, void* bstr, int attackIdx) {
+    int ret = loadSummonAttackInfo(thisCSB, retbuf, bstr, attackIdx);
+    int attackInfo = *reinterpret_cast<int*>(ret + 4);
+    // bstr.m_Data holds the summon skill id. Regular octopus/bullet summons (octopus()/sub_766612)
+    // worked fine BEFORE these edits precisely because the original code left their attack-info
+    // untouched: forcing them onto the +0x80 rect path (and overriding mobCount/reach) is what broke
+    // them. So only modify attack-info for summons we actually want changed: non-octopus summons (the
+    // original behavior) PLUS the ltrb custom octopus summons (which want multi-hit and are covered by
+    // the summonNullBulletGuard cave). Untouched regular octopus => behaves exactly as if this hook
+    // were absent.
+    bool modify = !octopus(reinterpret_cast<int>(bstr)) || ltrbOcto(reinterpret_cast<int>(bstr));
+    if (modify && attackInfo && !IsBadWritePtr(reinterpret_cast<void*>(attackInfo), 0x88)) {
+        // v7[13] (+0x34) is the summon's horizontal reach (sweep is +-this from the summon).
+        *reinterpret_cast<int*>(attackInfo + 0x34) = summonReach;
+
+        // Override mobCount (+0x24, v7[9]) with the skill's WZ mobCount so the summon hits as many
+        // mobs as the skill says. ONLY accept a sane [1,14] value: GetSkillMobCount reads
+        // SKILLLEVELDATA +0x130, and skills with no `mobCount` level node read a garbage slot;
+        // v140.bSelfDestruct (= this field) caps FindHitMobInRect's writes into fixed 15-slot stack
+        // arrays, so an out-of-range value would smash the stack. Out of range -> keep the WZ default.
+        int mobCount = GetSkillMobCount(reinterpret_cast<int>(bstr));
+        if (mobCount >= 1 && mobCount <= 14) {
+            *reinterpret_cast<int*>(attackInfo + 0x24) = mobCount;
+        }
+
+        // Area-attack flag (+0x80, v7[32]): take the rect (FindHitMobInRect) multi-hit path.
+        *reinterpret_cast<int*>(attackInfo + 0x80) = 1;
+    }
+    return ret;
+}
+
+// Summon seek code cave. Replaces the 4 coordinate lea/push pairs in sub_678ECC (0x678EDB..0x678EF1)
+// that build the player +-300/+-100 mob-search box. Rebuilds the same 4 pushes (bottom,right,top,left
+// -- the arg order dword_BF040C expects) but with the configurable summonSeekRange X/Y, then jumps
+// back to the &rect push + call. At cave entry edi = playerY, ebx = playerX (loaded just above), and
+// ecx is not yet touched (saved after our region), so only eax is clobbered -- safe.
+DWORD summonSeekRectBack = 0x00678EF1;
+void __declspec(naked) summonSeekRect() {
+    __asm {
+        mov eax, edi
+        add eax, summonSeekRangeY // bottom = playerY + rangeY
+        push eax
+        mov eax, ebx
+        add eax, summonSeekRangeX // right  = playerX + rangeX
+        push eax
+        mov eax, edi
+        sub eax, summonSeekRangeY // top    = playerY - rangeY
+        push eax
+        mov eax, ebx
+        sub eax, summonSeekRangeX // left   = playerX - rangeX
+        push eax
+        jmp [summonSeekRectBack]
+    }
+}
 
 auto hook_bstr_t = (void(__thiscall*)(void*, const char*))0x00425ADD;
 
@@ -2734,13 +3470,20 @@ int(__cdecl is_keydown_skill_t)(int nSkillID) {
     if (nSkillID == 1201013 || nSkillID == 1201016 || nSkillID == 2411011) {
         return 1;
     }
-    return 0;
+    return is_keydown_skill(nSkillID);
 }
 
 auto GetOneTimeAction = (int(__thiscall*)(void*))0x00451B6A;
 
 int(__fastcall tGetOneTimeAction)(void* _this) {
     int ota = GetOneTimeAction(_this);
+    // Only track the LOCAL player's avatar, which lives at CUserLocal::ms_pInstance + 0x88 (see
+    // sub_74CB84 @ 0x74cc73: GetOneTimeAction(ms_pInstance + 136)). ota > -1 means an attack/skill
+    // one-time action is currently playing; -1 means none.
+    void* localUser = *reinterpret_cast<void**>(0x00BEBF98);
+    if (localUser && _this == reinterpret_cast<char*>(localUser) + 0x88) {
+        g_inOneTimeAction = (ota > -1);
+    }
     return ota;
 }
 
@@ -2821,7 +3564,8 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
                     reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
                     speed);
         } else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
-            isWingsActive = false;
+            // Cancel wings: clear m_bWingsNow in the object so float state ends
+            *(bool*)((uintptr_t)this_ + 0x17C) = false;
         }
     }
 }
@@ -2847,7 +3591,247 @@ int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
     return _is_attack_area_set_by_data(nSkillID);
 }
 
+// Null-bullet-sprite guard for CSummoned::ProcessAttack (0x7A4424). Each frame it walks the summon's
+// pending bullet ATTACKEFFECTs and calls IWzResMan::GetObjectA(path) (0x7A47E4) to load each bullet's
+// sprite, where path = ATTACKEFFECT+0x20 = attackInfo+0x74 (the summon attack's bullet-effect WZ
+// node). Octopus/bullet summons whose WZ lacks that node (no `ball`/effect) get a NULL path, and
+// RESMAN derefs it -> 0xC0000005 (crash @ RESMAN+0x38C0). The damage was already dealt in
+// TryDoingAttackManual; ProcessAttack only renders the projectile, so when the path is null we skip
+// the whole render block for that effect and continue the loop. Cave entry (0x7A44FC) replicates
+// `lea ecx,[ebx+1Ch]; xor edi,edi` (ebx = effect node), then null-checks [ebx+0x20]: jump to the
+// loop-continue (0x7A4D27) if null, else fall back into the original path at 0x7A4501. At this point
+// no COM objects have been created (v109 unwind index = -1), so skipping is unwind-safe. Runs for
+// every summon's effects but only diverts when the bullet path is genuinely null.
+DWORD procAttackBack = 0x007A4501; // continue original (cmp [ecx],edi; ...)
+DWORD procAttackSkip = 0x007A4D27; // loop-continue (cmp [var_38],0; jnz next)
+void __declspec(naked) summonNullBulletGuard() {
+    __asm {
+        lea ecx, [ebx+1Ch] // replicate overwritten instruction (v104 = effect+0x1C)
+        xor edi, edi // replicate (edi = 0, needed by original cmp [ecx],edi)
+        cmp dword ptr [ebx+20h], 0 // bullet sprite path (attackInfo+0x74 copy) null?
+        jz skipRender
+        jmp [procAttackBack]
+    skipRender:
+        jmp [procAttackSkip]
+    }
+}
+
+
+// Battleship riding-skill gate. DoActiveSkill's default branch at 0x009673A3 calls
+// CUserLocal::CheckRidingVehicle (0x0095F9D9), which blocks EVERY skill on a 190/193-range
+// vehicle (battleship = 1932000 -> "not available during the ride") and ignores the skill id.
+// Torpedo (5211017) falls to this default branch instead of the shipSkills whitelist, so it's
+// blocked. Intercept the call site (esi = skill id is live here) and route 5211017 to the
+// allow path 0x009673CF (skips the riding gate, same effect the whitelist intends); every other
+// skill keeps the original behavior (call CheckRidingVehicle, then jmp 0x009693F0).
+DWORD torpedoAllowPath = 0x009673CF; // post-gate skill dispatch (allowed)
+DWORD torpedoBlockPath = 0x009693F0; // common continuation after CheckRidingVehicle
+DWORD checkRidingVehicleFn = 0x0095F9D9;
+
+void __declspec(naked) shipTorpedoGate() {
+    __asm {
+        cmp     esi, 5211017
+        je      allow
+        cmp     esi, 5201007
+        je      allow
+        cmp     esi, 5201006
+        je      allow
+        cmp     esi, 5211012
+        je      allow
+        cmp     esi, 3601001
+        je      allow
+        cmp     esi, 3601002
+        je      allow
+        cmp     esi, 3601003
+        je      allow
+        cmp     esi, 3601004
+        je      allow
+        cmp     esi, 3601005
+        je      allow
+        cmp     esi, 3601006
+        je      allow
+        mov     ecx, edi // this -> CheckRidingVehicle (__thiscall)
+        call    dword ptr [checkRidingVehicleFn]
+        jmp     dword ptr [torpedoBlockPath]
+    allow:
+        jmp     dword ptr [torpedoAllowPath]
+    }
+}
+
+void InitCorsairMods() {
+    Patch1(0x00967235, 0x75);
+    Patch1(0x00967191 + 1, 0x84);
+    // ATTACH_HOOK(dwShipSkills, shipSkills);
+    //  12 bytes at 0x009673A3 (mov ecx,edi; call CheckRidingVehicle; jmp loc_9693F0); 0x009673AF
+    //  is the next jump target, untouched.
+}
+
+
+// TryDoingMeleeAttack @ 0x950921 only calls get_cool_time for a fixed set of skill IDs selected by
+// the dispatch at 0x9518CD; every other skill falls through `jmp loc_95197E` @ 0x9518F9 and gets NO
+// forced attack delay (spammable). 1211000 (Charged Blow) is one of those -- so the get_cool_time_t
+// override for it (800ms) was never reached on the melee path. This code-cave replaces that 5-byte
+// fall-through jmp: if edx (the skill id) == 1211000 it diverts to 0x95191E (the branch that calls
+// get_cool_time and folds the result into the action delay); otherwise it jmps to the original
+// loc_95197E. edx is untouched, so the get_cool_time(edx) call downstream still sees the skill id.
+void InstallMeleeCooltimeGate() {
+    const DWORD patchAddr   = 0x009518F9; // the 5-byte `jmp loc_95197E` (default: no cooltime)
+    const DWORD applyAddr   = 0x0095191E; // branch that calls get_cool_time and applies the delay
+    const DWORD defaultAddr = 0x0095197E; // original fall-through target
+
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 48, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!cave)
+        return;
+    BYTE* p = cave;
+
+    // cmp edx, 1211000
+    *p++ = 0x81;
+    *p++ = 0xFA;
+    DWORD skillId = 1211000;
+    memcpy(p, &skillId, 4);
+    p += 4;
+    // je applyAddr
+    *p++ = 0x0F;
+    *p++ = 0x84;
+    DWORD rel = applyAddr - ((DWORD)p + 4);
+    memcpy(p, &rel, 4);
+    p += 4;
+    // cmp edx, 1211014
+    *p++ = 0x81;
+    *p++ = 0xFA;
+    DWORD skillId2 = 1211014;
+    memcpy(p, &skillId2, 4);
+    p += 4;
+    // je applyAddr
+    *p++ = 0x0F;
+    *p++ = 0x84;
+    rel = applyAddr - ((DWORD)p + 4);
+    memcpy(p, &rel, 4);
+    p += 4;
+    // jmp defaultAddr
+    *p++ = 0xE9;
+    rel = defaultAddr - ((DWORD)p + 4);
+    memcpy(p, &rel, 4);
+    p += 4;
+
+    // Redirect the original fall-through jmp into the cave.
+    DWORD relToCave = (DWORD)cave - patchAddr - 5;
+    BYTE patch[5] = { 0xE9 };
+    memcpy(patch + 1, &relToCave, 4);
+    WriteProcessMemory(GetCurrentProcess(), (void*)patchAddr, patch, 5, nullptr);
+}
+
+
+// Damage-number show time lives in CMob::SetDamaged (sub_66B05E @ 0x0066B05E). For the common path
+// it is `showTime = base(ebp+0x10) + hitIndex(ebp+0x24) * 120` (the imul/add @ 0x0066B124). This
+// cave replicates that formula, then for skill 1211000 sets the show time to base + 600 (showMs) -- so
+// its damage value appears 600ms after the hit (v16 is an absolute timestamp, not a relative delay, so
+// we add to the base rather than replace it). Regardless of the action animation. ebx holds the
+// skill id at this point (cmp ebx,... @ 0x0066B115) and is untouched by the formula, so it is safe to
+// test. Overwrites the 7-byte imul+add (0x0066B124..0x0066B12A); returns to 0x0066B12B (mov edx,esi).
+void InstallDamageShowTimeGate() {
+    const DWORD patchAddr  = 0x0066B124; // imul eax,[ebp+24h] ; add eax,[ebp+10h]  (7 bytes)
+    const DWORD returnAddr = 0x0066B12B; // mov edx, esi  (next instruction after the add)
+    const DWORD skillId    = 1211000;
+    const DWORD skillId2   = 1211014;
+    const DWORD showMs     = 660;
+
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!cave)
+        return;
+    BYTE* p = cave;
+
+    // imul eax, [ebp+24h]   (original)
+    *p++ = 0x0F; *p++ = 0xAF; *p++ = 0x45; *p++ = 0x24;
+    // add eax, [ebp+10h]    (original)
+    *p++ = 0x03; *p++ = 0x45; *p++ = 0x10;
+    // cmp ebx, skillId (1211000)
+    *p++ = 0x81; *p++ = 0xFB;
+    memcpy(p, &skillId, 4); p += 4;
+    // je override (+8: skip the cmp ebx,skillId2 [6] + jne [2] below)
+    *p++ = 0x74; *p++ = 0x08;
+    // cmp ebx, skillId2 (1211014)
+    *p++ = 0x81; *p++ = 0xFB;
+    memcpy(p, &skillId2, 4); p += 4;
+    // jne +8 (skip the 8-byte override: `mov eax,[ebp+10h]` + `add eax, showMs`)
+    // v16 is an ABSOLUTE timestamp (base @ [ebp+10h] + hitIndex*120), not a relative delay, so for
+    // these skills we reload the base and add showMs -> shows showMs after the hit (not an instant past time).
+    *p++ = 0x75; *p++ = 0x08;
+    // mov eax, [ebp+10h]   (base timestamp a4)
+    *p++ = 0x8B; *p++ = 0x45; *p++ = 0x10;
+    // add eax, showMs
+    *p++ = 0x05;
+    memcpy(p, &showMs, 4); p += 4;
+    // jmp returnAddr
+    *p++ = 0xE9;
+    DWORD rel = returnAddr - ((DWORD)p + 4);
+    memcpy(p, &rel, 4); p += 4;
+
+    // Patch the original 7 bytes: jmp cave (5) + nop nop (2).
+    BYTE patch[7] = { 0xE9, 0, 0, 0, 0, 0x90, 0x90 };
+    DWORD relToCave = (DWORD)cave - patchAddr - 5;
+    memcpy(patch + 1, &relToCave, 4);
+    WriteProcessMemory(GetCurrentProcess(), (void*)patchAddr, patch, sizeof(patch), nullptr);
+}
+
+
+// The 600ms show time above only sticks if the skill also SKIPS the action-tied `.HitAfter` block in
+// CMob::SetDamaged. That bypass is a hardcoded skill-id list @ 0x0066B29C (14101006, loc_A98A5E,
+// 22171002, ...): a match jumps to 0x0066B2B1 (the hitIdx!=0 check -> LABEL_78) which uses v14[2]
+// (=600) directly; a miss falls into the `.HitAfter` recompute at 0x0066B2BB that re-derives the
+// display time from the action animation. 1211000 isn't in the list, so it took the action path and
+// the flat 600 was overridden. This cave inserts 1211000 into the list without sacrificing a slot:
+// it replaces the first 5-byte `cmp eax, 14101006` @ 0x0066B29C with a jmp to a cave that tests
+// 1211000 first (je -> 0x0066B2B1), then replicates the original `cmp eax, 14101006` and jmps back to
+// the original jz @ 0x0066B2A1 so every existing entry still works. eax = skill id at this point.
+void InstallDamageBypassGate() {
+    const DWORD patchAddr  = 0x0066B29C; // cmp eax, 14101006  (5 bytes: 3D 0E 2A D7 00)
+    const DWORD jzBack     = 0x0066B2A1; // the original `jz 0x66B2B1` that follows the cmp
+    const DWORD bypassTgt  = 0x0066B2B1; // list-hit target (hitIdx check -> LABEL_78, uses v14[2])
+    const DWORD skillId    = 1211000;
+    const DWORD origCmpImm = 0x00D72A0E; // 14101006 (the cmp immediate we overwrite, replicated below)
+
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!cave)
+        return;
+    BYTE* p = cave;
+
+    // cmp eax, skillId
+    *p++ = 0x3D;
+    memcpy(p, &skillId, 4); p += 4;
+    // je bypassTgt
+    *p++ = 0x0F; *p++ = 0x84;
+    DWORD rel = bypassTgt - ((DWORD)p + 4);
+    memcpy(p, &rel, 4); p += 4;
+    // cmp eax, origCmpImm   (replicate the overwritten compare so the jz @ jzBack still fires for it)
+    *p++ = 0x3D;
+    memcpy(p, &origCmpImm, 4); p += 4;
+    // jmp jzBack
+    *p++ = 0xE9;
+    rel = jzBack - ((DWORD)p + 4);
+    memcpy(p, &rel, 4); p += 4;
+
+    // Redirect the original `cmp eax, 14101006` into the cave (exactly 5 bytes).
+    DWORD relToCave = (DWORD)cave - patchAddr - 5;
+    BYTE patch[5] = { 0xE9 };
+    memcpy(patch + 1, &relToCave, 4);
+    WriteProcessMemory(GetCurrentProcess(), (void*)patchAddr, patch, 5, nullptr);
+}
+
+int apReset = 0x008C7B27;
+void _declspec(naked)removeHP() {
+    _asm {
+        push 999999
+        push edi
+        push 2000
+        jmp[apReset]
+    }
+}
+
 void AttachSkillEdits() {
+    // Skip bullet-sprite render for summons whose attack has no bullet-effect WZ node (null path),
+    // else IWzResMan::GetObjectA derefs null -> crash. 5 bytes (lea ecx,[ebx+1Ch]; xor edi,edi).
+    CodeCave((void*)summonNullBulletGuard, 0x007A44FC, 0);
     // ATTACH_HOOK(MesoFormula, mesoFormulaHook);
     ATTACH_HOOK(getPAD, getPAD_hook);
     ATTACH_HOOK(hook_bstr_t, bstrt);
@@ -2855,26 +3839,29 @@ void AttachSkillEdits() {
     ATTACH_HOOK(CUserLocal__IsInvincible, CUserLocal__IsInvincible_Hook);
     ATTACH_HOOK(MobPDamage, MobPDamage_Hook);
     ATTACH_HOOK(MobMDamage, MobMDamage_Hook);
+    ATTACH_HOOK(summonPDamage, summonPDamage_hook);
+    ATTACH_HOOK(summonMDamage, summonMDamage_hook);
+
+    // Summon target seeking. The summon's attack mob-finder (sub_678ECC) only scans a hardcoded box
+    // of player +-300px X / +-100px Y, then picks the nearest mob in it -- that's the "idles unless a
+    // mob is right next to you" behavior. Cave over the box construction to widen it to
+    // summonSeekRangeX/Y on both axes (X is disp32, but Y is disp8 and can't grow in place, so a cave
+    // is needed to reach mobs on platforms above/below too).
+    CodeCave((void*)summonSeekRect, 0x00678EDB, 22);
+    ATTACH_HOOK(loadSummonAttackInfo, loadSummonAttackInfo_hook);
+    // NOTE: the octoMultiHit seek-routing cave (0x7A5062) is intentionally NOT installed. All summons
+    // now get the +0x80 rect path in loadSummonAttackInfo_hook, which gives stationary octopus
+    // summons their multi-hit via FindHitMobInRect without the fragile seek/cave detour.
     ATTACH_HOOK(get_vertical_adjust_of_attack_range, vertical);
-    ATTACH_HOOK(Avatar_Update, AvatarUpdate);
-    // ATTACH_HOOK(ClearActionLayer_t, ClearActionLayer_t);
-    // ATTACH_HOOK(DoActiveSkill_Prepare_t, DoActiveSkill_Prepare_t);
-    // ATTACH_HOOK(is_keydown_skill, is_keydown_skill_t);
-    // ATTACH_HOOK(tGetOneTimeAction, tGetOneTimeAction);
-    // // ATTACH_HOOK(tSetOneTimeAction, tSetOneTimeAction);
-    // // ATTACH_HOOK(tOnResolveMoveAction, tOnResolveMoveAction);
-    // // ATTACH_HOOK(tget_flipX, tget_flipX);
-    // ATTACH_HOOK(tOnSkillKeyDownEnd, tOnSkillKeyDownEnd);
-    // ATTACH_HOOK(isMoveableSkillt, isMoveableSkillt);
     ATTACH_HOOK(pDoActiveSkill, CUserLocal__DoActiveSkill_Hook);
     ATTACH_HOOK(missileSpeed, missileSpeed_Hook);
     ATTACH_HOOK(chainLightning_Hook, drop_off_damage_skills);
-    ATTACH_HOOK(AddRush, AddRush_Hook);
+    // ATTACH_HOOK(AddRush, AddRush_Hook);
     ATTACH_HOOK(pGetSkillLevel, GetSkillLevel);
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
-    ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
+    // ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(octHook, octopus);
     // ATTACH_HOOK(ztlSecureFuse_double_check, ztlfuse_double);
@@ -2890,6 +3877,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(mesoFormulaHook, MesoFormula);
     ATTACH_HOOK(isHerosWill, isHerosWillHook);
     ATTACH_HOOK(skillDelayHook, summondelay);
+    ATTACH_HOOK(GetOneTimeAction, tGetOneTimeAction); // keeps g_inOneTimeAction current
     ATTACH_HOOK(thingyWindArcher, windarcherhook);
     ATTACH_HOOK(SetDamaged_Hook, SetDamaged);
     ATTACH_HOOK(elementCharge, elementChargeHook);
@@ -2938,13 +3926,43 @@ void AttachSkillEdits() {
     Patch4(0x00A294D0 + 1, 2510000);
     Patch4(0x00937B02 + 1, 2510000);
     Patch4(0x009817AB + 1, 3411006);
+    // TryDoingShootAttack @ 0x9548b9: 3111004 and 3211004 both `jz loc_954947`, which gives the
+    // attack the extended +0x190 line-travel reach (the Avenger projectile behavior). Repurpose the
+    // 3211004 slot (cmp ecx,imm32 @ 0x9548C5, imm at +2) so 3411006 takes that same path. 3111004
+    // stays intact; the cross-class 3211004 is already shared/sacrificed in the property hooks.
+    Patch4(0x009548C5 + 2, 3411006);
 
-    Patch4(0x00790399 + 1, 4210100);
+    Patch4(0x00790399 + 1, 4210100); // CalcDamage::PDamage skill-bonus slot (player-buff gated)
     Patch4(0x006319AA + 1, 4210100);
     Patch4(0x0094E335 + 1, 4210100);
     Patch4(0x00957282 + 1, 4210100);
     Patch4(0x00967070 + 1, 4210100);
-    // replaceSpark();
+    // Route 1211000 through get_cool_time in TryDoingMeleeAttack (else it bypasses the cooltime).
+    // Attack-key skills go through TryDoingMeleeAttack, NOT DoActiveSkill_Prepare, so this melee
+    // cave is still required for them; the DoActiveSkill_Prepare patch below only covers cast skills.
+    InstallMeleeCooltimeGate();
+    // Generalize the DoActiveSkill_Prepare cooldown map to ALL prepared/cast skills. Vanilla only
+    // ran the cooldown check (@0x96A9CC) and the `map[skill] = now + get_cool_time(skill)` store
+    // (@0x96B09C) for 5 hardcoded ids (1121001/1221001/1321001 + 2 others). NOP both `jnz` skips so
+    // every skill falls into the blocks. get_cool_time returns 0 for unlisted skills -> expiry == now
+    // -> the `now < expiry` check never blocks, so only get_cool_time_t entries get a real cooldown.
+    Patch1(0x0096A9CC, 0x90); // jnz loc_96A9F4 -> nop (cooldown CHECK runs for all skills)
+    Patch1(0x0096A9CD, 0x90);
+    Patch1(0x0096B09C, 0x90); // jnz loc_96B0BE -> nop (cooldown STORE runs for all skills)
+    Patch1(0x0096B09D, 0x90);
+    // 1211000 damage number shows at a flat 600ms regardless of action.
+    // ShowTimeGate sets the time to 600; BypassGate makes 1211000 skip the action-tied .HitAfter
+    // recompute so the 600 actually sticks (both are required).
+    InstallDamageShowTimeGate();
+    InstallDamageBypassGate();
+    // don't cancel skills when hit
+    Patch1(0x009592E7, 0xEB);
+    // Battleship climb
+    Patch1(0x009CC11F, 0xEB);
+    CodeCave((void*)shipTorpedoGate, 0x009673A3, 12);
+    Patch4(0x008c7cec, 1000000); // autoassign
+    Patch4(0x008C7B75, 1000000); //mp assign
+    CodeCave((void*)removeHP, 0x008C7B1F, 3);
 }
 
 DWORD Bypass1 = 0x007540A3;
@@ -3272,6 +4290,14 @@ void AttachOtherHooks() {
     // Remove If you do not use your AP when you level up POP UP
     Patch1(0x00A20091, 0xEB);
 
+    // Hide the "[Master Level]" line in skill tooltips. In CUIToolTip::SetToolTip_Skill @ 0x8F25D0
+    // the block gated by `is_skill_need_master_level` (branch @ 0x8F28F4) pulls StringPool 3852,
+    // formats it and draws it via sub_8F4535. Force that jz to always skip the block (jz->jmp) so
+    // neither the label nor its spacing gap is emitted. 0F 84 CE000000 -> E9 CF000000 90.
+    Patch1(0x008F28F4, 0xE9);
+    Patch4(0x008F28F5, 0x000000CF);
+    Patch1(0x008F28F9, 0x90);
+
     // Hair ID Fix
     Patch1(0x005C94FC + 2, 7);
     Patch1(0x005C94FF + 1, 0x8E);
@@ -3290,6 +4316,28 @@ void AttachOtherHooks() {
     Patch1(0x826F92 + 3, 0x01);
     Patch1(0x826F92 + 4, 0x00);
     Patch1(0x826F92 + 5, 0x00);
+    // Maker: always allow the make/send to proceed. CUIItemMaker::StartItemMake @ 0x00826F25 gates on
+    // recipe-type + IsAbleToMake/IsExistEmptySlot/IsEnoughMeso, returning 0 (no packet) on any failure.
+    // After the window-ready check (@0x826F2F, kept), jmp straight to the make path (LABEL_12 @0x826F78),
+    // skipping the dispatch + all 3 client-side validations. Replaces `mov eax,[esi+704h]` (6 bytes).
+    Patch1(0x00826F31, 0xEB);          // jmp short 0x826F78
+    Patch1(0x00826F32, 0x45);
+    PatchNop(0x00826F33, 4);           // pad remainder of the overwritten mov
+    // ...but the Create button is grayed out by CUIItemMaker::Update (@0x824A06): `if (!IsAbleToMake)
+    // -> disable button + state=0`, and state must be 1 for StartItemMake to run. The actual send,
+    // CUIItemMaker::RequestItemMake (@0x827096, packet 113), also gates on IsAbleToMake + IsEnoughMeso
+    // + IsExistEmptySlot. Force all three to always return true (mov eax,1 ; ret) so the button stays
+    // enabled, the state advances, and the make packet is always sent.
+    unsigned char makerForceTrue[] = { 0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3 };
+    Patch1Array(0x00822C66, makerForceTrue, sizeof(makerForceTrue)); // CUIItemMaker::IsAbleToMake
+    Patch1Array(0x00826FB3, makerForceTrue, sizeof(makerForceTrue)); // CUIItemMaker::IsEnoughMeso
+    Patch1Array(0x0082744F, makerForceTrue, sizeof(makerForceTrue)); // CUIItemMaker::IsExistEmptySlot
+    // With IsAbleToMake forced true, RequestItemMake @0x827096 no longer bails on an empty selection and
+    // the disassemble/monster-crystal path (v449==4 @0x827163) derefs a null *(this+384) -> crash.
+    // Vanilla only null-guards v449==3 (@0x82711B: `cmp [esi+704h],3 ; jnz skip ; cmp [esi+600h],0 ; jz
+    // return0`). Widen that jnz to jl so v449>=3 (disassemble AND crystal) also returns 0 when the item
+    // slot (*(this+384) == [esi+600h]) is empty -- graceful return 0 instead of sending a bad packet.
+    Patch1(0x00827121, 0x7C); // jnz loc_82712C -> jl loc_82712C
     // Allow usage of pots while in Dark Sight skill
     FillBytes(0x0094F6AB, 0x90, 6);
     // Allow double click pots while in Dark Sight skill
@@ -3349,6 +4397,51 @@ void AttachOtherHooks() {
 
     // CritBypass
     PatchNop(0x007650B3, 29);
+
+    // Crit damage: multiply the line by crit-damage%, instead of adding a
+    // bonus computed off BASE damage. Vanilla CalcDamage::PDamage @0x790190:
+    //   on crit roll, v329 = (v325-100)/100 * baseDmg + v329
+    // (v325 = crit dmg %, e.g. 200; v329 = skill-scaled line dmg). For a 30%
+    // skill that yields 0.30*base + 1.00*base = 130% of base.
+    // Rewrite to v329 = v325/100 * v329 -> 0.30*base * 2.0 = 60% of base,
+    // i.e. each line multiplied by the crit-damage factor. Crit-mark write
+    // (*(a17+4*weaponID)=1) preserved; 40-byte region, tail padded with NOP.
+    unsigned char CritMul[] = {
+        0x8B, 0x4D, 0x44,                         // mov  ecx, [ebp+arg_3C]   (a17)
+        0x8B, 0x45, 0x24,                         // mov  eax, [ebp+weaponID]
+        0xC7, 0x04, 0x81, 0x01, 0x00, 0x00, 0x00, // mov dword [ecx+eax*4], 1
+        0xDB, 0x45, 0xCC,                         // fild  [ebp+var_34]       (v325)
+        0xDC, 0x4D, 0xE0,                         // fmul  [ebp+var_20]       (v329)
+        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00,       // fmul  ds:dbl_AF14F0      (0.01)
+        0xDD, 0x5D, 0xE0,                         // fstp  [ebp+var_20]       (v329)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,       // pad to 40 bytes
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+    };
+    Patch1Array(0x00790190, CritMul, sizeof(CritMul));
+
+    // Same crit-damage rework for magic: CalcDamage::MDamage @0x791DC3.
+    // Vanilla on crit roll: v121 = ((v117 - (v117<=200?100:200))/100 + 1.0) * v121
+    // (v117 = crit dmg %, v121 = line dmg). For v117<=200 that already equals
+    // v117/100, but >200 is clamped down by the -200. Rewrite to a plain
+    // v121 = v117/100 * v121 so magic matches physical (line * crit factor,
+    // no clamp). Crit-mark write (*(nDragonFury+a13)=1) preserved; 61-byte
+    // region, tail padded with NOP.
+    unsigned char MCritMul[] = {
+        0x8B, 0x45, 0x40,                         // mov  eax, [ebp+nDragonFury]
+        0x8B, 0x4D, 0x34,                         // mov  ecx, [ebp+arg_2C]   (a13)
+        0xC7, 0x04, 0x01, 0x01, 0x00, 0x00, 0x00, // mov dword [ecx+eax], 1
+        0xDB, 0x45, 0xDC,                         // fild  [ebp+var_24]       (v117)
+        0xDC, 0x0D, 0xF0, 0x14, 0xAF, 0x00,       // fmul  ds:dbl_AF14F0      (0.01)
+        0xDC, 0x4D, 0xF4,                         // fmul  [ebp+var_C]        (v121)
+        0xDD, 0x5D, 0xF4,                         // fstp  [ebp+var_C]        (v121)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,       // pad to 61 bytes (33 NOP)
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+        0x90, 0x90, 0x90
+    };
+    Patch1Array(0x00791DC3, MCritMul, sizeof(MCritMul));
 
     // uiStat stuff
     // Patch1(0x008C35C9 + 1, 0x2C); // weapon def
@@ -3421,9 +4514,10 @@ void AttachOtherHooks() {
     ATTACH_HOOK(get_job_name_hook, get_job_name);
     ATTACH_HOOK(is_shoot_action, is_shoot_action_hook);
     ATTACH_HOOK(get_cool_time, get_cool_time_t);
+    ATTACH_HOOK(DoActiveSkill_MeleeAttack, DoActiveSkill_MeleeAttack_hook);
 
     ATTACH_HOOK(CUIToolTip__DrawItemTitle, DrawItemTitleHook);
-    //ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
+    // ATTACH_HOOK(CMapLoadable__SetFieldMagLevel, CMapLoadable__SetFieldMagLevel_t);
     ATTACH_HOOK(DrawStat, DrawStat_t);
     ATTACH_HOOK(SetImpactNext, SetImpactNext_Hook);
     ATTACH_HOOK(CanSendExclRequest, CanSendExclRequest_Hook);
@@ -3454,7 +4548,7 @@ public:
 };
 
 
-inline LONGLONG myArrayForCustomEXP[] = { 1, 15, 44, 96, 188, 312, 550, 731, 969, 1154, 1358, 1358, 1810, 2308, 2856, 3464, 4134, 4872, 5688, 6588, 7582, 8678, 9890, 11224, 12698, 14326, 16122, 18102, 20290, 22704, 25368, 28308, 31554, 35136, 39090, 43454, 48272, 53588, 59458, 65938, 73090, 80984, 89700, 99320, 109940, 121666, 134608, 148896, 164670, 182084, 201308, 222532, 245962, 271830, 300386, 331914, 366722, 405150, 447574, 494414, 546126, 603218, 666250, 735840, 812672, 897498, 991150, 1094548, 1208706, 1334744, 1473896, 1627532, 1797156, 1984432, 2191198, 2419484, 2671528, 2949804, 3257042, 3596258, 3970778, 4384278, 4840816, 5344870, 5901388, 6515830, 7194226, 7749044, 8173766, 8621760, 9094306, 9592748, 10118504, 10673072, 11258030, 11875046, 12525870, 13212362, 13936472, 14700264, 15505912, 16355710, 17252078, 18197566, 19194866, 20246818, 21356418, 22526822, 23761366, 25063564, 26437120, 27885948, 29414172, 31026142, 32726446, 34519930, 362790501, 382743979, 402768232, 422812419, 442827910, 462770506, 482600578, 502283177, 521788075, 541089799, 560167642, 579005600, 597592213, 615920387, 633987156, 651793372, 669342374, 686641632, 703700356, 720530097, 737143358, 753553293, 769773431, 785817421, 801698849, 817430061, 833022053, 848484423, 863825371, 879051717, 894168994, 909181536, 924092529, 938904073, 953617246, 968232162, 982747040, 997158318, 1011459774, 1025643664, 1039700875, 1053620106, 1067388075, 1080989769, 1094408685, 1107626082, 1120621202, 1133371511, 1145852981, 1158040357, 1169907493, 1181427724, 1192574233, 1203320470, 1213640573, 1223509773, 1232904846, 1241804545, 1250190029, 1258045218, 1265357192, 1272116548, 1278317720, 1283959260, 1289043057, 1293574364, 1297561264, 1301549825, 1305551374, 1309565938, 1313593545, 1317634223, 1321688002, 1325754911, 1329834979, 1333928236, 1338034713, 1342154439, 1346287447, 1350433767, 1354593432, 1358766474, 1362952926, 1367152822, 2205594688L, 2424154688L, 2668594688L, 2942194688L, 3489882688L, 4093322688L, 4758522688L, 5491962688L, 6300602688L, 7191922688L, 8173982688L, 9255474688L, 10445794688L, 11757434688L };
+inline LONGLONG myArrayForCustomEXP[] = { 1, 15, 44, 96, 188, 312, 550, 731, 969, 1154, 1358, 1358, 1810, 2308, 2856, 3464, 4134, 4872, 5688, 6588, 7582, 8678, 9890, 11224, 12698, 14326, 16122, 18102, 20290, 22704, 25368, 28308, 31554, 35136, 39090, 43454, 48272, 53588, 59458, 65938, 73090, 80984, 89700, 99320, 109940, 121666, 134608, 148896, 164670, 182084, 201308, 222532, 245962, 271830, 300386, 331914, 366722, 405150, 447574, 494414, 546126, 603218, 666250, 735840, 812672, 897498, 991150, 1094548, 1208706, 1334744, 1473896, 1627532, 1797156, 1984432, 2191198, 2419484, 2671528, 2949804, 3257042, 3596258, 3970778, 4384278, 4840816, 5344870, 5901388, 6515830, 7194226, 7749044, 8173766, 8621760, 9094306, 9592748, 10118504, 10673072, 11258030, 11875046, 12525870, 13212362, 13936472, 14700264, 15505912, 16355710, 17252078, 18197566, 19194866, 20246818, 21356418, 22526822, 23761366, 25063564, 26437120, 27885948, 29414172, 31026142, 32726446, 34519930, 36411711, 38407166, 40511977, 42732137, 45073968, 47544106, 50149658, 52898026, 55797048, 58855000, 62080603, 65483059, 69071980, 72857660, 76799967, 80898812, 85154323, 89566484, 94135444, 98861092, 103743593, 108781820, 113976774, 119328755, 124837774, 130503871, 136326348, 142305196, 148440485, 154732337, 161180879, 167786237, 174548543, 181467931, 188544535, 195778490, 203169931, 210718995, 218425819, 226289542, 234310294, 242488218, 250823458, 259316158, 267966464, 276774523, 285740484, 294864497, 304146713, 313587286, 323186370, 332944120, 342860693, 352936247, 363170941, 373564936, 384118393, 394831476, 405704349, 416737176, 427930123, 439283358, 450797048, 462471364, 474306474, 486302550, 498459763, 510778285, 523258290, 535899953, 548703450, 561668958, 574796657, 588086725, 601539344, 615154694, 628932958, 642874321, 657078969, 671548089, 686281869, 701280499, 716544170, 732073074, 747867405, 763927359,  2205594688L, 2424154688L, 2668594688L, 2942194688L, 3489882688L, 4093322688L, 4758522688L, 5491962688L, 6300602688L, 7191922688L, 8173982688L, 9255474688L, 10445794688L, 11757434688L };
 inline constexpr size_t maxLevelForCustomEXP = sizeof(myArrayForCustomEXP) / sizeof(myArrayForCustomEXP[0]);
 
 inline LONGLONG get_next_level_exp() {

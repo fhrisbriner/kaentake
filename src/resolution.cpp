@@ -779,4 +779,18 @@ void AttachResolutionMod() {
     CWzGr2D__AdjustCenterY_jmp = reinterpret_cast<uintptr_t>(GetAddressByPattern("GR2D_DX8.DLL", "8D 96 C4 00 00 00"));
     CWzGr2D__AdjustCenterY_ret = CWzGr2D__AdjustCenterY_jmp + 6;
     PatchJmp(CWzGr2D__AdjustCenterY_jmp, &CWzGr2D__AdjustCenterY_hook);
+
+    // Force canvas textures to ARGB8888 instead of ARGB4444.
+    // GR2D's format picker (sub_50402E1B) probes CheckDeviceFormat and, for the auto path, prefers
+    // A4R4G4B4 (26) when the device supports it -- so every canvas texture is created 16-bit and our
+    // 8888 (Format2) WZ bitmaps get downconverted to 4444. The selection is:
+    //     neg eax; sbb eax,eax; and eax,5; add eax,0x15   ->  26 if A4R4G4B4 supported, else 21
+    // Patching `and eax,5` -> `and eax,0` forces the result to 0x15 (D3DFMT_A8R8G8B8 = 21) always,
+    // so canvases stay full 32-bit. (DXT3 branch left intact: skipping it would corrupt any
+    // DXT3-compressed/format-1026 canvas, and the live downconvert here is the 4444 path, not DXT3.)
+    if (BYTE* pFmtSel = reinterpret_cast<BYTE*>(
+            GetAddressByPattern("GR2D_DX8.DLL", "39 7D DC 74 09 C7 45 E0 44 58 54 33"))) {
+        BYTE zero = 0x00;
+        PatchMemory(pFmtSel + 20, &zero, sizeof(zero)); // and eax,5 -> and eax,0  (force A8R8G8B8)
+    }
 }

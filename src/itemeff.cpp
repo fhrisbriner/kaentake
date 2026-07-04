@@ -19,6 +19,9 @@ public:
     }
 };
 
+// cashweapon.cpp: fills missing weapon-type stance subnodes on cash weapon imgs
+void FixCashWeaponImg(int nItemID);
+
 static std::map<int, IWzPropertyPtr> g_mPropItemEffect;
 
 static auto CItemInfo__IterateItemInfo = reinterpret_cast<int(__thiscall*)(CItemInfo*)>(0x005CA71C);
@@ -49,6 +52,7 @@ void UpdateItemEff(CUser* pUser) {
     CAvatar* pAvatar = &pUser->m_CAvatar;
     for (auto i = 0; i < 60; ++i) {
         int nItemID = pAvatar->m_avatarLook.anHairEquip[i];
+        FixCashWeaponImg(nItemID); // ensure cash weapon has stance for any base weapon type
         auto pItemEffectLayer = &pAvatar->m_pCustomData->aItemEffectLayer[i];
         if (auto search = g_mPropItemEffect.find(nItemID); search != g_mPropItemEffect.end()) {
             int bFlip = pAvatar->m_pLayerUnderFace->flip;

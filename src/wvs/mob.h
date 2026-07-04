@@ -4,6 +4,7 @@
 #pragma once
 #include <cstddef>
 #include "../hook.h"
+#include "secure.h"
 
 
 // Confirmed from IDA sub_789EFD (CMobStat::SetFromWhenDoom @ 0x00789EFD):
@@ -43,11 +44,33 @@ static_assert(offsetof(MobStat, nACC) == 0x64, "MobStat::nACC offset mismatch");
 static_assert(offsetof(MobStat, nEVA) == 0x84, "MobStat::nEVA offset mismatch");
 
 
+// Combat stats parsed from Mob WZ into the template by CMobTemplate parse @ 0x0067CF06.
+// Each is a ZtlSecure<long> (12 bytes: long at[2] + uint cs) capped at 1999, laid out on a
+// 12-byte stride starting at +0xB8. Confirmed: parse stores PDDamage via
+// ZtlSecureTear<long>(tmpl+0xC4, value) (cs written to tmpl+0xCC), and SetFromWhenDoom @
+// 0x00789EFD reads PADamage from tmpl+0xB8. Read with .Fuse(). These live ONLY in the template
+// (the engine CMobStat copies PAD/MAD/ACC/EVA but NOT PDD/MDD), so reach them via Mob::m_pTemplate.
 struct MobTemplate {
-    unsigned char _pad0[0x118];
-    int  aDamagedElemAttr[8];                     // +0x118
+    unsigned char    _pad0[0x64];
+    ZtlSecure<int>   bIsBoss;                      // +0x64  boss flag (0/1). Parse @ 0x0067CF06
+                                                   //         stores (get_int32("boss") != 0) here:
+                                                   //         *(tmpl+0x6C) = ZtlSecureTear<int>(val, tmpl+0x64).
+    unsigned char    _pad0b[0xB8 - 0x70];         // +0x70 .. +0xB7
+    ZtlSecure<long>  nPADamage;                   // +0xB8
+    ZtlSecure<long>  nPDDamage;                   // +0xC4  physical defense
+    ZtlSecure<long>  nMADamage;                   // +0xD0
+    ZtlSecure<long>  nMDDamage;                   // +0xDC  magic defense
+    ZtlSecure<long>  nACC;                         // +0xE8
+    ZtlSecure<long>  nEVA;                         // +0xF4
+    unsigned char    _pad1[0x118 - 0x100];        // +0x100 .. +0x117
+    int              aDamagedElemAttr[8];         // +0x118
 };
 
+static_assert(offsetof(MobTemplate, bIsBoss)          == 0x64,  "MobTemplate::bIsBoss offset mismatch");
+static_assert(offsetof(MobTemplate, nPADamage)        == 0xB8,  "MobTemplate::nPADamage offset mismatch");
+static_assert(offsetof(MobTemplate, nPDDamage)        == 0xC4,  "MobTemplate::nPDDamage offset mismatch");
+static_assert(offsetof(MobTemplate, nMDDamage)        == 0xDC,  "MobTemplate::nMDDamage offset mismatch");
+static_assert(offsetof(MobTemplate, nEVA)             == 0xF4,  "MobTemplate::nEVA offset mismatch");
 static_assert(offsetof(MobTemplate, aDamagedElemAttr) == 0x118, "MobTemplate::aDamagedElemAttr offset mismatch");
 
 

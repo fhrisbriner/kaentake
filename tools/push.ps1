@@ -62,8 +62,11 @@ if (-not $Force) {
     try {
         $prevVersion = (Get-RemoteText $latestUrl).Trim()
     } catch {
-        Write-Host "Could not fetch $latestUrl ($($_.Exception.Message)) -- treating as first push"
-        $prevVersion = $null
+        # Refuse to silently upload EVERY blob just because the pointer is unreadable. That is almost
+        # always a transient/bucket problem, not a real first push -- and a full re-upload is the
+        # surprise we want to avoid. Require an explicit -Force for a deliberate full/first push.
+        throw "Could not read $latestUrl ($($_.Exception.Message)). Refusing to upload all blobs. " +
+              "Use -Force for a deliberate full/first push."
     }
 
     if ($prevVersion -and $prevVersion -ne $Version) {
@@ -73,7 +76,8 @@ if (-not $Force) {
             foreach ($f in $prev.files) { $existingHashes[$f.sha256] = $true }
             Write-Host "Diffing against $Channel/$prevVersion ($($prev.files.Count) prior files)"
         } catch {
-            Write-Host "Could not fetch $prevUrl ($($_.Exception.Message)) -- uploading all blobs"
+            throw "Could not fetch prev manifest $prevUrl ($($_.Exception.Message)). Refusing to " +
+                  "upload all blobs. Use -Force for a deliberate full push."
         }
     } elseif ($prevVersion -eq $Version) {
         Write-Host "Bucket already at $Version -- diffing against own remote manifest"
@@ -106,6 +110,7 @@ if ($DryRun) {
 
 if ($delta.Count -gt 0) {
     $jobs = @()
+    $failures = New-Object System.Collections.Generic.List[string]
     $blobsDir = Join-Path $OutDir 'blobs'
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $i = 0
@@ -122,7 +127,7 @@ if ($delta.Count -gt 0) {
             $done = Wait-Job -Job $jobs -Any
             $done | ForEach-Object {
                 $r = Receive-Job -Job $_ -ErrorAction Continue
-                if ($_.State -ne 'Completed') { Write-Warning "blob job $($_.Id) state=$($_.State): $r" }
+                if ($_.State -ne 'Completed') { $failures.Add("blob job $($_.Id) state=$($_.State): $r") }
                 Remove-Job -Job $_
             }
             $jobs = @($jobs | Where-Object { $_.State -eq 'Running' })
@@ -146,6 +151,10 @@ if ($delta.Count -gt 0) {
         }
     }
     $sw.Stop()
+    if ($failures.Count -gt 0) {
+        throw ("Blob upload FAILED ({0} of {1} jobs); latest NOT advanced:`n{2}" -f `
+            $failures.Count, $delta.Count, ($failures -join "`n"))
+    }
     Write-Host ("Uploaded {0} blobs in {1:N1}s" -f $delta.Count, $sw.Elapsed.TotalSeconds)
 }
 
@@ -154,6 +163,25 @@ if ($delta.Count -gt 0) {
 aws --profile $Profile s3 cp $manifestPath "s3://$Bucket/$Channel/manifests/$Version.json" --acl public-read --cache-control no-cache --only-show-errors
 if ($LASTEXITCODE -ne 0) { throw "manifest upload failed" }
 Write-Host "Uploaded $Channel/manifests/$Version.json"
+
+# Verify the content is actually on the bucket BEFORE advancing latest. A partial push that
+# advances latest to a version whose manifest/blobs aren't all present breaks every client
+# (they fetch latest -> 404 on manifest/blob -> update fails -> stale dll). HEAD the manifest and
+# every just-uploaded delta blob; throw without touching latest if anything is missing.
+Write-Host "Verifying manifest + $($delta.Count) delta blobs on bucket before advancing latest..."
+aws --profile $Profile s3api head-object --bucket $Bucket --key "$Channel/manifests/$Version.json" 1>$null 2>$null
+if ($LASTEXITCODE -ne 0) { throw "post-upload verify FAILED: manifest $Channel/manifests/$Version.json not on bucket; latest NOT advanced" }
+$verifyMissing = New-Object System.Collections.Generic.List[string]
+foreach ($h in $delta) {
+    $prefix = $h.Substring(0,2)
+    aws --profile $Profile s3api head-object --bucket $Bucket --key "blobs/$prefix/$h" 1>$null 2>$null
+    if ($LASTEXITCODE -ne 0) { $verifyMissing.Add("blobs/$prefix/$h") }
+}
+if ($verifyMissing.Count -gt 0) {
+    throw ("post-upload verify FAILED: {0} delta blobs missing on bucket; latest NOT advanced:`n{1}" -f `
+        $verifyMissing.Count, ($verifyMissing -join "`n"))
+}
+Write-Host "Verify OK: manifest + all delta blobs present"
 
 aws --profile $Profile s3 cp $latestPath "s3://$Bucket/$Channel/latest" --acl public-read --cache-control no-cache --only-show-errors
 if ($LASTEXITCODE -ne 0) { throw "latest upload failed" }

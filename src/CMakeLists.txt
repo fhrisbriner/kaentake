@@ -7,6 +7,7 @@ add_library(injector SHARED
         resman.cpp
         avatar.cpp
         itemeff.cpp
+        cashweapon.cpp
         resolution.cpp
         mobhptag.cpp
         tooltip.cpp
@@ -69,14 +70,10 @@ set_target_properties(updater PROPERTIES
         OUTPUT_NAME Updater
 )
 
-if (MSVC)
-    set_property(TARGET injector PROPERTY
-            MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebugDLL>$<$<NOT:$<CONFIG:Debug>>:MultiThreaded>")
-    set_property(TARGET launcher PROPERTY
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set_property(TARGET updater PROPERTY
-            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif ()
+# MSVC runtime is set globally (static) in the root CMakeLists via
+# CMAKE_MSVC_RUNTIME_LIBRARY + CMP0091, so all targets -- injector, launcher,
+# updater, and the static deps (Detours/WzLib) -- link the CRT statically and
+# match. No per-target override needed.
 
 foreach (MN_LAUNCHER_ENV_KEY
         MN_UPDATE_ENABLED

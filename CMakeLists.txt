@@ -1,7 +1,16 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.15)
+# CMP0091 (CMake 3.15+) makes MSVC_RUNTIME_LIBRARY / CMAKE_MSVC_RUNTIME_LIBRARY take
+# effect. Without NEW, those settings are silently ignored and MSVC defaults to /MD
+# (dynamic CRT) -- which makes the shipped exes depend on the client's VC++ redist and
+# crash (0xC0000005 in MSVCP140.dll) on machines with an older/mismatched redist.
+cmake_policy(SET CMP0091 NEW)
 project(MapleNight)
 
 set(CMAKE_CXX_STANDARD 17)
+
+# Statically link the MSVC runtime for every target (incl. Detours/WzLib) so the
+# distributed binaries carry no MSVCP140.dll / VCRUNTIME140.dll dependency.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Load .env into process env so target_compile_definitions / output dir can pick it up.
 # MN_ENV_FILE env var overrides the default .env path (used by tools/build-push.ps1
@@ -27,7 +36,7 @@ endif ()
 if (DEFINED ENV{CUSTOM_BINARY_DIR})
     set(KAEN_OUTPUT_DIR "$ENV{CUSTOM_BINARY_DIR}")
 else ()
-    set(KAEN_OUTPUT_DIR "D:/SkirchData2")
+    set(KAEN_OUTPUT_DIR "D:/MapleNightLocal")
 endif ()
 message(STATUS "Output dir: ${KAEN_OUTPUT_DIR}")
 
