@@ -73,6 +73,7 @@ void InitExpOverride();
 void PacketHooks();
 void AttachMapObjectFade();
 void BGMOverride();
+void AttachBagWindowMod();
 
 
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
@@ -103,6 +104,7 @@ inline void AttachClientHooks() {
     (PacketHooks());
     (AttachMapObjectFade());
     (BGMOverride());
+    (AttachBagWindowMod());
 }
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {

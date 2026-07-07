@@ -113,6 +113,7 @@ int sniperShred = 0;
 int duelistShred = 0;
 int galeShot = 0;
 int masterSkies = 0;
+int hermitBoss = 0;
 constexpr int POISON_PASSIVE_SKILLID = 2110009;
 
 // NOT A SKILL
@@ -129,6 +130,14 @@ int pad = 0;
 int summonSeekRangeX = 800; // gate-1 (sub_678ECC cave) search half-width around player (known-good value)
 int summonSeekRangeY = 400; // gate-1 (sub_678ECC cave) search half-height around player
 int summonReach = 1500;     // gate-2 summon attack reach written into v7[13] (+0x34); default ~500
+
+// Attack-follow gate: seeking summons only acquire targets within this window after the local
+// player last attacked/cast, so they fight when you fight and idle when you idle. <= 0 disables
+// the gate (always auto-aggro, the old behavior). Stationary octopus-type summons don't use the
+// seek path and are unaffected.
+int summonFollowWindowMs = 3000;
+DWORD lastPlayerAttackTick = 0; // GetTickCount() of last local-player attack/skill cast
+int summonSeekGateOpen = 1;     // recomputed by UpdateSummonSeekGate before each summon seek
 double clMultiplier = 1.25;
 
 int get_weapon_type() {
@@ -646,6 +655,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 4511016
+            cmp esi, eax
+            je buff
+
             mov eax, 4511003
             cmp esi, eax
             je melee
@@ -764,7 +777,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5111014
             cmp esi, eax
-            je shoot
+            je summons
 
             mov eax, 5111015
             cmp esi, eax
@@ -772,7 +785,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5111016
             cmp esi, eax
-            je shoot
+            je buff
 
             mov eax, 5111017
             cmp esi, eax
@@ -1476,6 +1489,7 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Bandit 3rd =====
         4511006,
+        4511016,
         4511013,
         4511003,
         4511007,
@@ -1490,7 +1504,7 @@ bool isSkillIDMatched(int nSkillID) {
         5501001,
 
         // ===== Marauder 3rd =====
-        5111013,
+        5111013, 5111016, 5111014,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
         5401002,
@@ -1633,6 +1647,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     sniperShred = pGetSkillLevel(_this, charData, 3210018, skillEntry);
     galeShot = pGetSkillLevel(_this, charData, 3411007, skillEntry);
     masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
+    hermitBoss = pGetSkillLevel(_this, charData, 4110031, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1717,7 +1732,7 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if ((nSkillID >= 5101000 && nSkillID < 5200000) || (nSkillID >= 5401000 && nSkillID < 5500000)) {
+    if ((nSkillID >= 5101000 && nSkillID < 5200000) || (nSkillID >= 5401000 && nSkillID < 5500000) || nSkillID == 15101006) {
         if (get_weapon_type() == 48) {
             return true;
         }
@@ -2358,6 +2373,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             return 0;
         }
     }
+    // Attack-follow gate: any skill cast (attack, buff, or the summon itself) counts as the player
+    // being active, so the summon starts fighting immediately after you act. Basic attacks are
+    // covered separately in setAttackAction.
+    lastPlayerAttackTick = GetTickCount();
     if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
         job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
         comboStuff();
@@ -2391,6 +2410,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         }
         if (nSkillID == 2211013) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
+        }
+        if (nSkillID == 5111016) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 15101006, nScanCode, pnConsumeCheck);
         }
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
@@ -2707,7 +2729,18 @@ void*(__fastcall CalcDamage__PDamage)(
 
 auto skillDelayHook = (int(__cdecl*)(int))0x00765047;
 
+void __cdecl UpdateSummonSeekGate(); // defined near the summonSeekRect cave below
+
 int(__cdecl summondelay)(int nSkillID) {
+    // Attack-follow gate, turret-path coverage: octopus-type/stationary summons never touch the
+    // sub_678ECC seek (gated in summonSeekRect), but every summon's attack scheduling asks this
+    // function for its attack period. Gate shut -> report a 10-minute period so the attack is never
+    // due; gate open -> normal period, so attacks resume on the next check. 10 min (not INT_MAX)
+    // to keep tLast + delay arithmetic in the client far from signed overflow.
+    UpdateSummonSeekGate();
+    if (!summonSeekGateOpen) {
+        return 600000;
+    }
     // Summon attack period = 2500ms minus 50ms per learned level of the summon skill (higher level
     // -> attacks faster). Look up the player's level in nSkillID via CSkillInfo::GetSkillLevel.
     int lvl = 0;
@@ -2916,6 +2949,12 @@ void _declspec(naked) please() {
 auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
 
 int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
+    // Attack-follow gate: any local-player attack action (including basic attacks, which never go
+    // through DoActiveSkill) opens the summon seek window. Fires for every CUser, so filter to the
+    // CUserLocal singleton (0xBEBF98) or nearby players would drive your summon.
+    if (reinterpret_cast<int>(a1) == *reinterpret_cast<int*>(0x00BEBF98)) {
+        lastPlayerAttackTick = GetTickCount();
+    }
     int wspeed = weaponSpeed;
     if (mastery <= 0) {
         switch (get_weapon_type()) {
@@ -3134,7 +3173,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
             // Boss flag lives in the template at +0x64 (0/1). EDIT bossMult below to taste.
             isBoss = (mob->m_pTemplate->bIsBoss.Fuse() != 0);
             if (isBoss) {
-                bossMult = 1.0; // <-- set your boss damage modifier here
+                bossMult = 1.0 + (0.015 * hermitBoss) ; // <-- set your boss damage modifier here
             }
             int wt = get_weapon_type();
             bool magic = (wt == 32 || wt == 37 || wt == 38);
@@ -3400,9 +3439,32 @@ int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, v
 // -- the arg order dword_BF040C expects) but with the configurable summonSeekRange X/Y, then jumps
 // back to the &rect push + call. At cave entry edi = playerY, ebx = playerX (loaded just above), and
 // ecx is not yet touched (saved after our region), so only eax is clobbered -- safe.
+// Attack-follow gate check, called from the summonSeekRect cave before each seek. Recomputes
+// summonSeekGateOpen so the naked asm only has to test a global (no register juggling around the
+// tick math). Not static: referenced by name from inline asm.
+void __cdecl UpdateSummonSeekGate() {
+    summonSeekGateOpen = summonFollowWindowMs <= 0
+            || GetTickCount() - lastPlayerAttackTick <= (DWORD)summonFollowWindowMs;
+}
+
 DWORD summonSeekRectBack = 0x00678EF1;
 void __declspec(naked) summonSeekRect() {
     __asm {
+        pushad // C call clobbers eax/ecx/edx; edx liveness here unknown, so save everything
+        call UpdateSummonSeekGate
+        popad
+        cmp summonSeekGateOpen, 0
+        jne seekOpen
+        // Gate shut (player hasn't attacked within summonFollowWindowMs): push a degenerate box at
+        // far-off coords (all four edges = 0x7FFF0000) so the mob finder matches nothing and the
+        // summon idles. Same 4-push shape as the open path, so stack layout is identical.
+        mov eax, 0x7FFF0000
+        push eax
+        push eax
+        push eax
+        push eax
+        jmp [summonSeekRectBack]
+    seekOpen:
         mov eax, edi
         add eax, summonSeekRangeY // bottom = playerY + rangeY
         push eax

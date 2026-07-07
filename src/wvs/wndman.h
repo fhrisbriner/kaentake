@@ -46,21 +46,8 @@ public:
             ms_pOrgWindowEx[i]->origin = static_cast<IUnknown*>(get_gr()->center);
             ms_pOrgWindowEx[i]->RelMove(nX, nY);
         }
-        if (CONSTANTS_CENTER_STATUSBAR) {
-            ms_pOrgStatusBar->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_CB]);
-            ms_pOrgScreenMsg->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_CB]);
-            ms_pOrgQuickSlot->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_CB]);
-        } else {
-            ms_pOrgStatusBar->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_LB]);
-            ms_pOrgScreenMsg->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_RB]);
-            ms_pOrgQuickSlot->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_LB]);
-            if (get_screen_width() > 800) {
-                ms_pOrgScreenMsg->RelMove(0, -10);
-                ms_pOrgQuickSlot->RelMove(152, 68);
-            } else {
-                ms_pOrgScreenMsg->RelMove(0, 0);
-                ms_pOrgQuickSlot->RelMove(0, 0);
-            }
-        }
+        ms_pOrgStatusBar->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_CB]);
+        ms_pOrgScreenMsg->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_CB]);
+        ms_pOrgQuickSlot->origin = static_cast<IUnknown*>(ms_pOrgWindowEx[Origin_CB]);
     }
 };
