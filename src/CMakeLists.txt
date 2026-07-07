@@ -24,6 +24,7 @@ add_library(injector SHARED
         wvs/CWvsContext.h
         wvs/CUserLocal.h
         wvs/mob.h
+        storagebag.cpp
 )
 
 target_precompile_headers(injector PRIVATE pch.h)
