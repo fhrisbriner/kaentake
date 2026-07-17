@@ -893,6 +893,10 @@ bool HandleUpdaterProgressLine(HWND hwnd, const std::string &line) {
     } else if (phase == "manifest") {
         status = L"Downloading patch manifest...";
         start = 0.14;
+        end = 0.15;
+    } else if (phase == "scan") {
+        status = L"Checking existing files...";
+        start = 0.15;
         end = 0.18;
     } else if (phase == "download") {
         status = L"Downloading patch files...";

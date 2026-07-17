@@ -1288,3 +1288,16 @@ void AttachBagWindowMod() {
 // close it if open — the same path the F9 hotkey uses. (BagWindow::ToggleBags is
 // file-static; this is its extern face.)
 void BagWindow_Toggle() { BagWindow::ToggleBags(); }
+
+// Stage-exit cleanup, called from set_stage_hook (resolution.cpp) whenever the incoming
+// stage is neither CField nor CInterStage (logout -> login, cash shop, ...). The bag is
+// OUR window: the engine's stage teardown only destroys ITS UI, so without this the bag
+// lingers over the login screen after logging out. Also drops the inventory-window BAG
+// button refs: the old CUIItem is going away, and a new one can reuse the same heap
+// address — a stale s_invBtnParent would then dedupe-skip adding the button to it.
+void BagWindow_OnLeaveField() {
+    using namespace BagWindow;
+    if (CUIBagWindow::ms_pInstance) CUIBagWindow::ms_pInstance->Destroy();
+    s_invBtn = ZRef<CCtrlButton>();
+    s_invBtnParent = nullptr;
+}

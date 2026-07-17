@@ -22,6 +22,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winhttp.h>
+#include <winioctl.h>
 #include <bcrypt.h>
 #include <shellapi.h>
 
@@ -35,6 +36,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #pragma comment(lib, "winhttp.lib")
@@ -478,6 +480,102 @@ void EnsureParentDir(const std::wstring& path) {
     }
 }
 
+// --- Scan cache ---
+// Sidecar recording, per file, the (size, mtime) it had when we last hashed it and
+// the resulting sha256. On the next sync we stat each file (cheap) and, if size+mtime
+// still match the cache, trust the recorded sha instead of re-hashing (expensive).
+// This turns the "verify local files against manifest" scan from 30k full-file
+// SHA256 reads into 30k stat() calls on the common little-changed path.
+struct StatInfo { uint64_t size = 0; uint64_t mtime = 0; };
+
+bool StatFile(const std::wstring& path, StatInfo& si) {
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return false;
+    if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return false;
+    si.size = ((uint64_t)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    si.mtime = ((uint64_t)fad.ftLastWriteTime.dwHighDateTime << 32) | fad.ftLastWriteTime.dwLowDateTime;
+    return true;
+}
+
+// True if the volume backing `path` is a spinning disk (incurs seek penalty). Used to
+// throttle scan parallelism: on an HDD, many concurrent readers seek-thrash and run
+// slower than a couple of sequential-ish readers. Defaults to "no penalty" (SSD) on any
+// query failure, so unknown/removable media keep full parallelism.
+bool DriveHasSeekPenalty(const std::wstring& path) {
+    wchar_t full[MAX_PATH] = {};
+    if (!GetFullPathNameW(path.c_str(), MAX_PATH, full, nullptr)) return false;
+    wchar_t volRoot[MAX_PATH] = {};
+    if (!GetVolumePathNameW(full, volRoot, MAX_PATH)) return false;
+    // "D:\" -> device path "\\.\D:"
+    if (wcslen(volRoot) < 2 || volRoot[1] != L':') return false;
+    std::wstring dev = std::wstring(L"\\\\.\\") + volRoot[0] + L":";
+    HANDLE h = CreateFileW(dev.c_str(), 0,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    STORAGE_PROPERTY_QUERY q{};
+    q.PropertyId = StorageDeviceSeekPenaltyProperty;
+    q.QueryType = PropertyStandardQuery;
+    DEVICE_SEEK_PENALTY_DESCRIPTOR desc{};
+    DWORD ret = 0;
+    bool penalty = false;
+    if (DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof(q),
+                        &desc, sizeof(desc), &ret, nullptr) && ret >= sizeof(desc)) {
+        penalty = desc.IncursSeekPenalty != FALSE;
+    }
+    CloseHandle(h);
+    return penalty;
+}
+
+struct CacheEntry { std::string sha; uint64_t size = 0; uint64_t mtime = 0; };
+
+// Line format: "<sha256>\t<size>\t<mtime>\t<relpath>\n". relpath may contain spaces
+// but never a tab or newline, so it is the final field.
+std::unordered_map<std::string, CacheEntry> LoadScanCache(const std::wstring& path) {
+    std::unordered_map<std::string, CacheEntry> m;
+    std::vector<uint8_t> raw;
+    if (!ReadAllBytes(path, raw) || raw.empty()) return m;
+    const char* p = (const char*)raw.data();
+    const char* end = p + raw.size();
+    while (p < end) {
+        const char* nl = (const char*)memchr(p, '\n', end - p);
+        const char* lineEnd = nl ? nl : end;
+        const char* t1 = (const char*)memchr(p, '\t', lineEnd - p);
+        if (t1) {
+            const char* t2 = (const char*)memchr(t1 + 1, '\t', lineEnd - (t1 + 1));
+            if (t2) {
+                const char* t3 = (const char*)memchr(t2 + 1, '\t', lineEnd - (t2 + 1));
+                if (t3) {
+                    CacheEntry e;
+                    e.sha.assign(p, t1 - p);
+                    e.size = _strtoui64(std::string(t1 + 1, t2 - (t1 + 1)).c_str(), nullptr, 10);
+                    e.mtime = _strtoui64(std::string(t2 + 1, t3 - (t2 + 1)).c_str(), nullptr, 10);
+                    std::string rel(t3 + 1, lineEnd - (t3 + 1));
+                    m.emplace(std::move(rel), std::move(e));
+                }
+            }
+        }
+        if (!nl) break;
+        p = nl + 1;
+    }
+    return m;
+}
+
+void SaveScanCache(const std::wstring& path, const std::unordered_map<std::string, CacheEntry>& m) {
+    std::string out;
+    out.reserve(m.size() * 96);
+    char num[32];
+    for (const auto& kv : m) {
+        out += kv.second.sha;
+        out += '\t';
+        _ui64toa_s(kv.second.size, num, sizeof(num), 10);  out += num; out += '\t';
+        _ui64toa_s(kv.second.mtime, num, sizeof(num), 10); out += num; out += '\t';
+        out += kv.first;
+        out += '\n';
+    }
+    WriteAllBytes(path, out);
+}
+
 void WaitForParentExit(DWORD pid) {
     if (pid == 0) return;
     HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pid);
@@ -649,23 +747,89 @@ int RunSync(const SyncOptions& opt) {
     if (!ParseUrl(opt.baseUrl, base)) return 7;
     std::wstring basePathPrefix = StripTrailingSlash(base.path);  // "" or "/some-prefix"
 
+    // Load prior scan cache so unchanged files can be verified by stat() instead of a
+    // full re-hash. Empty/missing cache => every file falls back to hashing (old behavior).
+    std::wstring scanCachePath =
+        opt.localVersionFile.empty() ? std::wstring() : opt.localVersionFile + L".scancache";
+    std::unordered_map<std::string, CacheEntry> oldCache;
+    if (!scanCachePath.empty()) oldCache = LoadScanCache(scanCachePath);
+    std::unordered_map<std::string, CacheEntry> newCache;
+    newCache.reserve(manifest.files.size());
+
+    // Parallel scan: hashing 30k files is disk+CPU bound, so fan out across workers.
+    // Each worker builds a local needed-list + cache map, merged once under a mutex.
     std::vector<Item> needed;
     uint64_t totalBytes = 0;
-    for (const auto& f : manifest.files) {
-        std::wstring relW = Utf8ToWide(f.path);
-        for (auto& c : relW) if (c == L'/') c = L'\\';
-        std::wstring localPath = opt.destDir + L"\\" + relW;
-        bool need = opt.repair;
-        if (!need) {
-            std::string h;
-            if (!Sha256File(localPath, h) || h != f.sha256) need = true;
+    const uint64_t scanTotal = (uint64_t)manifest.files.size();
+    EmitProgress("scan", 0, scanTotal, "start", 0, 0, 0);
+
+    int scanWorkers = opt.workers < 1 ? 1 : (opt.workers > 16 ? 16 : opt.workers);
+    // HDD: concurrent readers seek-thrash. Cap at 2 so one thread can hash while the
+    // other waits on IO, without turning the read into a seek storm.
+    if (DriveHasSeekPenalty(opt.destDir) && scanWorkers > 2) {
+        scanWorkers = 2;
+        Logf("scan: seek-penalty volume, capping scan workers at %d", scanWorkers);
+    }
+    if ((size_t)scanWorkers > manifest.files.size() && !manifest.files.empty())
+        scanWorkers = (int)manifest.files.size();
+    if (scanWorkers < 1) scanWorkers = 1;
+
+    std::atomic<size_t> scanNext{0};
+    std::atomic<uint64_t> scanDone{0};
+    std::mutex scanMutex;
+
+    auto scanWorker = [&]() {
+        std::vector<Item> localNeeded;
+        std::vector<std::pair<std::string, CacheEntry>> localCache;
+        uint64_t localBytes = 0;
+        for (;;) {
+            size_t idx = scanNext.fetch_add(1, std::memory_order_relaxed);
+            if (idx >= manifest.files.size()) break;
+            const auto& f = manifest.files[idx];
+            std::wstring relW = Utf8ToWide(f.path);
+            for (auto& c : relW) if (c == L'/') c = L'\\';
+            std::wstring localPath = opt.destDir + L"\\" + relW;
+            bool need = opt.repair;
+            if (!need) {
+                StatInfo si;
+                if (!StatFile(localPath, si)) {
+                    need = true;  // missing/unreadable -> must download
+                } else {
+                    std::string actualSha;
+                    auto ci = oldCache.find(f.path);
+                    if (ci != oldCache.end() && ci->second.size == si.size && ci->second.mtime == si.mtime) {
+                        actualSha = ci->second.sha;   // size+mtime unchanged -> trust cached sha, skip hash
+                    } else {
+                        std::string h;
+                        if (Sha256File(localPath, h)) actualSha = h;
+                    }
+                    if (actualSha.empty()) need = true;               // hash failed -> re-download
+                    else if (actualSha != f.sha256) need = true;      // content drift
+                    else localCache.emplace_back(f.path, CacheEntry{actualSha, si.size, si.mtime});
+                }
+            }
+            if (need) {
+                std::wstring shaW = Utf8ToWide(f.sha256);
+                std::wstring urlPath = basePathPrefix + L"/blobs/" + shaW.substr(0, 2) + L"/" + shaW;
+                localNeeded.push_back({localPath, urlPath, f.size, f.sha256, f.path});
+                localBytes += f.size;
+            }
+            uint64_t done = scanDone.fetch_add(1, std::memory_order_relaxed) + 1;
+            if ((done & 255) == 0 || done == scanTotal)
+                EmitProgress("scan", done, scanTotal, f.path, 0, 0, 0);
         }
-        if (need) {
-            std::wstring shaW = Utf8ToWide(f.sha256);
-            std::wstring urlPath = basePathPrefix + L"/blobs/" + shaW.substr(0, 2) + L"/" + shaW;
-            needed.push_back({localPath, urlPath, f.size, f.sha256, f.path});
-            totalBytes += f.size;
-        }
+        std::lock_guard<std::mutex> lock(scanMutex);
+        needed.insert(needed.end(), std::make_move_iterator(localNeeded.begin()),
+                      std::make_move_iterator(localNeeded.end()));
+        for (auto& kv : localCache) newCache.emplace(std::move(kv.first), std::move(kv.second));
+        totalBytes += localBytes;
+    };
+
+    {
+        std::vector<std::thread> scanThreads;
+        scanThreads.reserve((size_t)scanWorkers);
+        for (int i = 0; i < scanWorkers; ++i) scanThreads.emplace_back(scanWorker);
+        for (auto& t : scanThreads) t.join();
     }
 
     const char* dlPhase = opt.repair ? "repair-download" : "download";
@@ -741,6 +905,20 @@ int RunSync(const SyncOptions& opt) {
             if (!ReplaceFileAtomic(tmpPath, finalPath)) return 6;
         }
         EmitProgress(applyPhase, (uint64_t)i + 1, (uint64_t)needed.size(), it.relpath, 0, 0, 0);
+    }
+
+    // Refresh scan cache with the files we just wrote so the next sync stat-skips them
+    // instead of re-hashing. Updater.exe is deferred to Updater.new.exe (not yet in place),
+    // so skip it — it re-hashes once next run, then caches.
+    if (!scanCachePath.empty()) {
+        for (const auto& it : needed) {
+            size_t slash = it.localPath.find_last_of(L"\\/");
+            std::wstring leaf = slash == std::wstring::npos ? it.localPath : it.localPath.substr(slash + 1);
+            if (_wcsicmp(leaf.c_str(), L"Updater.exe") == 0) continue;
+            StatInfo si;
+            if (StatFile(it.localPath, si)) newCache[it.relpath] = CacheEntry{it.sha, si.size, si.mtime};
+        }
+        SaveScanCache(scanCachePath, newCache);
     }
 
     if (!opt.localVersionFile.empty()) {

@@ -113,6 +113,14 @@ void get_default_position(int nUIType, int* pnDefaultX, int* pnDefaultY) {
 
 static auto set_stage = reinterpret_cast<void(__cdecl*)(CStage*, void*)>(0x00777347);
 void __cdecl set_stage_hook(CStage* pStage, void* pParam) {
+    // Leaving gameplay (incoming stage is neither CField nor the transient CInterStage a
+    // map change passes through): close the DLL's bag window before the stage flips —
+    // engine teardown only destroys its own UI, so the bag would linger over the login
+    // screen after logout. Map changes (CField/CInterStage) keep it open, like vanilla UI.
+    if (!pStage || (!pStage->IsKindOf(reinterpret_cast<const CRTTI*>(0x00BED758))
+                 && !pStage->IsKindOf(reinterpret_cast<const CRTTI*>(0x00BED874)))) {
+        BagWindow_OnLeaveField();
+    }
     // CField::ms_RTTI_CField - change resolution before set_stage
     if (pStage && pStage->IsKindOf(reinterpret_cast<const CRTTI*>(0x00BED758))) {
         set_screen_resolution(g_nResolution, 0);

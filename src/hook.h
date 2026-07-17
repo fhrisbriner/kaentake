@@ -74,6 +74,7 @@ void PacketHooks();
 void AttachMapObjectFade();
 void BGMOverride();
 void AttachBagWindowMod();
+void BagWindow_OnLeaveField();   // storagebag.cpp — close the bag window on logout/stage exit
 
 
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)

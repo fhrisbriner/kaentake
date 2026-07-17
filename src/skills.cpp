@@ -25,6 +25,7 @@ chrono::time_point<chrono::steady_clock> immunetimer;
 chrono::time_point<chrono::steady_clock> aniCancelTimer;
 chrono::time_point<chrono::steady_clock> activeTimer;
 chrono::time_point<chrono::steady_clock> standTimer;
+chrono::time_point<chrono::steady_clock> movementLockTimer;
 CVecCtrl* CVecPointer = nullptr;
 bool jobPatchesApplied = false;
 static std::mt19937 rng(std::random_device{}());
@@ -114,6 +115,7 @@ int duelistShred = 0;
 int galeShot = 0;
 int masterSkies = 0;
 int hermitBoss = 0;
+int stone = 0;
 constexpr int POISON_PASSIVE_SKILLID = 2110009;
 
 // NOT A SKILL
@@ -831,6 +833,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 2211015
+            cmp esi, eax
+            je buff
+
+            mov eax, 2511011
+            cmp esi, eax
+            je buff
+
             mov eax, 4511001
             cmp esi, eax
             je buff
@@ -1161,7 +1171,22 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     }
     int invincible = ss->m_invincible.Fuse();
     int mesoguard = ss->m_mesoGuard.Fuse();
-    int mobPD = applyMobAttackStat(ms, ms->nPAD, false); // fold WATK up/down debuff
+    // psd is NOT a plain int: it's the MOBATTACKINFO* for the attack that hit us, and NULL for
+    // touch damage. Verified in the original @ 0x79309F:
+    //   base PAD = [psd+0x18] when psd != NULL (the attack node's own PADamage),
+    //   base PAD = ms->nPAD (+0x24, template PAD) when psd == NULL (touch),
+    // plus the PAD temp-stat option (+0x28) either way. Attacks can carry a custom PADamage in
+    // their WZ attack node, so a skill hit must read the attack info, not the template PAD.
+    // Fall back to the template PAD when the attack node has no/zero PADamage so custom attacks
+    // without the node keep dealing touch-level damage instead of ~0.
+    int basePAD = ms->nPAD;
+    if (psd && !IsBadReadPtr(reinterpret_cast<void*>(psd), 0x1C)) {
+        int attackPAD = *reinterpret_cast<int*>(psd + 0x18);
+        if (attackPAD > 0) {
+            basePAD = attackPAD;
+        }
+    }
+    int mobPD = applyMobAttackStat(ms, basePAD, false); // fold WATK up/down debuff
     double baseDamage = mobPD;
     int level = bs->nLevel.Fuse();
     int mobLevel = ms->nLevel;
@@ -1169,15 +1194,22 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int dex = bs->nDEX.Fuse() / 20;
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 40;
+    double stonedef = stone * 0.015;
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
     int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (stone > 0.0) {
+        preSkillMitigationDamage -= preSkillMitigationDamage * stonedef;
+    }
     if (invincible > 0) {
         preSkillMitigationDamage *= (1.0 - (invincible * 0.01));
     }
     if (mesoguard > 0) {
         preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    if (preSkillMitigationDamage <= 0) {
+        return 1;
     }
     return preSkillMitigationDamage;
 }
@@ -1200,12 +1232,19 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int dex = bs->nDEX.Fuse() / 40;
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 10;
+    double stonedef = stone * 0.015;
     double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
     int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (stonedef > 0.0) {
+        preSkillMitigationDamage -= preSkillMitigationDamage * stonedef;
+    }
     if (mesoguard > 0) {
         preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    if (preSkillMitigationDamage <= 0) {
+        return 1;
     }
     return preSkillMitigationDamage;
 }
@@ -1400,9 +1439,11 @@ bool isSkillIDMatched(int nSkillID) {
         2511006,
         2511004,
         2511001,
+        2511011,
 
         // ===== Priest =====
         2211004,
+        2211015,
 
         // ===== Bowman =====z
         3001013,
@@ -1648,6 +1689,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     galeShot = pGetSkillLevel(_this, charData, 3411007, skillEntry);
     masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
     hermitBoss = pGetSkillLevel(_this, charData, 4110031, skillEntry);
+    stone = pGetSkillLevel(_this, charData, 1510005, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -2267,21 +2309,16 @@ int(__fastcall CUserLocal_Jump)(CUserLocal* _this, void* edx, int a2) {
     return pDoJump(_this, a2);
 }
 
-bool firsthit = false;
-
+// Shared 600ms lockout across the movement skills: once one of them actually applies its
+// impulse (movementLockTimer is armed next to SetImpactNext in the DoActiveSkill hook, so
+// casts rejected earlier in the chain don't count), the group stays locked until the window
+// expires. 5101010 sits fully outside the group (never blocked here, and the arm site skips
+// it so it doesn't lock the others); 1511009 ignores the lockout but still arms it.
+// Returns true when casting is allowed.
 bool MovementLockOut(int nSkillID) {
-    int late = 750;
-    if ((nSkillID == 1511009 && !firsthit)) {
-        firsthit = true;
-        return true;
-    }
-    if (nSkillID == 5101010) {
-        return true;
-    }
-    auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
-    auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
-    if (skillelapsed.count() < 220) {
-        return false;
+    if (nSkillID != 5101010 && nSkillID != 1511009) {
+        auto elapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - movementLockTimer);
+        return elapsed.count() >= 600;
     }
     return true;
 }
@@ -2358,6 +2395,26 @@ void __declspec(naked) shipSkills() {
 }
 
 
+// CSkillInfo::CheckConsumeForActiveSkill @ 0x00764256 (cdecl): validates the skill's HP/MP/meso/
+// item costs against current stats (SKILLLEVELDATA hpCon +0x94 / mpCon +0xA0 vs the secured
+// current-HP/MP shorts at CharacterData +0x61/+0x71). Returns 1 = castable, 0 = no learned level,
+// 2/3/4 = not enough HP/MP/mesos. Same check vanilla DoActiveSkill runs at 0x967759.
+auto pCheckConsumeForActiveSkill =
+        (int(__cdecl*)(void* pCharData, BasicStat* pBS, SecondaryStat* pSS, int nSkillID))0x00764256;
+
+int CheckSkillConsume(int nSkillID) {
+    void* zref[2] = { nullptr, nullptr };
+    GetCharacterData(CWvsContext::GetInstance(), zref); // ZRef<CharacterData>; ptr at zref[1]
+    if (!zref[1]) {
+        return 0;
+    }
+    int result = pCheckConsumeForActiveSkill(zref[1],
+            &CWvsContext::GetInstance()->get_m_basicStat(),
+            &CWvsContext::GetInstance()->get_m_secondaryStat(), nSkillID);
+    reinterpret_cast<void(__thiscall*)(void*, void*)>(0x00428C44)(zref, nullptr); // ZRef::_ReleaseRaw
+    return result;
+}
+
 auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
@@ -2421,6 +2478,14 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         return 0;
     }
 
+    // Mana gate: vanilla DoActiveSkill runs the consume check only deep inside the original call,
+    // AFTER the side effects below (movement impulses, combo spends, attack patches) have already
+    // fired -- and paths that return 0 before calling the original skip it entirely, giving free
+    // casts with no MP. Check first; on failure hand straight to the original so it shows the
+    // proper "not enough ..." message and nothing else happens.
+    // if (CheckSkillConsume(nSkillID) != 1) {
+    //     return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    // }
 
     unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
     if (nSkillID == 3411006) {
@@ -2489,10 +2554,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             vx = 1100.0;
         }
         if (nSkillID == 5101009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
-            vx = -700.0;
+            vx = -520.0;
         }
         if (nSkillID == 5411021 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
-            vx = 700.0;
+            vx = 520.0;
             vy = -20.0;
         }
         if (nSkillID == 5101010) {
@@ -2511,6 +2576,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         }
         if (isRisingSkill(nSkillID))
             SetMovePath(pCv, movepath);
+        if (nSkillID != 5101010) {
+            movementLockTimer = chrono::steady_clock::now();
+        }
         SetImpactNext(pCv, vx, vy);
         if (grounded) {
             return 0;
@@ -2726,6 +2794,9 @@ void*(__fastcall CalcDamage__PDamage)(
             nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
 }
 
+auto createWorldMap = (void(__thiscall*)(void*, int))0x009EB75B;
+void (__fastcall noMap)(void* _this, void* edx, int) {
+}
 
 auto skillDelayHook = (int(__cdecl*)(int))0x00765047;
 
@@ -4339,6 +4410,8 @@ void AttachOtherHooks() {
     Patch4(0x0077E215 + 1, 999999);
     Patch4(0x00780620 + 1, 999999);
 
+    ATTACH_HOOK(createWorldMap, noMap);
+
     // Close Range Attacks
     Patch1(0x009516C2, 0xE9);
     Patch1(0x009516C2 + 1, 0xc8);
@@ -4368,6 +4441,21 @@ void AttachOtherHooks() {
     Patch1(0x009EA030, 0x81);
     Patch1(0x009EA031, 0xFE);
     Patch1(0x009EA032, 0xB4);
+
+    // Disable the world map entirely: stub CWorldMapDlg::CreateWorldMapDlg @ 0x009EB366 to
+    // `xor eax,eax; retn 8` (overwrites the 5-byte `mov eax, offset ehFuncInfo` prologue).
+    // Every open path funnels through this one function -- the W hotkey
+    // (CWvsContext::UseFuncKeyMapped, call @ 0x00A0781A), the minimap globe button
+    // (CUIMiniMap::OnButtonClicked, call @ 0x0085AD47), the NPC world-map script path
+    // (call @ 0x00840108) and two misc dialog paths (calls @ 0x0087E7B1 / 0x0087E834).
+    // All five callers handle a 0 return: they pop the vanilla "the world map is not
+    // available" notice and destruct their stack-constructed CWorldMapDlg cleanly, so
+    // there's no leak and no half-created window.
+    Patch1(0x009EB366, 0x33);   // xor eax, eax
+    Patch1(0x009EB367, 0xC0);
+    Patch1(0x009EB368, 0xC2);   // retn 8
+    Patch1(0x009EB369, 0x08);
+    Patch1(0x009EB36A, 0x00);
 
 
     // Maker Skill Instant
