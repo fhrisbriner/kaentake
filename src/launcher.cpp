@@ -1088,7 +1088,16 @@ bool RunExternalUpdater(HWND hwnd, std::wstring &installedVersion) {
     return !installedVersion.empty();
 }
 
+// Data verification is disabled for now: launching skips the Updater.exe verify pass
+// entirely. Flip this back to true to restore the pre-launch CRC check.
+constexpr bool kDataVerificationEnabled = false;
+
 bool RunExternalVerifier(HWND hwnd) {
+    if (!kDataVerificationEnabled) {
+        DebugLog(L"Data verification skipped: disabled");
+        return true;
+    }
+
     constexpr wchar_t updaterExe[] = L"Updater.exe";
     if (GetFileAttributesW(updaterExe) == INVALID_FILE_ATTRIBUTES) {
         DebugLog(L"Updater.exe not found next to launcher for verification");
@@ -1288,7 +1297,7 @@ bool WaitForUpdateButtonIfNeeded(HWND hwnd, std::wstring &installedVersion) {
         SleepWithMessagePump(1400);
         return false;
     }
-    SetProgress(hwnd, L"Update applied", L"Checking game files before launch", 1.0, true, false);
+    SetProgress(hwnd, L"Update applied", L"Ready to launch", 1.0, true, false);
     SleepWithMessagePump(450);
     return true;
 }
@@ -1444,7 +1453,25 @@ LRESULT CALLBACK LauncherWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             snapshot.showUpdateButton = g_launcherWindow->state.showUpdateButton;
         }
 
-        Gdiplus::FontFamily titleFamily(L"Segoe UI");
+        // Resolve the UI font once. "Segoe UI" is a Vista+ Microsoft font that is NOT
+        // redistributable and is absent from almost every Wine/Proton prefix. Unlike GDI,
+        // GDI+ does NOT substitute a missing FontFamily -- DrawString with an unavailable
+        // family silently draws nothing, so ALL launcher text disappears under Wine while
+        // the brush-drawn background/buttons still render. Probe for an installed sans-serif
+        // and fall back to the GDI+ generic family (guaranteed present) so text always shows.
+        static const std::wstring uiFontName = [] () -> std::wstring {
+            for (const wchar_t* name : { L"Segoe UI", L"Tahoma", L"Arial",
+                                         L"Liberation Sans", L"DejaVu Sans" }) {
+                Gdiplus::FontFamily probe(name);
+                if (probe.IsAvailable()) return name;
+            }
+            wchar_t generic[LF_FACESIZE] = { 0 };
+            const Gdiplus::FontFamily* g = Gdiplus::FontFamily::GenericSansSerif();
+            if (g) g->GetFamilyName(generic);
+            return generic[0] ? std::wstring(generic) : std::wstring(L"Arial");
+        }();
+
+        Gdiplus::FontFamily titleFamily(uiFontName.c_str());
         Gdiplus::Font titleFont(&titleFamily, 32, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
         Gdiplus::Font statusFont(&titleFamily, 18, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
         Gdiplus::Font detailFont(&titleFamily, 13, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);

@@ -25,11 +25,45 @@
 #define SCREEN_MESSAGE_WIDTH 400
 
 
+// Resolution list shown in the system options combo box. nWidth/nHeight are the *logical*
+// size the game renders and lays out UI at; nScale is the pixel doubling factor, so the
+// window the user sees is (nWidth * nScale) x (nHeight * nScale).
+//
+// Pixel doubling keeps the D3D backbuffer at the logical size and lets the windowed present
+// stretch it over the larger client area — one game pixel becomes an nScale x nScale block.
+// That is what makes the v83 UI usable on a high-DPI monitor: a 2x mode has the pixel density
+// of its logical size, not the tiny UI a native 4K mode would give.
+//
+// Order matters: the index is what gets written to mnScreenResolution, so existing entries
+// must keep their position and new ones get appended.
+struct RESOLUTION {
+    const char* sLabel;
+    int nWidth;
+    int nHeight;
+    int nScale;
+};
+
+// 2x entries removed for now (cursor/UI issues); the pixel-doubling plumbing below stays and
+// goes dormant while every entry has nScale = 1. Re-add e.g. { "1600 x 1200 (2x)", 800, 600, 2 }
+// to bring a mode back — append only, existing indices are saved in mnScreenResolution.
+static const RESOLUTION g_aResolution[] = {
+    { "800 x 600",          800,  600, 1 },
+    { "1024 x 768",        1024,  768, 1 },
+    { "1366 x 768",        1366,  768, 1 },
+    { "1600 x 900",        1600,  900, 1 },
+    { "1920 x 1080",       1920, 1080, 1 },
+    { "1280 x 720",        1280,  720, 1 },
+};
+
+static constexpr int RESOLUTION_COUNT = static_cast<int>(_countof(g_aResolution));
+static constexpr int RESOLUTION_DEFAULT = 5; // 1280 x 720
+
 static ZRef<CCtrlComboBox> g_cbResolution;
 static int g_nResolution = 0;
 static int g_nScreenWidth = 800;
 static int g_nScreenHeight = 600;
 static int g_nAdjustCenterY = 0;
+static int g_nPixelScale = 1;
 
 void set_screen_resolution(int nResolution, bool bSave);
 
@@ -43,6 +77,10 @@ int get_screen_height() {
 
 int get_adjust_cy() {
     return g_nAdjustCenterY;
+}
+
+int get_pixel_scale() {
+    return g_nPixelScale;
 }
 
 void get_default_position(int nUIType, int* pnDefaultX, int* pnDefaultY) {
@@ -159,7 +197,7 @@ void CConfig::LoadCharacter_hook(int nWorldID, unsigned int dwCharacterId) {
 
 void CConfig::LoadGlobal_hook() {
     CConfig::LoadGlobal(this);
-    g_nResolution = GetOpt_Int(GLOBAL_OPT, "mnScreenResolution", 0, 0, 4);
+    g_nResolution = GetOpt_Int(GLOBAL_OPT, "mnScreenResolution", RESOLUTION_DEFAULT, 0, RESOLUTION_COUNT - 1);
     LogInfo("CConfig::LoadGlobal_hook: g_nResolution=%d", g_nResolution);
 }
 
@@ -197,16 +235,9 @@ void CUISysOpt::OnCreate_hook(void* pData) {
 
     g_cbResolution = new CCtrlComboBox();
     g_cbResolution->CreateCtrl(this, 2000, 0, 76, 338, 166, 18, &paramComboBox);
-    const char* asResolution[] = {
-        "800 x 600",
-        "1024 x 768",
-        "1366 x 768",
-        "1600 x 900",
-        "1920 x 1080",
-    };
     unsigned int dwResolutionParam = 0;
-    for (auto sResolution : asResolution) {
-        g_cbResolution->AddItem(sResolution, dwResolutionParam++);
+    for (const auto& resolution : g_aResolution) {
+        g_cbResolution->AddItem(resolution.sLabel, dwResolutionParam++);
     }
     g_cbResolution->SetSelect(g_nResolution);
 }
@@ -225,22 +256,49 @@ public:
     MEMBER_HOOK(int, 0x0059A887, SetCursorPos, int x, int y)
 
     int GetCursorPos(POINT* lpPoint) {
-        return ::GetCursorPos(lpPoint) && ::ScreenToClient(m_hWnd, lpPoint);
+        if (!::GetCursorPos(lpPoint) || !::ScreenToClient(m_hWnd, lpPoint)) {
+            return 0;
+        }
+        // Window client coords are scaled pixels, the rest of the game works in logical ones.
+        lpPoint->x /= get_pixel_scale();
+        lpPoint->y /= get_pixel_scale();
+        return 1;
     }
 };
 
+// x/y are logical coords: the WM_MOUSE* lParam is converted from window-client (scaled)
+// coords once, in CWndMan__TranslateMessage_hook, before anything reads it. The only other
+// callers are CInputSystem::UpdateMouse (DirectInput, fullscreen-only where scale is 1) and
+// SetCursorPos_hook below, which already work in logical coords.
 void CInputSystem::SetCursorVectorPos_hook(int x, int y) {
     m_pVectorCursor->RelMove(x - get_screen_width() / 2, y - get_screen_height() / 2 - get_adjust_cy());
 }
 
 int CInputSystem::SetCursorPos_hook(int x, int y) {
+    // The game warps the cursor in logical coords; the OS wants scaled client coords.
+    x = zclamp(x, 0, get_screen_width());
+    y = zclamp(y, 0, get_screen_height());
+    SetCursorVectorPos_hook(x, y);
     POINT pt;
-    pt.x = zclamp(x, 0, get_screen_width());
-    pt.y = zclamp(y, 0, get_screen_height());
-    SetCursorVectorPos_hook(pt.x, pt.y);
+    pt.x = x * get_pixel_scale();
+    pt.y = y * get_pixel_scale();
     return ::ClientToScreen(m_hWnd, &pt) && ::SetCursorPos(pt.x, pt.y);
 }
 
+
+static auto CWndMan__TranslateMessage = reinterpret_cast<int(__thiscall*)(CWndMan*, unsigned int*, unsigned int*, int*, int*)>(0x009E7D77);
+
+int __fastcall CWndMan__TranslateMessage_hook(CWndMan* pThis, void* _EDX, unsigned int* puMsg, unsigned int* puWParam, int* pnLParam, int* pnResult) {
+    // Mouse lParam arrives in window-client (scaled) coords. Convert to logical once, here,
+    // before anything reads it: both CInputSystem::SetCursorVectorPos and CWndMan::ProcessMouse
+    // (UI hit testing) consume this same lParam inside the original function.
+    if (g_nPixelScale > 1 && *puMsg >= WM_MOUSEFIRST && *puMsg <= WM_MOUSELAST) {
+        const int x = static_cast<short>(LOWORD(*pnLParam)) / g_nPixelScale;
+        const int y = static_cast<short>(HIWORD(*pnLParam)) / g_nPixelScale;
+        *pnLParam = (x & 0xFFFF) | (y << 16);
+    }
+    return CWndMan__TranslateMessage(pThis, puMsg, puWParam, pnLParam, pnResult);
+}
 
 void CWndMan::Constructor_hook(HWND hWnd) {
     CWndMan::Constructor(this, hWnd);
@@ -582,7 +640,8 @@ class CUIMiniMap : public CUIWnd, public TSingleton<CUIMiniMap, 0x00BED788> {
 };
 
 int __stdcall CField__ShowMobHPTag_hook1() {
-    if (CUIMiniMap::IsInstantiated() && g_nResolution == 0) {
+    // Only the base 800 x 600 logical layout needs the boss HP bar pushed past the minimap.
+    if (CUIMiniMap::IsInstantiated() && get_screen_width() == 800 && get_screen_height() == 600) {
         return CUIMiniMap::GetInstance()->m_width;
     }
     return 0;
@@ -636,27 +695,143 @@ void __declspec(naked) CWzGr2D__AdjustCenterY_hook() {
 }
 
 
-void set_screen_resolution(int nResolution, bool bSave) {
-    int nScreenWidth = 800;
-    int nScreenHeight = 600;
-    switch (nResolution) {
-    case 1:
-        nScreenWidth = 1024;
-        nScreenHeight = 768;
-        break;
-    case 2:
-        nScreenWidth = 1366;
-        nScreenHeight = 768;
-        break;
-    case 3:
-        nScreenWidth = 1600;
-        nScreenHeight = 900;
-        break;
-    case 4:
-        nScreenWidth = 1920;
-        nScreenHeight = 1080;
-        break;
+// Pixel doubling plumbing.
+//
+// The game and Gr2D keep running at the logical resolution — Gr2D's screen mode, the D3D
+// backbuffer and every UI coordinate stay at get_screen_width() x get_screen_height(). Only
+// the OS window is grown to logical * scale, and the windowed present stretches the backbuffer
+// over it, so one game pixel covers a scale x scale block.
+//
+// Two things have to be intercepted for that to hold:
+//   - SetWindowPos: Gr2D resizes the window to its screen mode when the device is reset
+//     (it resolves user32 dynamically, so hooking the export catches it), which would undo
+//     the scaled size right after we set it.
+//   - IDirect3D8::CreateDevice / IDirect3DDevice8::Reset: force a COPY swap chain, the swap
+//     effect that is defined to stretch on present, and pin the backbuffer to the logical size.
+
+static HWND get_game_window() {
+    return CInputSystem::IsInstantiated() ? CInputSystem::GetInstance()->m_hWnd : nullptr;
+}
+
+static decltype(&::SetWindowPos) g_pfnSetWindowPos = ::SetWindowPos;
+
+static void get_scaled_window_size(HWND hWnd, int* pcx, int* pcy) {
+    RECT rc = { 0, 0, g_nScreenWidth * g_nPixelScale, g_nScreenHeight * g_nPixelScale };
+    AdjustWindowRectEx(&rc, GetWindowLongA(hWnd, GWL_STYLE), GetMenu(hWnd) != nullptr,
+                       GetWindowLongA(hWnd, GWL_EXSTYLE));
+    *pcx = rc.right - rc.left;
+    *pcy = rc.bottom - rc.top;
+}
+
+static BOOL WINAPI SetWindowPos_hook(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) {
+    if (g_nPixelScale > 1 && !(uFlags & SWP_NOSIZE) && hWnd && hWnd == get_game_window()) {
+        get_scaled_window_size(hWnd, &cx, &cy);
     }
+    return g_pfnSetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags);
+}
+
+static void resize_game_window() {
+    HWND hWnd = get_game_window();
+    if (!hWnd) {
+        return;
+    }
+    int cx = 0;
+    int cy = 0;
+    get_scaled_window_size(hWnd, &cx, &cy);
+    g_pfnSetWindowPos(hWnd, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// Minimal d3d8 declarations - only the presentation parameter layout and the two vtable slots
+// are needed, and d3d8.h isn't part of this toolchain.
+struct D3DPRESENT_PARAMETERS_8 {
+    UINT BackBufferWidth;
+    UINT BackBufferHeight;
+    DWORD BackBufferFormat;
+    UINT BackBufferCount;
+    DWORD MultiSampleType;
+    DWORD SwapEffect;
+    HWND hDeviceWindow;
+    BOOL Windowed;
+    BOOL EnableAutoDepthStencil;
+    DWORD AutoDepthStencilFormat;
+    DWORD Flags;
+    UINT FullScreen_RefreshRateInHz;
+    UINT FullScreen_PresentationInterval;
+};
+
+#define D3DSWAPEFFECT_COPY_8      3
+#define IDIRECT3D8_CREATEDEVICE   15
+#define IDIRECT3DDEVICE8_RESET    14
+
+typedef void*(WINAPI* Direct3DCreate8_t)(UINT uSDKVersion);
+typedef HRESULT(WINAPI* CreateDevice_t)(void* pThis, UINT uAdapter, DWORD dwDeviceType, HWND hFocusWindow,
+                                        DWORD dwBehaviorFlags, D3DPRESENT_PARAMETERS_8* pParam, void** ppDevice);
+typedef HRESULT(WINAPI* Reset_t)(void* pThis, D3DPRESENT_PARAMETERS_8* pParam);
+
+static Direct3DCreate8_t g_pfnDirect3DCreate8 = nullptr;
+static CreateDevice_t g_pfnCreateDevice = nullptr;
+static Reset_t g_pfnReset = nullptr;
+
+static void adjust_present_param(D3DPRESENT_PARAMETERS_8* pParam) {
+    if (!pParam || !pParam->Windowed || g_nPixelScale <= 1) {
+        return;
+    }
+    pParam->SwapEffect = D3DSWAPEFFECT_COPY_8;
+    pParam->BackBufferCount = 1;
+    pParam->BackBufferWidth = g_nScreenWidth;
+    pParam->BackBufferHeight = g_nScreenHeight;
+}
+
+static HRESULT WINAPI Reset_hook(void* pThis, D3DPRESENT_PARAMETERS_8* pParam) {
+    adjust_present_param(pParam);
+    return g_pfnReset(pThis, pParam);
+}
+
+static HRESULT WINAPI CreateDevice_hook(void* pThis, UINT uAdapter, DWORD dwDeviceType, HWND hFocusWindow,
+                                        DWORD dwBehaviorFlags, D3DPRESENT_PARAMETERS_8* pParam, void** ppDevice) {
+    adjust_present_param(pParam);
+    HRESULT hr = g_pfnCreateDevice(pThis, uAdapter, dwDeviceType, hFocusWindow, dwBehaviorFlags, pParam, ppDevice);
+    if (SUCCEEDED(hr) && ppDevice && *ppDevice && !g_pfnReset) {
+        g_pfnReset = reinterpret_cast<Reset_t>(VMTHook(*ppDevice, CastHook(&Reset_hook), IDIRECT3DDEVICE8_RESET));
+    }
+    return hr;
+}
+
+static void* WINAPI Direct3DCreate8_hook(UINT uSDKVersion) {
+    void* pD3D = g_pfnDirect3DCreate8(uSDKVersion);
+    if (pD3D && !g_pfnCreateDevice) {
+        g_pfnCreateDevice = reinterpret_cast<CreateDevice_t>(VMTHook(pD3D, CastHook(&CreateDevice_hook), IDIRECT3D8_CREATEDEVICE));
+    }
+    return pD3D;
+}
+
+static void set_pixel_scale(int nScale) {
+    auto gr = reinterpret_cast<CWzGr2D*>(get_gr().GetInterfacePtr());
+    if (!gr || gr->m_screenMode.bFullScreen) {
+        // Fullscreen already sets the display mode to the logical size, so the monitor is the
+        // thing doing the upscale - doubling on top of that would just crop the screen.
+        nScale = 1;
+    }
+    const int nPixelScale = nScale < 1 ? 1 : nScale;
+    if (nPixelScale != g_nPixelScale) {
+        LogInfo("set_pixel_scale: %d -> %d (logical %dx%d)", g_nPixelScale, nPixelScale, g_nScreenWidth, g_nScreenHeight);
+    }
+    g_nPixelScale = nPixelScale;
+    resize_game_window();
+}
+
+
+void set_screen_resolution(int nResolution, bool bSave) {
+    if (nResolution < 0 || nResolution >= RESOLUTION_COUNT) {
+        nResolution = 0;
+    }
+    const int nScreenWidth = g_aResolution[nResolution].nWidth;
+    const int nScreenHeight = g_aResolution[nResolution].nHeight;
+    // The pixel scale follows the saved preference, not the requested index: the login stage
+    // forces index 0 (800 x 600 logical) and the window shouldn't change size between login
+    // and field for a user running a 2x mode.
+    const int nPreference = bSave ? nResolution : g_nResolution;
+    const int nScale = g_aResolution[zclamp(nPreference, 0, RESOLUTION_COUNT - 1)].nScale;
     if (nScreenWidth != g_nScreenWidth || nScreenHeight != g_nScreenHeight) {
         auto gr = reinterpret_cast<CWzGr2D*>(get_gr().GetInterfacePtr());
         HRESULT hr = gr->ScreenResolution(nScreenWidth, nScreenHeight);
@@ -692,6 +867,9 @@ void set_screen_resolution(int nResolution, bool bSave) {
         g_nResolution = nResolution;
         LogInfo("set_screen_resolution: bSave -> g_nResolution=%d (screen=%dx%d)", g_nResolution, g_nScreenWidth, g_nScreenHeight);
     }
+    // After the screen mode, so the scaled window size and the present parameters used by the
+    // pending device reset are both computed from the resolution we just switched to.
+    set_pixel_scale(nScale);
 }
 
 
@@ -708,8 +886,17 @@ void AttachResolutionMod() {
     Patch4(0x009F7078 + 1, SCREEN_HEIGHT_MAX); // CWvsApp::CreateWndManager - nHeight
     Patch4(0x009F707D + 1, SCREEN_WIDTH_MAX);  // CWvsApp::CreateWndManager - nWidth
 
+    // Pixel doubling: keep the window at logical * scale (Gr2D resizes it back on every device
+    // reset) and the D3D backbuffer at the logical size, so the windowed present upscales it.
+    AttachHook(reinterpret_cast<void**>(&g_pfnSetWindowPos), CastHook(&SetWindowPos_hook));
+    if (void* pDirect3DCreate8 = GetAddress("d3d8.dll", "Direct3DCreate8")) {
+        g_pfnDirect3DCreate8 = reinterpret_cast<Direct3DCreate8_t>(pDirect3DCreate8);
+        AttachHook(reinterpret_cast<void**>(&g_pfnDirect3DCreate8), CastHook(&Direct3DCreate8_hook));
+    }
+
     ATTACH_HOOK(CInputSystem::SetCursorVectorPos, CInputSystem::SetCursorVectorPos_hook);
     ATTACH_HOOK(CInputSystem::SetCursorPos, CInputSystem::SetCursorPos_hook);
+    ATTACH_HOOK(CWndMan__TranslateMessage, CWndMan__TranslateMessage_hook);
     ATTACH_HOOK(CWndMan::Constructor, CWndMan::Constructor_hook);
     ATTACH_HOOK(CWndMan::Destructor, CWndMan::Destructor_hook);
     ATTACH_HOOK(CWndMan::GetOrgWindow, CWndMan::GetOrgWindow_hook);

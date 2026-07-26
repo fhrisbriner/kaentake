@@ -15,6 +15,12 @@
 #endif
 #define CONSTANTS_USE_COMMAND_LINE FALSE
 #define CONSTANTS_USE_CONFIG_FILE  FALSE
+#define CONFIG_NEXON_SEARCH     "63.251.217."
+
+extern int g_ScreenPosX;
+extern int g_ScreenPosY;
+
+
 
 extern char* g_sServerHost;
 extern long g_nServerPort;

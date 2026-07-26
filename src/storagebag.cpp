@@ -1226,7 +1226,6 @@ static void CreateInvButton(void* pParentWnd) {
     // Dedupe: CUIItem::OnCreate can re-fire on the SAME live window (e.g. inventory expand/collapse).
     // We only drop our OWN ref on recreate, but the engine keeps the previous button parented, so a
     // second add would leave two "BAG" buttons on the window. Skip if this window already has ours.
-    if (pParentWnd && pParentWnd == s_invBtnParent) return;
     s_invBtn = ZRef<CCtrlButton>();                    // release any button from a previous window
     s_invBtnParent = nullptr;
     void* mem = SehBtnAlloc(kCCtrlButton_Size);

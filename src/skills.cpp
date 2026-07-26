@@ -415,8 +415,58 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 2121007
+            cmp esi, eax
+            je prepare
 
-                // Priest
+            mov eax, 2121026
+            cmp esi, eax
+            je magic
+
+            mov eax, 2121027
+            cmp esi, eax
+            je magic
+
+            //BISHOP
+
+            mov eax, 2221015
+            cmp esi, eax
+            je buff
+
+            mov eax, 2221021
+            cmp esi, eax
+            je magic
+
+            mov eax, 2221106
+            cmp esi, eax
+            je buff
+
+            // IL ARCHMAGE
+
+            mov eax, 2421005
+            cmp esi, eax
+            je summons
+
+            mov eax, 2421006
+            cmp esi, eax
+            je magic
+
+            mov eax, 2421007
+            cmp esi, eax
+            je magic
+
+            mov eax, 2421014
+            cmp esi, eax
+            je buff
+
+
+
+            //Paladin
+
+
+
+
+            // Priest
             mov eax, 2211011
             cmp esi, eax
             je buff
@@ -2267,7 +2317,7 @@ auto SetImpactNext = (void(__thiscall*)(CVecCtrl*, double, double))0x7a6353;
 void(__fastcall SetImpactNext_Hook)(CVecCtrl* _this, void* edx, double x, double y) {
     int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (job >= 300 && (int)_ReturnAddress() == 0x0096DAFF && job < 400) {
-        return SetImpactNext(_this, -x, y);
+        return SetImpactNext(_this, -x, -150);
     }
     return SetImpactNext(_this, x, y);
 }
@@ -3225,7 +3275,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
     int mobLevel = (mob && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_stat.nLevel : 0;
     if (mob && mobLevel >= 1 && mobLevel <= 400) {
         int playerLevel = CWvsContext::GetInstance()->get_m_basicStat().nLevel.Fuse();
-        if (playerLevel + 5 < mobLevel) {
+        if (playerLevel + 10 < mobLevel) {
             levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
             if (playerLevel + 20 < mobLevel) {
                 levelMult = .8 + (mobLevel - playerLevel - 20) * -0.02;

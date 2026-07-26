@@ -286,6 +286,39 @@ int WSPAPI WSPStartup_hook(WORD wVersionRequested, LPWSPDATA lpWSPData, LPWSAPRO
 }
 
 
+typedef decltype(&connect) connect_t;
+static connect_t connect_orig = reinterpret_cast<connect_t>(GetAddress("WS2_32", "connect"));
+
+int WINAPI connect_hook(SOCKET s, const struct sockaddr* name, int namelen) {
+    if (name && name->sa_family == AF_INET) {
+        char sName[INET_ADDRSTRLEN];
+        InetNtopA(AF_INET, &((sockaddr_in*)name)->sin_addr, sName, INET_ADDRSTRLEN);
+        if (strstr(sName, CONFIG_NEXON_SEARCH)) {
+            sockaddr_in redir = *(sockaddr_in*)name;
+            g_uNexonAddress = redir.sin_addr.S_un.S_addr;
+            InetPtonA(AF_INET, g_sServerHost ? g_sServerHost : CONSTANTS_DEFAULT_HOST, &redir.sin_addr.S_un.S_addr);
+            if (g_nServerPort) {
+                redir.sin_port = htons(static_cast<u_short>(g_nServerPort));
+            }
+            return connect_orig(s, (sockaddr*)&redir, sizeof(redir));
+        }
+    }
+    return connect_orig(s, name, namelen);
+}
+
+
+typedef decltype(&getpeername) getpeername_t;
+static getpeername_t getpeername_orig = reinterpret_cast<getpeername_t>(GetAddress("WS2_32", "getpeername"));
+
+int WINAPI getpeername_hook(SOCKET s, struct sockaddr* name, int* namelen) {
+    int result = getpeername_orig(s, name, namelen);
+    if (result == 0 && name && name->sa_family == AF_INET && g_uNexonAddress) {
+        ((sockaddr_in*)name)->sin_addr.S_un.S_addr = g_uNexonAddress;
+    }
+    return result;
+}
+
+
 void AttachSystemHooks() {
     LogInfo("AttachSystemHooks: attaching registry + window + WSP hooks");
     ATTACH_HOOK(SetUnhandledExceptionFilter_orig, SetUnhandledExceptionFilter_hook);
@@ -299,4 +332,6 @@ void AttachSystemHooks() {
     ATTACH_HOOK(RegOpenKeyExW_orig, RegOpenKeyExW_hook);
     ATTACH_HOOK(RegSetValueExA_orig, RegSetValueExA_hook);
     ATTACH_HOOK(WSPStartup_orig, WSPStartup_hook);
+    ATTACH_HOOK(connect_orig, connect_hook);
+    ATTACH_HOOK(getpeername_orig, getpeername_hook);
 }

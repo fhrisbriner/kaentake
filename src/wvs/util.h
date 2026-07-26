@@ -30,6 +30,10 @@ inline int get_int32(Ztl_variant_t& v, int nDefault) {
 int get_screen_width();
 int get_screen_height();
 int get_adjust_cy();
+// Pixel doubling factor: on-screen client size is (get_screen_width() * get_pixel_scale())
+// by (get_screen_height() * get_pixel_scale()). Everything the game itself draws or measures
+// stays in logical pixels, so only OS-level coordinates need to be multiplied by this.
+int get_pixel_scale();
 
 // implementation in inlink.cpp
 IUnknownPtr* __cdecl get_unknown_hook(IUnknownPtr* result, Ztl_variant_t& v);
