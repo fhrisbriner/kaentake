@@ -856,6 +856,23 @@ int RunSync(const SyncOptions& opt) {
             const Item& it = needed[i];
             EnsureParentDir(it.localPath);
             std::wstring tmpPath = it.localPath + L".part";
+            // Resume support: a cancelled run leaves fully-downloaded .part files behind
+            // (download and apply are separate phases, so nothing was moved into place).
+            // If the leftover .part already matches the manifest hash, reuse it instead of
+            // re-downloading. Truncated/stale leftovers fail the size or sha check and are
+            // overwritten by the normal download below.
+            {
+                StatInfo si;
+                std::string h0;
+                if (StatFile(tmpPath, si) && si.size == it.size
+                        && Sha256File(tmpPath, h0) && h0 == it.sha) {
+                    uint64_t newOverall = overallBytes.fetch_add(it.size, std::memory_order_relaxed) + it.size;
+                    uint64_t done = filesDone.fetch_add(1, std::memory_order_relaxed) + 1;
+                    EmitProgress(dlPhase, done, (uint64_t)needed.size(),
+                                 it.relpath, 0, newOverall, totalBytes);
+                    continue;
+                }
+            }
             uint64_t got = 0;
             if (!conn.GetToFile(it.urlPath, tmpPath, got)) {
                 Logf("download failed %ls", it.urlPath.c_str());

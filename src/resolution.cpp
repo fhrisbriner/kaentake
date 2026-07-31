@@ -19,6 +19,8 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <intrin.h>
+#include <cctype>
+#include <cstdlib>
 
 #define SCREEN_WIDTH_MAX     1920
 #define SCREEN_HEIGHT_MAX    1080
@@ -195,15 +197,133 @@ void CConfig::LoadCharacter_hook(int nWorldID, unsigned int dwCharacterId) {
     }
 }
 
+// --- MapleNight.ini ---------------------------------------------------------------
+// The in-game combo box writes the resolution to the registry, which is awkward to fix
+// from outside the client (e.g. a player stuck on a mode their monitor won't display).
+// MapleNight.ini next to the exe is the editable copy: it wins over the registry at
+// load, and every in-game change is written back so the two never disagree.
+
+static const char INI_SECTION[] = "Video";
+static const char INI_KEY_RESOLUTION[] = "Resolution";
+
+static std::string GetIniPath() {
+    char path[MAX_PATH]{};
+    // Module dir, not the cwd: the client changes directory during startup.
+    if (!GetModuleFileNameA(nullptr, path, MAX_PATH)) {
+        return "MapleNight.ini";
+    }
+    std::string s(path);
+    const size_t slash = s.find_last_of("\\/");
+    if (slash == std::string::npos) {
+        return "MapleNight.ini";
+    }
+    return s.substr(0, slash + 1) + "MapleNight.ini";
+}
+
+// "1280x720" / "1280 x 720" (case/space insensitive) or a raw table index. Returns -1
+// when the value is missing or doesn't name a mode we support.
+static int ParseResolutionSetting(const char* sValue) {
+    if (!sValue || !*sValue) {
+        return -1;
+    }
+    std::string s;
+    for (const char* p = sValue; *p; ++p) {
+        if (!isspace(static_cast<unsigned char>(*p))) {
+            s += static_cast<char>(tolower(static_cast<unsigned char>(*p)));
+        }
+    }
+    if (s.empty()) {
+        return -1;
+    }
+    const size_t x = s.find('x');
+    if (x != std::string::npos) {
+        const int w = atoi(s.substr(0, x).c_str());
+        const int h = atoi(s.substr(x + 1).c_str());
+        for (int i = 0; i < RESOLUTION_COUNT; ++i) {
+            if (g_aResolution[i].nWidth == w && g_aResolution[i].nHeight == h) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    const int index = atoi(s.c_str());
+    return (index >= 0 && index < RESOLUTION_COUNT) ? index : -1;
+}
+
+// Write the file with the supported modes listed as comments. WritePrivateProfileString
+// can't emit comments, so the template is written whole the first time.
+static void WriteIniTemplate(const std::string& iniPath, int nResolution) {
+    std::string out =
+        "; MapleNight settings. Edit while the game is closed.\r\n"
+        ";\r\n"
+        "; Resolution accepts WIDTHxHEIGHT. Supported modes:\r\n";
+    for (const auto& r : g_aResolution) {
+        out += ";   ";
+        out += r.sLabel;
+        out += "\r\n";
+    }
+    out +=
+        "; An unrecognised value is ignored and the last in-game setting is used.\r\n"
+        "\r\n"
+        "[Video]\r\n"
+        "Resolution=";
+    char buf[64]{};
+    sprintf_s(buf, sizeof(buf), "%dx%d\r\n",
+              g_aResolution[nResolution].nWidth, g_aResolution[nResolution].nHeight);
+    out += buf;
+
+    HANDLE h = CreateFileA(iniPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        LogInfo("MapleNight.ini: create failed error=%lu", GetLastError());
+        return;
+    }
+    DWORD written = 0;
+    WriteFile(h, out.data(), static_cast<DWORD>(out.size()), &written, nullptr);
+    CloseHandle(h);
+}
+
+static void SaveResolutionToIni(int nResolution) {
+    if (nResolution < 0 || nResolution >= RESOLUTION_COUNT) {
+        return;
+    }
+    const std::string iniPath = GetIniPath();
+    if (GetFileAttributesA(iniPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        WriteIniTemplate(iniPath, nResolution);
+        return;
+    }
+    char value[64]{};
+    sprintf_s(value, sizeof(value), "%dx%d",
+              g_aResolution[nResolution].nWidth, g_aResolution[nResolution].nHeight);
+    WritePrivateProfileStringA(INI_SECTION, INI_KEY_RESOLUTION, value, iniPath.c_str());
+}
+
 void CConfig::LoadGlobal_hook() {
     CConfig::LoadGlobal(this);
     g_nResolution = GetOpt_Int(GLOBAL_OPT, "mnScreenResolution", RESOLUTION_DEFAULT, 0, RESOLUTION_COUNT - 1);
+
+    const std::string iniPath = GetIniPath();
+    if (GetFileAttributesA(iniPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        WriteIniTemplate(iniPath, g_nResolution);
+        LogInfo("CConfig::LoadGlobal_hook: wrote default %s", iniPath.c_str());
+    } else {
+        char value[64]{};
+        GetPrivateProfileStringA(INI_SECTION, INI_KEY_RESOLUTION, "", value, sizeof(value), iniPath.c_str());
+        const int nFromIni = ParseResolutionSetting(value);
+        if (nFromIni >= 0) {
+            g_nResolution = nFromIni;
+            LogInfo("CConfig::LoadGlobal_hook: ini Resolution='%s' -> index %d", value, nFromIni);
+        } else if (value[0]) {
+            LogInfo("CConfig::LoadGlobal_hook: ini Resolution='%s' not recognised, keeping %d", value, g_nResolution);
+        }
+    }
     LogInfo("CConfig::LoadGlobal_hook: g_nResolution=%d", g_nResolution);
 }
 
 void CConfig::SaveGlobal_hook() {
     LogInfo("CConfig::SaveGlobal_hook: writing g_nResolution=%d", g_nResolution);
     SetOpt_Int(GLOBAL_OPT, "mnScreenResolution", g_nResolution);
+    SaveResolutionToIni(g_nResolution);
     CConfig::SaveGlobal(this);
     LogInfo("CConfig::SaveGlobal_hook: original SaveGlobal returned");
 }

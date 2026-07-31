@@ -34,10 +34,13 @@ param(
     # `runtime.version` and `version` are updater-managed stamps written
     # post-install -- shipping them in the manifest causes a permanent
     # sha mismatch on the next verify pass.
+    # `MapleNight.ini` is player-editable config written by the client (resolution);
+    # same problem -- the moment a player edits it, its hash stops matching the
+    # manifest. The client writes the file itself on first launch, so it must not ship.
     [string[]]$ExcludeFile = @('Thumbs.db', '.DS_Store', '*.tmp', '*.log', '*.pdb', '*.bak', '*.swp',
                                 '*.part', 'Updater.new.exe', 'Updater.old.exe',
                                 'MapleNight.exe.backup', 'MapleStory.exe.backup',
-                                'runtime.version', 'version')
+                                'runtime.version', 'version', 'MapleNight.ini')
 )
 
 $ErrorActionPreference = 'Stop'

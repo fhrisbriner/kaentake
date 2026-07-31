@@ -93,6 +93,9 @@ struct LauncherWindow {
 
 LauncherWindow *g_launcherWindow = nullptr;
 bool g_launcherExitRequested = false;
+// Set when the data update (download/apply) fails, so WinMain can report "update failed"
+// instead of the misleading "data verification failed" for that path.
+bool g_dataUpdateFailed = false;
 std::mutex g_lastVerifyFailedMutex;
 std::string g_lastVerifyFailedPath;
 
@@ -1293,6 +1296,7 @@ bool WaitForUpdateButtonIfNeeded(HWND hwnd, std::wstring &installedVersion) {
     DebugLog(L"Update button accepted");
     SetUpdatePrompt(hwnd, L"Update confirmed", L"Preparing patch", false);
     if (!RunExternalUpdater(hwnd, installedVersion)) {
+        g_dataUpdateFailed = true;
         SetProgress(hwnd, L"Update failed", L"Please try again", 1.0, true, true);
         SleepWithMessagePump(1400);
         return false;
@@ -1858,10 +1862,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             std::lock_guard<std::mutex> lock(g_lastVerifyFailedMutex);
             failedPath = g_lastVerifyFailedPath;
         }
-        DebugLog(L"Launcher exiting: data verification failed path=%S", failedPath.c_str());
-        if (failedPath.empty()) {
+        if (g_dataUpdateFailed) {
+            DebugLog(L"Launcher exiting: data update failed");
+            ErrorMessage("Update failed.\n\nCheck your internet connection and try again.\nSee logs\\updater.log for details.");
+        } else if (failedPath.empty()) {
+            DebugLog(L"Launcher exiting: data verification failed");
             ErrorMessage("Data verification failed");
         } else {
+            DebugLog(L"Launcher exiting: data verification failed path=%S", failedPath.c_str());
             ErrorMessage("Data verification failed: %s\n\nSee logs\\updater-verify.log for details.", failedPath.c_str());
         }
         return 1;

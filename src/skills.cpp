@@ -137,7 +137,7 @@ int summonReach = 1500;     // gate-2 summon attack reach written into v7[13] (+
 // player last attacked/cast, so they fight when you fight and idle when you idle. <= 0 disables
 // the gate (always auto-aggro, the old behavior). Stationary octopus-type summons don't use the
 // seek path and are unaffected.
-int summonFollowWindowMs = 3000;
+int summonFollowWindowMs = 6000;
 DWORD lastPlayerAttackTick = 0; // GetTickCount() of last local-player attack/skill cast
 int summonSeekGateOpen = 1;     // recomputed by UpdateSummonSeekGate before each summon seek
 double clMultiplier = 1.25;
@@ -270,6 +270,16 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je smoke
 
+            mov eax, 1121002
+            cmp esi, eax
+            je buff
+
+            mov eax, 1121012
+            cmp esi, eax
+            je melee
+
+
+
                 // Spearman
             mov eax, 1211012
             cmp esi, eax
@@ -286,6 +296,22 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 1211014
             cmp esi, eax
             je melee
+
+            mov eax, 1221011
+            cmp esi, eax
+            je buff
+
+            mov eax, 1221016
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221021
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221052
+            cmp esi, eax
+            je summons
 
             mov eax, 1201017
             cmp esi, eax
@@ -2563,32 +2589,46 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         Patch4(0x00952F20 + 3, 1511003);
     }
 
+    // Movement impulses are computed up front but, for skills that actually cast, only
+    // applied after pDoActiveSkill reports success — a cast the client rejects (no MP,
+    // wrong weapon, cooldown, consume check) must not grant velocity.
+    bool bApplyImpactOnSuccess = false;
+    bool bArmAniCancelOnSuccess = false;
+    int movepath = 0;
+    double vx = 0.0;
+    double vy = 0.0;
+    CVecCtrl* pCv = nullptr;
     if (isMovementSkill(nSkillID) && !g_inOneTimeAction) {
-        bool move = true;
-        bool grounded = false;
-        CVecCtrl* pCv = CVecCtrl::FromInterface(_This->m_pvc);
+        pCv = CVecCtrl::FromInterface(_This->m_pvc);
         if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut(nSkillID)) {
             return 0;
         }
-        int movepath = 0;
-        double vx = 0.0;
-        double vy = 0.0;
         int skillLevel = 0;
-        int avatar = _This->m_avatar;
         if (nSkillID == 1511009 && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
-            movepath = 6;
-            vy = -800;
-            auto elapsed = chrono::steady_clock::now() - jumptimer;
-            if (elapsed < chrono::milliseconds(250)) {
+            // Grounded rising jump is pure client-side motion: the real cast is skipped
+            // (return 0 below), so there is no consume gate to defer behind — it applies
+            // immediately, rate-limited by jumptimer.
+            auto elapsedJump = chrono::steady_clock::now() - jumptimer;
+            if (elapsedJump < chrono::milliseconds(250)) {
                 return 0;
             }
-            grounded = true;
+            SetMovePath(pCv, 6);
+            movementLockTimer = chrono::steady_clock::now();
+            SetImpactNext(pCv, 0.0, -800.0);
+            return 0;
         }
-        if (nSkillID == 1511009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+        if (nSkillID == 1511009) { // not grounded -> falling or free-falling
             vx = 300.0;
             vy = 1000.0;
         }
+        // Airborne and not descending = rising (jump ascent, e.g. right after a rising
+        // jump). The dashes below only get momentum on the ground or while falling, so a
+        // rising-state cast is rejected outright instead of granting an air boost.
+        const bool bRising = IsFreeFalling(pCv) && !IsFalling(pCv);
         if (nSkillID >= 1411005 && nSkillID <= 1411006) {
+            if (bRising) {
+                return 0;
+            }
             if (nSkillID == 1411005) {
                 skillLevel = asLevel;
             } else {
@@ -2600,6 +2640,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             }
         }
         if (nSkillID == 4211015) {
+            if (bRising) {
+                return 0;
+            }
             skillLevel = bsLevel;
             vx = 1100.0;
         }
@@ -2612,7 +2655,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         }
         if (nSkillID == 5101010) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
-                aniCancelTimer = chrono::steady_clock::now();
+                bArmAniCancelOnSuccess = true;
                 vy = -555.0;
             } else {
                 return 0;
@@ -2624,15 +2667,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (isFallingSkill(nSkillID) && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
             return 0;
         }
-        if (isRisingSkill(nSkillID))
-            SetMovePath(pCv, movepath);
-        if (nSkillID != 5101010) {
-            movementLockTimer = chrono::steady_clock::now();
-        }
-        SetImpactNext(pCv, vx, vy);
-        if (grounded) {
-            return 0;
-        }
+        bApplyImpactOnSuccess = true;
     }
     if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
@@ -2674,7 +2709,23 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         Patch1(0x0096792A + 3, 0x09);
         Patch1(0x0096792A + 4, 0x00);
     }
-    return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    const int nResult = pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    // Deferred movement impulse: only a successful cast (consume checks passed, skill
+    // actually fired — see CMacroSysMan::Update, which treats this return the same way)
+    // gets its velocity applied.
+    if (nResult && bApplyImpactOnSuccess) {
+        if (isRisingSkill(nSkillID)) {
+            SetMovePath(pCv, movepath);
+        }
+        if (nSkillID != 5101010) {
+            movementLockTimer = chrono::steady_clock::now();
+        }
+        if (bArmAniCancelOnSuccess) {
+            aniCancelTimer = chrono::steady_clock::now();
+        }
+        SetImpactNext(pCv, vx, vy);
+    }
+    return nResult;
 }
 
 auto is_guided_skill = (int(__cdecl*)(int))0x0076662D;
@@ -2971,9 +3022,9 @@ auto get_vertical_adjust_of_attack_range = (int(__cdecl*)(int))0x0076664D;
 
 int(__cdecl vertical)(int nSkillID) {
     if (nSkillID == 3601007 || nSkillID == 3511003) {
-        return 100;
+        return 60;
     }
-    if (nSkillID == 3001004) {
+    if (nSkillID == 3001004 || nSkillID == 3211015) {
         return 30;
     }
     if (nSkillID == 4111005) {
@@ -3409,6 +3460,8 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
     return result;
 }
 
+void SummonPull_OnHit(MobStat* pStat); // summon pull, defined with the rest of that block below
+
 auto summonPDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x0079216D;
 int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
         SecondaryStat* a6, int a7, int a8, int a9) {
@@ -3417,6 +3470,7 @@ int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, in
     if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
         return 0;
     }
+    SummonPull_OnHit(a3); // no-op unless this summon pulls
     int str = a5->nSTR.Fuse();
     int dex = a5->nDEX.Fuse();
     int luk = a5->nLUK.Fuse();
@@ -3458,6 +3512,7 @@ int __fastcall summonMDamage_hook(void* calc, void* edx, int a2, MobStat* a3, in
     if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
         return 0;
     }
+    SummonPull_OnHit(a3); // no-op unless this summon pulls
     int int_ = a5->nINT.Fuse();
     int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
     int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
@@ -3521,6 +3576,251 @@ int GetSkillLevelDataLong(int skillId, int valueOff) {
 
 int GetSkillMobCount(int skillId) {
     return GetSkillLevelDataLong(skillId, 0x130);
+}
+
+// ===== Summon pull =========================================================================
+// Drags every mob a summon hits toward the summon. Client-side: mob positions are driven by
+// whichever client the server made the mob's controller, and that client reports them back in
+// its normal mob-move packets -- so nudging a mob we control propagates to the server and to
+// everyone else for free. Mobs controlled by another player are skipped: our nudge would be
+// cosmetic and their next move packet would snap it back.
+//
+// Hit set comes from the summon damage hooks (summonPDamage_hook / summonMDamage_hook), which
+// the engine already calls once per hit mob inside CSummoned::TryDoingAttackManual with
+// a3 == &mob->m_stat. Bracketing that call lets us collect the exact mobs that got hit
+// without touching the attack loop itself.
+//
+// Add a summon skill id here to give it the pull, e.g. 3211002 (Silver Hawk) / 2311006
+// (Summon Dragon) / 5211001 (Octopus). Empty = feature dormant, every summon behaves as before.
+static const std::vector<int> g_summonPullSkills = {
+
+};
+
+// Tunables. Each hit closes summonPullPercent of the remaining gap; 100 = snap the mob onto
+// the summon. summonPullMaxStep caps how far one hit can move a mob (0 = uncapped), so
+// lowering the percent and setting a cap turns the vacuum back into a gradual drag.
+int summonPullPercent = 100;  // % of the gap closed per hit
+int summonPullMaxStep = 0;    // px, per-hit cap (0 = no cap)
+int summonPullMaxDy   = 150;  // px, skip mobs this far above/below the summon (other platform)
+int summonPullDeadzone = 12;  // px, close enough - stop nudging
+
+// CMob::IsActive (0x00663922) == "this client controls the mob" (CMobPool::SetLocalMob ->
+// SetActive(1), SetRemoteMob -> SetActive(0)).
+auto CMob_IsActive = (int(__thiscall*)(void*))0x00663922;
+
+// The client's own secure-double codec. These MUST be used for CVecCtrl position fields
+// instead of the ZtlSecure template in secure.h: the template writes a checksum the client
+// does not recompute the same way, and the client throws its secure-data exception on the
+// next read (the "error code 5 / Access is denied" box). Same pair CVecCtrl__CalcFloat_hook
+// below uses. Layout is ZtlSecure<double> { double at[2]; uint cs; } -> cs sits at at+0x10.
+static auto pullFuseDouble = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338);
+static auto pullTearDouble = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6);
+
+static double vecCtrlGetSecure(CVecCtrl* vc, unsigned int off) {
+    char* p = reinterpret_cast<char*>(vc) + off;
+    return pullFuseDouble(reinterpret_cast<double*>(p), *reinterpret_cast<unsigned int*>(p + 0x10));
+}
+
+static void vecCtrlSetSecure(CVecCtrl* vc, unsigned int off, double value) {
+    char* p = reinterpret_cast<char*>(vc) + off;
+    *reinterpret_cast<unsigned int*>(p + 0x10) = pullTearDouble(reinterpret_cast<double*>(p), value);
+}
+
+// Mob physics. CMob keeps two pointers into its vec ctrl and CMob::SetActive uses BOTH:
+//   [CMob+0x118]-0xC  -- the block holding the live position/foothold as shorts at +0x1F2..
+//   [CMob+0x11C]-0xC  -- the object whose vtable slot 1 is CVecCtrl::SetActive
+// Repositioning a mob means handing SetActive a new x, exactly like the engine does when the
+// server grants us control. Writing the secure doubles (m_x) instead does NOT work: physics
+// recomputes them from the path every tick, so the write is gone within a frame.
+static char* mobVecCtrlPath(Mob* mob) {
+    if (!mob || IsBadReadPtr(mob, 0x120)) {
+        return nullptr;
+    }
+    char* p = *reinterpret_cast<char**>(reinterpret_cast<char*>(mob) + 0x118) - 0xC;
+    return (p && !IsBadWritePtr(p, 0x200)) ? p : nullptr;
+}
+
+static char* mobVecCtrlObj(Mob* mob) {
+    if (!mob || IsBadReadPtr(mob, 0x120)) {
+        return nullptr;
+    }
+    char* p = *reinterpret_cast<char**>(reinterpret_cast<char*>(mob) + 0x11C) - 0xC;
+    return (p && !IsBadReadPtr(p, sizeof(void*))) ? p : nullptr;
+}
+
+// CWvsPhysicalSpace2D::GetFoothold on the singleton at 0x00BEBFA0.
+auto space2dGetFoothold = (void*(__thiscall*)(void*, unsigned long))0x0050D811;
+
+// CVecCtrl::SetActive(bActive, x, y, a4, a5, a6, pFoothold) -- vtable slot 1.
+typedef void(__thiscall* VecCtrlSetActive_t)(void*, int, int, int, int, int, int, void*);
+
+// Move a mob to nX using the engine's own reseat path.
+static bool mobSetPosX(Mob* mob, int nX) {
+    char* path = mobVecCtrlPath(mob);
+    char* obj = mobVecCtrlObj(mob);
+    if (!path || !obj) {
+        return false;
+    }
+    const int y   = *reinterpret_cast<short*>(path + 0x1F4);
+    const int a4  = *reinterpret_cast<short*>(path + 0x1F6);
+    const int a5  = *reinterpret_cast<short*>(path + 0x1F8);
+    const int a6  = *reinterpret_cast<unsigned char*>(path + 0x1FA);
+    const unsigned long fhId = *reinterpret_cast<unsigned short*>(path + 0x1FC);
+    void* pSpace = *reinterpret_cast<void**>(0x00BEBFA0);
+    if (!pSpace) {
+        return false;
+    }
+    void* pFoothold = space2dGetFoothold(pSpace, fhId);
+    void** vt = *reinterpret_cast<void***>(obj);
+    if (!vt || IsBadReadPtr(vt, 2 * sizeof(void*))) {
+        return false;
+    }
+    reinterpret_cast<VecCtrlSetActive_t>(vt[1])(obj, 1, nX, y, a4, a5, a6, pFoothold);
+    // Belt and braces: also poke the fields the engine reads back, on both candidate objects.
+    // CVecCtrl::SetActive writes the secure doubles at +0x20/+0x38 and re-inits the CMovePath
+    // at +0x1AC, but the position shorts at +0x1F2 are what CMob::SetActive reads, so keep
+    // them in step rather than assuming which one physics rebuilds from.
+    *reinterpret_cast<short*>(path + 0x1F2) = static_cast<short>(nX);
+    vecCtrlSetSecure(reinterpret_cast<CVecCtrl*>(path), 0x20, static_cast<double>(nX));
+    if (obj != path) {
+        vecCtrlSetSecure(reinterpret_cast<CVecCtrl*>(obj), 0x20, static_cast<double>(nX));
+    }
+    return true;
+}
+
+// Cached render position. CMob::GetPos is `lea eax,[ecx+0x50C]` on the +4 base -> POINT at
+// CMob+0x510. Kept in sync with the physics x so the attack packet encoded later in this same
+// frame (it encodes GetPos) agrees with where we just put the mob.
+static POINT* mobCachedPos(Mob* mob) {
+    return reinterpret_cast<POINT*>(reinterpret_cast<char*>(mob) + 0x510);
+}
+
+// Position of any game object with the +4 IGObj base (CMob, CSummoned): vtable slot 4 is
+// GetPos and returns a pointer to the object's POINT.
+static const POINT* gobjPos(void* pObj) {
+    if (!pObj || IsBadReadPtr(pObj, 8)) {
+        return nullptr;
+    }
+    char* base = reinterpret_cast<char*>(pObj) + 4;
+    void** vt = *reinterpret_cast<void***>(base);
+    if (!vt || IsBadReadPtr(vt, 5 * sizeof(void*))) {
+        return nullptr;
+    }
+    using GetPos_t = const POINT*(__thiscall*)(void*);
+    const POINT* p = reinterpret_cast<GetPos_t>(vt[4])(base);
+    return (p && !IsBadReadPtr(p, sizeof(POINT))) ? p : nullptr;
+}
+
+static bool isPullSummon(int nSkillID) {
+    return std::find(g_summonPullSkills.begin(), g_summonPullSkills.end(), nSkillID)
+            != g_summonPullSkills.end();
+}
+
+static void* g_pPullSummon = nullptr;    // non-null only inside a pulling summon's attack
+static std::vector<Mob*> g_pullTargets;
+
+// Called from the summon damage hooks, once per mob the summon hit.
+void SummonPull_OnHit(MobStat* pStat) {
+    if (!g_pPullSummon || !pStat) {
+        return;
+    }
+    Mob* mob = reinterpret_cast<Mob*>(reinterpret_cast<char*>(pStat) - 0x1A0);
+    if (IsBadReadPtr(mob, sizeof(Mob))) {
+        return;
+    }
+    if (std::find(g_pullTargets.begin(), g_pullTargets.end(), mob) == g_pullTargets.end()) {
+        g_pullTargets.push_back(mob);
+    }
+}
+
+static void applySummonPull(void* pSummon) {
+    const POINT* summonPos = gobjPos(pSummon);
+    if (!summonPos) {
+        LogInfo("SummonPull: no summon pos, targets=%d", (int)g_pullTargets.size());
+        return;
+    }
+    for (Mob* mob : g_pullTargets) {
+        if (IsBadReadPtr(mob, sizeof(Mob)) || !CMob_IsActive(mob)) {
+            LogInfo("SummonPull: mob=%p skipped (bad ptr or not controlled by us)", mob);
+            continue; // someone else controls it - moving it here would just desync
+        }
+        MobTemplate* tmpl = mob->m_pTemplate;
+        if (tmpl && !IsBadReadPtr(tmpl, sizeof(MobTemplate)) && tmpl->bIsBoss.Fuse()) {
+            continue; // bosses stay put
+        }
+        char* path = mobVecCtrlPath(mob);
+        if (!path) {
+            continue;
+        }
+        const double x = *reinterpret_cast<short*>(path + 0x1F2);
+        const double y = *reinterpret_cast<short*>(path + 0x1F4);
+        // Self-check: the path position must agree with the mob's cached render POINT. If it
+        // doesn't, the block we resolved isn't this mob's -- skip rather than corrupt it.
+        const POINT* cached = mobCachedPos(mob);
+        if (fabs(x - cached->x) > 64.0 || fabs(y - cached->y) > 64.0) {
+            LogInfo("SummonPull: mob=%p skipped (path/cached mismatch %.0f,%.0f vs %d,%d)",
+                    mob, x, y, cached->x, cached->y);
+            continue;
+        }
+        if (fabs(y - summonPos->y) > summonPullMaxDy) {
+            LogInfo("SummonPull: mob=%p skipped (dy=%.0f > %d)", mob, fabs(y - summonPos->y), summonPullMaxDy);
+            continue; // different platform
+        }
+        const double dx = summonPos->x - x;
+        if (fabs(dx) <= summonPullDeadzone) {
+            continue;
+        }
+        double step = dx * (summonPullPercent / 100.0);
+        if (summonPullMaxStep > 0) {
+            if (step > summonPullMaxStep) {
+                step = summonPullMaxStep;
+            } else if (step < -summonPullMaxStep) {
+                step = -summonPullMaxStep;
+            }
+        }
+        const double newX = x + step;
+        if (!mobSetPosX(mob, static_cast<int>(newX))) {
+            LogInfo("SummonPull: mob=%p reseat failed", mob);
+            continue;
+        }
+        mobCachedPos(mob)->x = static_cast<LONG>(newX);
+        // Read straight back: tells us whether CVecCtrl::SetActive took at all, versus taking
+        // and then being reverted before the next attack (server mob-move for a mob we don't
+        // actually control). ctrl = CMob+0x130 secure long: >0 ours, <0 someone else's.
+        const int readBack = *reinterpret_cast<short*>(path + 0x1F2);
+        const double dblX = pullFuseDouble(reinterpret_cast<double*>(path + 0x20),
+                *reinterpret_cast<unsigned int*>(path + 0x30));
+        const int ctrl = summonSecureFuseLong(
+                reinterpret_cast<const int*>(reinterpret_cast<char*>(mob) + 0x130),
+                *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(mob) + 0x138));
+        LogInfo("SummonPull: mob=%p %.0f -> %.0f path=%p obj=%p short=%d dbl=%.0f ctrl=%d",
+                mob, x, newX, path, mobVecCtrlObj(mob), readBack, dblX, ctrl);
+    }
+}
+
+auto summonTryDoingAttackManual = (void(__thiscall*)(void*, int))0x007A4D42;
+void __fastcall summonTryDoingAttackManual_hook(void* pSummon, void* edx, int tCur) {
+    // this[45] (+0xB4) is the summon's skill id.
+    const int nSkillID = (pSummon && !IsBadReadPtr(pSummon, 0xB8))
+            ? *reinterpret_cast<int*>(reinterpret_cast<char*>(pSummon) + 0xB4) : 0;
+    if (!isPullSummon(nSkillID)) {
+        // Rate-limited so the log stays readable while still showing what id a summon reports.
+        static DWORD lastLog = 0;
+        const DWORD now = GetTickCount();
+        if (now - lastLog > 2000) {
+            lastLog = now;
+            LogInfo("SummonPull: attack from summon skill=%d (not in pull list)", nSkillID);
+        }
+        summonTryDoingAttackManual(pSummon, tCur);
+        return;
+    }
+    LogInfo("SummonPull: attack from pull summon skill=%d", nSkillID);
+    g_pullTargets.clear();
+    g_pPullSummon = pSummon;
+    summonTryDoingAttackManual(pSummon, tCur);
+    g_pPullSummon = nullptr;
+    applySummonPull(pSummon);
+    g_pullTargets.clear();
 }
 
 auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A;
@@ -4029,6 +4329,9 @@ void AttachSkillEdits() {
     // is needed to reach mobs on platforms above/below too).
     CodeCave((void*)summonSeekRect, 0x00678EDB, 22);
     ATTACH_HOOK(loadSummonAttackInfo, loadSummonAttackInfo_hook);
+    // Summon pull: brackets the attack so the damage hooks can collect the mobs that got hit,
+    // then drags the ones we control toward the summon. Dormant while g_summonPullSkills is empty.
+    ATTACH_HOOK(summonTryDoingAttackManual, summonTryDoingAttackManual_hook);
     // NOTE: the octoMultiHit seek-routing cave (0x7A5062) is intentionally NOT installed. All summons
     // now get the +0x80 rect path in loadSummonAttackInfo_hook, which gives stationary octopus
     // summons their multi-hit via FindHitMobInRect without the fragile seek/cave detour.
@@ -4448,6 +4751,18 @@ int(__fastcall CanSendExclRequest_Hook)(CWvsContext* pThis, void* edx, int a1, i
     }
     return CanSendExclRequest(pThis, a1, a2);
 }
+
+// Guild member count as short instead of byte: NOT APPLIED -- the server still encodes both
+// fields as bytes, so widening the client reads desyncs the packet stream and crashes on
+// guild open. Re-enable only in lockstep with the server change. The two client reads that
+// cap the count at 255 (verified against v83 `Angel.exe`):
+//   1. GUILDDATA::Decode (0x4E4553): count via Decode1 @ 0x4E45E6, then movzx edi, al
+//      @ 0x4E45EB. Capacity after the member arrays is already Decode4 and the member
+//      containers size with ints -- only the count itself is a byte.
+//   2. CWvsContext::OnGuildResult, IncMaxMemberNum result (case 0x3A): new capacity via
+//      Decode1 @ 0xA38328, then movzx eax, al @ 0xA38334.
+// Patch is: PatchCall both call sites to CInPacket::Decode2 (0x0042470C) and flip each
+// movzx opcode byte (+1) from 0xB6 to 0xB7. Instruction lengths are unchanged.
 
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
