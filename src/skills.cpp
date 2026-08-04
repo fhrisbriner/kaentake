@@ -4669,43 +4669,58 @@ void InstallDamageShowTimeGate() {
 }
 
 
-// The 600ms show time above only sticks if the skill also SKIPS the action-tied `.HitAfter` block in
-// CMob::SetDamaged. That bypass is a hardcoded skill-id list @ 0x0066B29C (14101006, loc_A98A5E,
-// 22171002, ...): a match jumps to 0x0066B2B1 (the hitIdx!=0 check -> LABEL_78) which uses v14[2]
-// (=600) directly; a miss falls into the `.HitAfter` recompute at 0x0066B2BB that re-derives the
-// display time from the action animation. 1211000 isn't in the list, so it took the action path and
-// the flat 600 was overridden. This cave inserts 1211000 into the list without sacrificing a slot:
-// it replaces the first 5-byte `cmp eax, 14101006` @ 0x0066B29C with a jmp to a cave that tests
-// 1211000 first (je -> 0x0066B2B1), then replicates the original `cmp eax, 14101006` and jmps back to
-// the original jz @ 0x0066B2A1 so every existing entry still works. eax = skill id at this point.
-void InstallDamageBypassGate() {
-    const DWORD patchAddr  = 0x0066B29C; // cmp eax, 14101006  (5 bytes: 3D 0E 2A D7 00)
-    const DWORD jzBack     = 0x0066B2A1; // the original `jz 0x66B2B1` that follows the cmp
-    const DWORD bypassTgt  = 0x0066B2B1; // list-hit target (hitIdx check -> LABEL_78, uses v14[2])
-    const DWORD skillId    = 1211000;
-    const DWORD origCmpImm = 0x00D72A0E; // 14101006 (the cmp immediate we overwrite, replicated below)
+// Skills that behave like 14101006: the mob's hit action plays on the FIRST hit of an attack only,
+// and the damage-number show time stays the one already computed (v14[2]) instead of being re-derived
+// from the action animation on every hit. Append skill ids here -- nothing else needs to change.
+static const std::vector<int> g_singleHitActionSkills = {
+    1211000, // Charged Blow (pairs with InstallDamageShowTimeGate's flat 660ms number)
+};
 
-    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+// CMob::SetDamaged (sub_66B05E) decides per hit whether to run the `.HitAfter` block @ 0x0066B2BB:
+// that block loads the mob's hit-action WZ node, re-derives the damage show time from the action
+// animation and pushes a fresh damaged-action entry -- i.e. it restarts the hit action on EVERY hit
+// of a multi-hit attack. A hardcoded skill-id chain @ 0x0066B287..0x0066B2AF (5121004, 5121007,
+// 15111004, 14101006, 11111006, 22171002) jumps instead to 0x0066B2B1, which skips that block
+// whenever hitIdx != 0 -- so those skills show the hit action once per attack.
+//
+// This cave prepends g_singleHitActionSkills to that chain without sacrificing an existing entry: it
+// overwrites the FIRST compare (`cmp eax, 5121004` @ 0x0066B287, 5 bytes) with a jmp to a cave that
+// tests our ids (je -> 0x0066B2B1), then replicates the overwritten compare and jmps back to the
+// original `jz` @ 0x0066B28C, so the whole vanilla chain still runs. eax = skill id at this point.
+void InstallDamageBypassGate() {
+    const DWORD patchAddr  = 0x0066B287; // cmp eax, 5121004  (5 bytes: 3D EC 23 4E 00)
+    const DWORD jzBack     = 0x0066B28C; // the original `jz 0x66B2B1` that follows that cmp
+    const DWORD bypassTgt  = 0x0066B2B1; // chain-hit target (hitIdx != 0 -> skip the .HitAfter block)
+    const DWORD origCmpImm = 0x004E23EC; // 5121004 (the cmp immediate we overwrite, replicated below)
+
+    if (g_singleHitActionSkills.empty())
+        return;
+
+    // 11 bytes per id (cmp imm32 = 5, je rel32 = 6) + 10 for the replicated cmp and the jmp back.
+    const SIZE_T caveSize = g_singleHitActionSkills.size() * 11 + 10;
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, caveSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!cave)
         return;
     BYTE* p = cave;
 
-    // cmp eax, skillId
-    *p++ = 0x3D;
-    memcpy(p, &skillId, 4); p += 4;
-    // je bypassTgt
-    *p++ = 0x0F; *p++ = 0x84;
-    DWORD rel = bypassTgt - ((DWORD)p + 4);
-    memcpy(p, &rel, 4); p += 4;
+    for (int id : g_singleHitActionSkills) {
+        // cmp eax, id
+        *p++ = 0x3D;
+        memcpy(p, &id, 4); p += 4;
+        // je bypassTgt
+        *p++ = 0x0F; *p++ = 0x84;
+        DWORD rel = bypassTgt - ((DWORD)p + 4);
+        memcpy(p, &rel, 4); p += 4;
+    }
     // cmp eax, origCmpImm   (replicate the overwritten compare so the jz @ jzBack still fires for it)
     *p++ = 0x3D;
     memcpy(p, &origCmpImm, 4); p += 4;
     // jmp jzBack
     *p++ = 0xE9;
-    rel = jzBack - ((DWORD)p + 4);
+    DWORD rel = jzBack - ((DWORD)p + 4);
     memcpy(p, &rel, 4); p += 4;
 
-    // Redirect the original `cmp eax, 14101006` into the cave (exactly 5 bytes).
+    // Redirect the original `cmp eax, 5121004` into the cave (exactly 5 bytes).
     DWORD relToCave = (DWORD)cave - patchAddr - 5;
     BYTE patch[5] = { 0xE9 };
     memcpy(patch + 1, &relToCave, 4);
@@ -4857,9 +4872,9 @@ void AttachSkillEdits() {
     Patch1(0x0096A9CD, 0x90);
     Patch1(0x0096B09C, 0x90); // jnz loc_96B0BE -> nop (cooldown STORE runs for all skills)
     Patch1(0x0096B09D, 0x90);
-    // 1211000 damage number shows at a flat 600ms regardless of action.
-    // ShowTimeGate sets the time to 600; BypassGate makes 1211000 skip the action-tied .HitAfter
-    // recompute so the 600 actually sticks (both are required).
+    // ShowTimeGate pins the damage-number time for its skills; BypassGate makes every skill in
+    // g_singleHitActionSkills skip the action-tied .HitAfter recompute after the first hit, so the
+    // mob's hit action plays once per attack (14101006 behavior) and the pinned time sticks.
     InstallDamageShowTimeGate();
     InstallDamageBypassGate();
     // don't cancel skills when hit
@@ -5611,7 +5626,18 @@ void __fastcall RestoreBgm_Hook(void* pThis, void* edx) {
 
 auto SoundMan__PlayBGM = (void(__thiscall*)(void*, void*, int, int, int, void*))0x43f301;
 void __fastcall SoundMan__PlayBGM_Hook(void* pThis, void* edx, void* pBGM, int nBGMType, int nBGMVolume, int nBGMLoop, void* nBGMPriority) {
-    if ((int)_ReturnAddress() == 0x5333A0 || (GetCurFieldID(CWvsContext::GetInstance()) == -1)) {
+    // This fires as a map's BGM starts, which includes the first field the player enters after
+    // picking a character. CWvsContext::GetInstance() was passed straight into a __thiscall with
+    // no null check: during a stage transition the singleton can be absent, and dereferencing it
+    // faults exactly where Wine clients have been dying. Treat "no context" the same as "not in
+    // a field yet" (the -1 case) and let the BGM through.
+    bool bPlay = (int)_ReturnAddress() == 0x5333A0;
+    if (!bPlay) {
+        CWvsContext* pContext = CWvsContext::GetInstance();
+        LogInfo("CSoundMan::PlayBGM: context=%p type=%d vol=%d loop=%d", (void*)pContext, nBGMType, nBGMVolume, nBGMLoop);
+        bPlay = !pContext || GetCurFieldID(pContext) == -1;
+    }
+    if (bPlay) {
         SoundMan__PlayBGM(pThis, pBGM, nBGMType, nBGMVolume, nBGMLoop, nBGMPriority);
     }
 }
