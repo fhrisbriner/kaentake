@@ -16,9 +16,77 @@
 typedef decltype(&SetUnhandledExceptionFilter) SetUnhandledExceptionFilter_t;
 static SetUnhandledExceptionFilter_t SetUnhandledExceptionFilter_orig = reinterpret_cast<SetUnhandledExceptionFilter_t>(GetAddress("KERNEL32", "SetUnhandledExceptionFilter"));
 
+// Crash logger. The client installs its own top-level filter (and under Wine the process just
+// disappears), so a fault leaves nothing behind but a truncated log. This vectored handler runs
+// on the *second* chance only -- i.e. after every SEH frame declined to handle it, which is the
+// crash proper -- and writes the faulting address, the module it lands in, and the registers.
+static LONG CALLBACK CrashLogHandler(EXCEPTION_POINTERS* pEx) {
+    if (!pEx || !pEx->ExceptionRecord || !pEx->ContextRecord) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    const DWORD code = pEx->ExceptionRecord->ExceptionCode;
+    // Only report the ones that actually kill the process. The client throws C++ exceptions
+    // (0xE06D7363) and uses SEH liberally during normal play; logging those is just noise.
+    if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION
+            && code != EXCEPTION_PRIV_INSTRUCTION && code != EXCEPTION_STACK_OVERFLOW
+            && code != EXCEPTION_INT_DIVIDE_BY_ZERO && code != EXCEPTION_IN_PAGE_ERROR) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    void* addr = pEx->ExceptionRecord->ExceptionAddress;
+    char sModule[MAX_PATH] = "<unknown>";
+    uintptr_t offset = 0;
+    HMODULE hMod = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCSTR>(addr), &hMod) && hMod) {
+        char sPath[MAX_PATH]{};
+        if (GetModuleFileNameA(hMod, sPath, MAX_PATH)) {
+            const char* leaf = strrchr(sPath, '\\');
+            StringCchCopyA(sModule, MAX_PATH, leaf ? leaf + 1 : sPath);
+        }
+        offset = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(hMod);
+    }
+
+    LogInfo("*** CRASH *** code=0x%08lX at 0x%08X (%s+0x%X)",
+            code, reinterpret_cast<uintptr_t>(addr), sModule, offset);
+    if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) {
+        // ExceptionInformation[0]: 0 read, 1 write, 8 DEP. [1]: the address touched.
+        LogInfo("*** CRASH *** %s access to 0x%08X",
+                pEx->ExceptionRecord->ExceptionInformation[0] == 1 ? "write" :
+                pEx->ExceptionRecord->ExceptionInformation[0] == 8 ? "execute" : "read",
+                pEx->ExceptionRecord->ExceptionInformation[1]);
+    }
+    const CONTEXT* c = pEx->ContextRecord;
+    LogInfo("*** CRASH *** EIP=%08X ESP=%08X EBP=%08X EAX=%08X EBX=%08X ECX=%08X EDX=%08X ESI=%08X EDI=%08X",
+            c->Eip, c->Esp, c->Ebp, c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi);
+    // Return addresses off the stack: enough to see which subsystem we died under.
+    const uintptr_t* stack = reinterpret_cast<const uintptr_t*>(c->Esp);
+    if (stack && !IsBadReadPtr(stack, 64 * sizeof(uintptr_t))) {
+        char sLine[512];
+        StringCchCopyA(sLine, sizeof(sLine), "*** CRASH *** stack:");
+        int found = 0;
+        for (int i = 0; i < 64 && found < 12; ++i) {
+            const uintptr_t v = stack[i];
+            // Anything inside the client image is a plausible return address.
+            if (v >= 0x00400000 && v < 0x00C00000) {
+                char sVal[16];
+                StringCchPrintfA(sVal, sizeof(sVal), " %08X", v);
+                StringCchCatA(sLine, sizeof(sLine), sVal);
+                ++found;
+            }
+        }
+        LogInfo("%s", sLine);
+    }
+    return EXCEPTION_CONTINUE_SEARCH; // let the normal crash path proceed
+}
+
 LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter_hook(LPTOP_LEVEL_EXCEPTION_FILTER lpTopLevelExceptionFilter) {
     // ZExceptionHandler::ZExceptionHandler - after dynamic initializers for ZAllocEx<T>::_s_alloc
     if (reinterpret_cast<uintptr_t>(_ReturnAddress()) == 0x00796FDD) {
+        // Second-chance vectored handler (last arg 0 = called after SEH), so we log the crash
+        // no matter what the client's own filter does with it.
+        AddVectoredContinueHandler(0, &CrashLogHandler);
+        LogInfo("AttachClientHooks: crash logger installed");
         AttachClientHooks();
     }
     return SetUnhandledExceptionFilter_orig(lpTopLevelExceptionFilter);
@@ -243,6 +311,12 @@ LSTATUS WINAPI RegSetValueExA_hook(HKEY hKey, LPCSTR lpValueName, DWORD Reserved
 }
 
 
+// Same probe bypass.cpp uses for its DirectSound guard (kept local: that one is static there).
+static bool IsRunningUnderWine() {
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+}
+
 typedef decltype(&WSPStartup) WSPStartup_t;
 static WSPStartup_t WSPStartup_orig = reinterpret_cast<WSPStartup_t>(GetAddress("MSWSOCK", "WSPStartup"));
 static WSPPROC_TABLE g_ProcTable;
@@ -255,6 +329,18 @@ constexpr const char* g_asOriginalAddress[] = {
 };
 
 int WSPAPI WSPConnect_hook(SOCKET s, const struct sockaddr FAR* name, int namelen, LPWSABUF lpCallerData, LPWSABUF lpCalleeData, LPQOS lpSQOS, LPQOS lpGQOS, LPINT lpErrno) {
+    // The saved proc table comes from whatever winsock provider the OS handed us. Under Wine
+    // entries can be missing, and calling through one of those nulls crashes the client at the
+    // exact moment it connects to the channel server -- i.e. on picking a character.
+    if (!g_ProcTable.lpWSPConnect) {
+        if (lpErrno) {
+            *lpErrno = WSAEFAULT;
+        }
+        return SOCKET_ERROR;
+    }
+    if (!name || name->sa_family != AF_INET) {
+        return g_ProcTable.lpWSPConnect(s, name, namelen, lpCallerData, lpCalleeData, lpSQOS, lpGQOS, lpErrno);
+    }
     char sName[INET_ADDRSTRLEN];
     InetNtopA(AF_INET, &((sockaddr_in*)name)->sin_addr, sName, INET_ADDRSTRLEN);
     for (auto sAddress : g_asOriginalAddress) {
@@ -272,16 +358,45 @@ int WSPAPI WSPConnect_hook(SOCKET s, const struct sockaddr FAR* name, int namele
 }
 
 int WSPAPI WSPGetPeerName_hook(SOCKET s, struct sockaddr* name, LPINT namelen, LPINT lpErrNo) {
+    if (!g_ProcTable.lpWSPGetPeerName) {
+        if (lpErrNo) {
+            *lpErrNo = WSAEFAULT;
+        }
+        return SOCKET_ERROR;
+    }
     int result = g_ProcTable.lpWSPGetPeerName(s, name, namelen, lpErrNo);
-    ((sockaddr_in*)name)->sin_addr.S_un.S_addr = g_uNexonAddress;
+    // Only rewrite a peer address the provider actually filled in. The old unconditional write
+    // scribbled into `name` even when the call failed or the buffer was too small.
+    if (result == 0 && name && name->sa_family == AF_INET && namelen && *namelen >= static_cast<int>(sizeof(sockaddr_in))
+            && g_uNexonAddress) {
+        ((sockaddr_in*)name)->sin_addr.S_un.S_addr = g_uNexonAddress;
+    }
     return result;
 }
 
 int WSPAPI WSPStartup_hook(WORD wVersionRequested, LPWSPDATA lpWSPData, LPWSAPROTOCOL_INFOW lpProtocolInfo, WSPUPCALLTABLE UpcallTable, LPWSPPROC_TABLE lpProcTable) {
+    if (!WSPStartup_orig) {
+        return WSAEFAULT;
+    }
     int result = WSPStartup_orig(wVersionRequested, lpWSPData, lpProtocolInfo, UpcallTable, lpProcTable);
+    // Leave the provider alone unless it actually initialised. Installing our thunks over a
+    // half-filled table is what makes this fatal rather than merely non-functional; connect()
+    // in ws2_32 is hooked separately and already covers the redirect.
+    if (result != 0 || !lpProcTable) {
+        LogInfo("WSPStartup_hook: provider init failed (result=%d) - leaving proc table alone", result);
+        return result;
+    }
     g_ProcTable = *lpProcTable;
-    lpProcTable->lpWSPConnect = &WSPConnect_hook;
-    lpProcTable->lpWSPGetPeerName = &WSPGetPeerName_hook;
+    if (g_ProcTable.lpWSPConnect) {
+        lpProcTable->lpWSPConnect = &WSPConnect_hook;
+    } else {
+        LogInfo("WSPStartup_hook: provider has no WSPConnect - not hooking it");
+    }
+    if (g_ProcTable.lpWSPGetPeerName) {
+        lpProcTable->lpWSPGetPeerName = &WSPGetPeerName_hook;
+    } else {
+        LogInfo("WSPStartup_hook: provider has no WSPGetPeerName - not hooking it");
+    }
     return result;
 }
 
@@ -331,7 +446,32 @@ void AttachSystemHooks() {
     ATTACH_HOOK(RegCreateKeyExW_orig, RegCreateKeyExW_hook);
     ATTACH_HOOK(RegOpenKeyExW_orig, RegOpenKeyExW_hook);
     ATTACH_HOOK(RegSetValueExA_orig, RegSetValueExA_hook);
-    ATTACH_HOOK(WSPStartup_orig, WSPStartup_hook);
-    ATTACH_HOOK(connect_orig, connect_hook);
-    ATTACH_HOOK(getpeername_orig, getpeername_hook);
+    // Under Wine the WSP layer is skipped entirely. Wine's ws2_32 does not use the Windows
+    // service-provider architecture the way this hook assumes, and swapping entries in the
+    // proc table it hands back kills the client the moment it opens the channel-server socket
+    // -- i.e. on double-clicking a character. The ws2_32 connect hook below performs the same
+    // host redirect, so nothing is lost by leaving the provider alone.
+    const bool bWine = IsRunningUnderWine();
+    if (bWine) {
+        LogInfo("AttachSystemHooks: Wine detected - skipping MSWSOCK WSP hooks (connect hook covers redirect)");
+    }
+
+    // GetAddress returns null when an export is missing (Wine's mswsock does not necessarily
+    // provide WSPStartup). ATTACH_HOOK on a null target rebases the null and hands Detours a
+    // garbage address, so check first and log which ones we skipped.
+    if (WSPStartup_orig && !bWine) {
+        ATTACH_HOOK(WSPStartup_orig, WSPStartup_hook);
+    } else if (!bWine) {
+        LogInfo("AttachSystemHooks: MSWSOCK!WSPStartup not found - relying on ws2_32 connect hook");
+    }
+    if (connect_orig) {
+        ATTACH_HOOK(connect_orig, connect_hook);
+    } else {
+        LogInfo("AttachSystemHooks: WS2_32!connect not found - server redirect will NOT work");
+    }
+    if (getpeername_orig) {
+        ATTACH_HOOK(getpeername_orig, getpeername_hook);
+    } else {
+        LogInfo("AttachSystemHooks: WS2_32!getpeername not found - skipping");
+    }
 }

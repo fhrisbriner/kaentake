@@ -788,6 +788,13 @@ public:
         if (!nWidth || !nHeight) {
             return E_INVALIDARG;
         }
+        // Pattern scan can come back empty (seen under Wine, where GR2D may not be laid out
+        // the way GetModuleInformation reports at attach time). Calling through a null here
+        // killed the client on the first stage change into CField -- i.e. the moment the
+        // player picks a character -- so bail and just keep the current mode instead.
+        if (!FindScreenMode) {
+            return E_FAIL;
+        }
         if (m_screenMode.nWidth == nWidth && m_screenMode.nHeight == nHeight) {
             return S_OK;
         }
@@ -1089,11 +1096,21 @@ void AttachResolutionMod() {
     // CUIEquip::IsMyAddon - fix equip window stuttering when moving
     Patch4(0x007FDF30 + 2, 0x5B4); // offsetof(CUIEquip, m_pUIPetEquip)
 
-    // Gr2D_DX8.dll
+    // Gr2D_DX8.dll. Both scans MUST be null-checked: a miss used to leave FindScreenMode null
+    // (crash on the first CField stage change, i.e. on entering the world with a character)
+    // and made PatchJmp write through a rebased null. Missing either one only costs the
+    // resolution feature, so log it and carry on.
     CWzGr2D::FindScreenMode = reinterpret_cast<CWzGr2D::FindScreenMode_t>(GetAddressByPattern("GR2D_DX8.DLL", "B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 EC 68"));
+    if (!CWzGr2D::FindScreenMode) {
+        LogInfo("AttachResolutionMod: FindScreenMode pattern NOT FOUND - resolution switching disabled");
+    }
     CWzGr2D__AdjustCenterY_jmp = reinterpret_cast<uintptr_t>(GetAddressByPattern("GR2D_DX8.DLL", "8D 96 C4 00 00 00"));
-    CWzGr2D__AdjustCenterY_ret = CWzGr2D__AdjustCenterY_jmp + 6;
-    PatchJmp(CWzGr2D__AdjustCenterY_jmp, &CWzGr2D__AdjustCenterY_hook);
+    if (CWzGr2D__AdjustCenterY_jmp) {
+        CWzGr2D__AdjustCenterY_ret = CWzGr2D__AdjustCenterY_jmp + 6;
+        PatchJmp(CWzGr2D__AdjustCenterY_jmp, &CWzGr2D__AdjustCenterY_hook);
+    } else {
+        LogInfo("AttachResolutionMod: AdjustCenterY pattern NOT FOUND - skipping centre-Y patch");
+    }
 
     // Force canvas textures to ARGB8888 instead of ARGB4444.
     // GR2D's format picker (sub_50402E1B) probes CheckDeviceFormat and, for the auto path, prefers

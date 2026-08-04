@@ -1875,7 +1875,10 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if (nSkillID >= 3601001 && nSkillID <= 3601006) {
+    if (nSkillID >= 3601001 && nSkillID <= 3601007) {
+        return true;
+    }
+    if (nSkillID > 10000000) {
         return true;
     }
     return false;
@@ -2691,11 +2694,11 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         }
     }
     auto elapsed = chrono::steady_clock::now() - skilltimer;
-    if (nSkillID == 3001013 || nSkillID == 1001007) {
+    if (nSkillID == 3001013 || nSkillID == 1001007 || nSkillID == 1411005 || nSkillID == 1411006 || nSkillID == 4211015) {
         jumptimer = chrono::steady_clock::now();
     }
     if (elapsed < chrono::milliseconds(150)) {
-        if ((nSkillID == 3001013) || nSkillID == 1001007) {
+        if ((nSkillID == 3001013) || nSkillID == 1001007 || nSkillID == 1411005 || nSkillID == 1411006 || nSkillID == 4211015) {
             return 0;
         }
     }
@@ -2991,6 +2994,7 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
         nWeaponDegree -= 2;
         if (nWeaponBooster != 0) {
             weaponSpeed += nWeaponBooster;
+            nWeaponDegree += nWeaponBooster;
         }
     }
     weaponSpeed = nWeaponDegree;
@@ -3823,6 +3827,178 @@ void __fastcall summonTryDoingAttackManual_hook(void* pSummon, void* edx, int tC
     g_pullTargets.clear();
 }
 
+// ===== Rising Toss for other skills ========================================================
+// CMob::OnHit already owns mob displacement: every hit ends in
+//   CMob::GenerateMovePath(mob, a4, a5==0, 0, a9, a10, a12, a13, a14, bToss)
+// and that last flag is what turns the normal knockback into the Rising Toss launch. The
+// engine computes it (var_14 @ ebp-0x14) as roughly
+//   (action == 10 || ...) && GetSkillLevel(charData, 21110003) && !isBoss-ish && ...
+// i.e. gated on the player having Rising Toss learned. We cave the `push [ebp-0x14]` that
+// feeds it to GenerateMovePath (0x00668D8E) and substitute a 1 when the skill that caused
+// this hit is in the list below -- so any skill can toss, using the engine's own physics
+// rather than us writing mob coordinates.
+//
+// The skill id of the hit is CMob::OnHit's arg_4 (ebp+0x70).
+static const std::vector<int> g_tossSkills = {
+    5101010, 1511009
+};
+
+static bool g_forceToss = false;
+
+void __cdecl TossSkillCheck(int nSkillID, int nMobAction) {
+    g_forceToss = std::find(g_tossSkills.begin(), g_tossSkills.end(), nSkillID) != g_tossSkills.end();
+    // The flag only takes effect when GenerateMovePath sees mob action 6..8 (the hit actions)
+    // and an action delay >= 90, so log both to see what the hits actually carry.
+    static DWORD lastLog = 0;
+    const DWORD now = GetTickCount();
+    if (g_forceToss || now - lastLog > 1000) {
+        lastLog = now;
+        LogInfo("Toss: skill=%d mobAction=%d force=%d", nSkillID, nMobAction, (int)g_forceToss);
+    }
+}
+
+// Entry probe for CMob::OnHit (called only from CMob::Update, once per queued hit). Dumps the
+// values every outer condition in front of the displacement block tests, so we can see which
+// one rejects instead of guessing:
+//   attacker vs local char id (CUserLocal+0x11A8), mob ctrl state (mob+0x130 secure),
+//   a10 (must be non-zero), and moveAbility (m_pTemplate+0x40 secure; 0 = immovable, which
+//   sends the hit down the "effect only" path and never displaces).
+void __cdecl OnHitLog(void* pMob, int nAttacker, int nSkillID, int a10) {
+    static DWORD lastLog = 0;
+    const DWORD now = GetTickCount();
+    if (now - lastLog < 250) {
+        return;
+    }
+    lastLog = now;
+    int localId = 0;
+    if (void* pUser = *reinterpret_cast<void**>(0x00BEBF98)) {
+        localId = *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x11A8);
+    }
+    int ctrl = 0;
+    int moveAbility = -1;
+    if (pMob && !IsBadReadPtr(pMob, 0x190)) {
+        char* mob = reinterpret_cast<char*>(pMob);
+        ctrl = summonSecureFuseLong(reinterpret_cast<const int*>(mob + 0x130),
+                *reinterpret_cast<unsigned int*>(mob + 0x138));
+        char* tmpl = *reinterpret_cast<char**>(mob + 0x188);
+        if (tmpl && !IsBadReadPtr(tmpl, 0x50)) {
+            moveAbility = summonSecureFuseLong(reinterpret_cast<const int*>(tmpl + 0x40),
+                    *reinterpret_cast<unsigned int*>(tmpl + 0x48));
+        }
+    }
+    LogInfo("OnHit: skill=%d attacker=%d local=%d ctrl=%d a10=%d moveAbility=%d",
+            nSkillID, nAttacker, localId, ctrl, a10, moveAbility);
+}
+
+static DWORD dwOnHitRet = 0x00668B88;
+
+void __declspec(naked) OnHitEntryCave() {
+    __asm {
+        pushad
+        mov     ebx, [esp + 0x20 + 0x04]    ; a2  = attacker char id
+        mov     edx, [esp + 0x20 + 0x08]    ; a3  = skill id
+        mov     esi, [esp + 0x20 + 0x24]    ; a10
+        push    esi
+        push    edx
+        push    ebx
+        push    ecx                         ; this = CMob*
+        call    OnHitLog
+        add     esp, 16
+        popad
+        mov     eax, 0x00AA1A50             ; overwritten instruction (EH prolog handler)
+        jmp     [dwOnHitRet]
+    }
+}
+
+// The gate in front of that call. CMob::OnHit only reaches GenerateMovePath when the mob's
+// action timer (mob+0x3CC) is zero, the skill is one of three hardcoded ids, or the player is
+// an Aran (job/100 == 21) / job 2000. That is why Rising Toss works and nothing else does --
+// on any other class the whole hit-displacement path is skipped. This cave sits on the job
+// lookup at 0x00668D72 and jumps straight to the call for skills in our list, which is exactly
+// what the Aran branch does.
+// Measured with the entry probe, a normal (non-Aran) hit looks like:
+//   skill=5101010 attacker=6 local=6 ctrl=-3 a10=0 moveAbility=1
+// so the branch dies on its first two tests -- `a10` is 0, and the mob control state is -3
+// (another client controls it; the engine only wants -2 or > 0). Everything downstream,
+// including the Aran job gate, is unreachable. This cave replaces the whole condition chain
+// at 0x00668CC0: keep the "hit came from us" test, then for a listed skill jump straight to
+// the GenerateMovePath call site, which is where TossFlagCave substitutes the toss flag.
+// Reaching the engine's own call site turned out to be a dead end: every hit fails the branch
+// on `a10 == 0` and `ctrl == -3` long before it, and a cave over the whole chain never ran
+// either. So skip CMob::OnHit entirely and call the displacement primitive ourselves, from the
+// per-hit entry (sub_66B05E, the "mob got hit by X" queue point, whose arg_0 is the attacker
+// char id and arg_4 the skill id).
+//
+// Argument mapping recovered from the engine's own call
+//   GenerateMovePath(mob, a4, a5==0, 0, a9, a10, a12, a13, a14, bToss):
+//   a2 = mob hit action (must be 6..8 for the toss branch)
+//   a3 = 64-bit, passed as two slots
+//   a5 = hit action type; 10 is the Aran toss that calls sub_9BECC1(dbl_AF82B8)
+//   a6 = attacker x, a9 = the toss flag (sub_9BECC1(dbl_AF82B0))
+auto MobGenerateMovePath = (void(__thiscall*)(void*, int, int, int, int, int, int, int, int, int))0x0066B6FC;
+
+void __cdecl TossApply(void* pMob, int nAttacker, int nSkillID) {
+    if (std::find(g_tossSkills.begin(), g_tossSkills.end(), nSkillID) == g_tossSkills.end()) {
+        return;
+    }
+    void* pUser = *reinterpret_cast<void**>(0x00BEBF98);
+    if (!pUser || !pMob || IsBadReadPtr(pMob, 0x190)) {
+        return;
+    }
+    if (nAttacker != *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x11A8)) {
+        return; // only our own hits toss
+    }
+    int userX = 0;
+    if (IWzVector2D* pvc = reinterpret_cast<CUserLocal*>(pUser)->m_pvc) {
+        if (CVecCtrl* vc = CVecCtrl::FromInterface(pvc)) {
+            userX = static_cast<int>(pullFuseDouble(reinterpret_cast<double*>(reinterpret_cast<char*>(vc) + 0x20),
+                    *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(vc) + 0x30)));
+        }
+    }
+    LogInfo("Toss: applying to mob=%p skill=%d userX=%d", pMob, nSkillID, userX);
+    MobGenerateMovePath(pMob, 6, 0, 0, 0, 10, userX, 0, 0, 1);
+}
+
+static DWORD dwHitQueueRet = 0x0066B063;
+
+void __declspec(naked) HitQueueCave() {
+    __asm {
+        pushad
+        mov     ebx, [esp + 0x20 + 0x04]    ; arg_0 = attacker char id
+        mov     edx, [esp + 0x20 + 0x08]    ; arg_4 = skill id
+        push    edx
+        push    ebx
+        push    ecx                         ; this = CMob*
+        call    TossApply
+        add     esp, 12
+        popad
+        mov     eax, 0x00AA1A50             ; overwritten instruction (EH prolog handler)
+        jmp     [dwHitQueueRet]
+    }
+}
+
+static DWORD dwTossFlagRet = 0x00668D93;
+
+void __declspec(naked) TossFlagCave() {
+    __asm {
+        pushad
+        push    dword ptr [ebp + 0x78]      ; arg_C = mob hit action
+        push    dword ptr [ebp + 0x70]      ; arg_4 = skill id of this hit
+        call    TossSkillCheck
+        add     esp, 8
+        popad
+        cmp     byte ptr [g_forceToss], 0
+        jz      keepOriginal
+        push    1                           ; force the Rising Toss launch
+        jmp     done
+    keepOriginal:
+        push    dword ptr [ebp - 0x14]      ; overwritten instruction: engine's own flag
+    done:
+        xor     eax, eax                    ; overwritten instruction
+        jmp     [dwTossFlagRet]
+    }
+}
+
 auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A;
 int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, void* bstr, int attackIdx) {
     int ret = loadSummonAttackInfo(thisCSB, retbuf, bstr, attackIdx);
@@ -4332,6 +4508,16 @@ void AttachSkillEdits() {
     // Summon pull: brackets the attack so the damage hooks can collect the mobs that got hit,
     // then drags the ones we control toward the summon. Dormant while g_summonPullSkills is empty.
     ATTACH_HOOK(summonTryDoingAttackManual, summonTryDoingAttackManual_hook);
+
+    // Rising Toss for arbitrary skills, two caves in CMob::OnHit:
+    //   0x00668D72 - open the Aran-only gate so listed skills reach GenerateMovePath at all
+    //                (mov eax,[esi] 2 + mov ecx,esi 2 + call [eax+40h] 3 = 7 bytes, 2 to NOP)
+    //   0x00668D8E - substitute the toss flag it passes as the last argument
+    //                (push [ebp-0x14] 3 + xor eax,eax 2 = exactly the 5 the jmp needs)
+    CodeCave((void*)OnHitEntryCave, 0x00668B83, 0);
+    // Toss: call GenerateMovePath ourselves at the per-hit queue entry (sub_66B05E), because
+    // CMob::OnHit's own path is unreachable for non-Aran hits (a10 == 0 / ctrl == -3).
+    CodeCave((void*)HitQueueCave, 0x0066B05E, 0);
     // NOTE: the octoMultiHit seek-routing cave (0x7A5062) is intentionally NOT installed. All summons
     // now get the +0x80 rect path in loadSummonAttackInfo_hook, which gives stationary octopus
     // summons their multi-hit via FindHitMobInRect without the fragile seek/cave detour.
