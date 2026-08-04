@@ -278,6 +278,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 1121021
+            cmp esi, eax
+            je buff
+
 
 
                 // Spearman
@@ -302,10 +306,6 @@ void __declspec(naked) doActiveSkills() {
             je buff
 
             mov eax, 1221016
-            cmp esi, eax
-            je melee
-
-            mov eax, 1221021
             cmp esi, eax
             je melee
 
@@ -959,7 +959,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 1221021
             cmp esi, eax
-            je melee
+            je buff
 
             mov eax, 1221052
             cmp esi, eax
@@ -1085,11 +1085,11 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 3601014
             cmp esi, eax
-            je shoot
+            je summons
 
             mov eax, 3601015
             cmp esi, eax
-            je summons
+            je shoot
 
             mov eax, 4121019
             cmp esi, eax
@@ -1646,6 +1646,7 @@ bool isSkillIDMatched(int nSkillID) {
         1221016,
         1221021,
         1221052,
+        1121021,
 
         // ===== Duelist =====
         1411003,
