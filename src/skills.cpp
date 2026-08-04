@@ -202,8 +202,65 @@ void setMAD() {
     }
 }
 
+// ===== Instant cast for charge (keydown / prepare) skills ==================================
+// Skills like 2321001 (Big Bang) are keydown skills: the vanilla dispatch sends them to
+// CUserLocal::DoActiveSkill_Prepare (0x0096A86E), which only plays the charge-up and sends the
+// prepare packet -- the attack itself waits for the key to come back up. Listing a skill here
+// does two things:
+//   1. this router sends it to DoActiveSkill_MagicAttack instead, so a single press fires the
+//      attack outright with no charge, and
+//   2. is_keydown_skill reports 0 for it, so nothing else in the client (MP consume in
+//      CheckConsumeForActiveSkill, the keydown skill sound, cancel-on-hit in SetDamaged, macro
+//      mapping) keeps treating it as a charge skill.
+// Only for skills whose attack is a magic attack. A charge skill that attacks with a weapon
+// (3121004 Hurricane, 3221001 Pierce, 5101004 Dash) needs meleeAttack/shootAttack instead --
+// route those by hand in the chain below rather than adding them here.
+static const std::vector<int> g_noChargeSkills = {
+    2221021, // Big Bang (Bishop)
+};
+
+int __cdecl IsNoChargeSkill(int nSkillID) {
+    return std::find(g_noChargeSkills.begin(), g_noChargeSkills.end(), nSkillID)
+            != g_noChargeSkills.end();
+}
+
+// ===== Hurricane-style hold-to-repeat, as a magic attack ===================================
+// 3121004 (Hurricane), 13111002 and 5221004 (Rapid Fire) are the only skills CUserLocal::Update
+// re-fires while the key stays down: a hardcoded id test @ 0x0094BA70 gives them a 100ms repeat
+// tick, and that tick attacks through TryDoingMeleeAttack -> TryDoingShootAttack, i.e. a weapon
+// attack that needs arrows/bullets. Skills listed here get the same hold-to-repeat, except the
+// tick calls TryDoingMagicAttack and the ammo checks in front of it are skipped, so it works for
+// a magic skill. They also report as keydown skills and route to DoActiveSkill_Prepare, which is
+// what arms the keydown state the repeat tick runs off. See the three caves near
+// isKeydownSkillHook for the machinery.
+static const std::vector<int> g_magicHurricaneSkills = {
+    2121017 // put the skill id here, e.g. 2321099
+};
+
+int __cdecl IsMagicHurricaneSkill(int nSkillID) {
+    return std::find(g_magicHurricaneSkills.begin(), g_magicHurricaneSkills.end(), nSkillID)
+            != g_magicHurricaneSkills.end();
+}
+
 void __declspec(naked) doActiveSkills() {
     __asm {
+        // Instant-cast list first: charge skills we want to fire on a single press. esi (the
+        // skill id), ebx and ebp are all callee-saved across the cdecl call, so the magic
+        // branch below still finds what it needs.
+            push esi
+            call IsNoChargeSkill
+            add esp, 4
+            test eax, eax
+            jnz magic
+
+        // Hold-to-repeat magic skills take the prepare path -- that is what arms the keydown
+        // state CUserLocal::Update ticks off; the attack itself comes from the repeat tick.
+            push esi
+            call IsMagicHurricaneSkill
+            add esp, 4
+            test eax, eax
+            jnz prepare
+
         // Warrior
             mov eax, 1001006
             cmp esi, eax
@@ -1701,6 +1758,7 @@ bool isSkillIDMatched(int nSkillID) {
         2121005,
         2121026,
         2121027,
+        2121017,
 
         // ===== Priest =====
         2211011,
@@ -3066,6 +3124,151 @@ void flashJump() {
     Patch1(0x0096C02E + 2, 0x3);
 }
 
+// The client's own "is this a charge skill" test (1121001/1221001/1321001, 2121001, 2221001,
+// 2321001, 3121004, 3221001, 4341002, 5101004, 5201002, 22121000, 22151001). Everything that
+// still cares about the keydown state machine after the router has already sent the skill down
+// the magic-attack path asks this, so answer 0 for the instant-cast list.
+auto isKeydownSkill = (int(__cdecl*)(int))0x004FB08F;
+int __cdecl isKeydownSkillHook(int nSkillID) {
+    if (IsNoChargeSkill(nSkillID)) {
+        return 0;
+    }
+    if (IsMagicHurricaneSkill(nSkillID)) {
+        return 1; // hold-to-repeat needs the keydown state DoActiveSkill_Prepare arms
+    }
+    return isKeydownSkill(nSkillID);
+}
+
+// CUserLocal fields the keydown repeat tick in CUserLocal::Update (0x0094A144) works off:
+//   +0x2AE8 m_nKeyDownSkill   +0x312C tKeyDownStart   +0x3134 bKeyDown   +0x3144 tLastRepeat
+static const unsigned KEYDOWN_SKILL_OFF = 0x2AE8;
+static const unsigned KEYDOWN_START_OFF = 0x312C;
+
+auto pTryDoingMagicAttack = (int(__thiscall*)(void*, const void*, int, int, int))0x0095571F;
+auto pTryDoingShootAttack = (int(__thiscall*)(void*, const void*, int, int, int, int, int))0x009537D5;
+auto pGetUpdateTime = (int(__cdecl*)())0x00987257;
+auto pKeyDownSkillMaxTime = (int(__cdecl*)(int))0x00500971; // 1000 or 2000ms per skill
+
+// One repeat tick of a hold-to-repeat magic skill. Returns 1 when it fired, so the cave below can
+// skip the engine's TryDoingShootAttack. Re-reads the skill entry and level through CSkillInfo
+// instead of borrowing CUserLocal::Update's locals, so it does not depend on that frame layout.
+int __cdecl MagicHurricaneAttack(void* pUser) {
+    if (!pUser) {
+        return 0;
+    }
+    const int nSkillID = *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + KEYDOWN_SKILL_OFF);
+    if (!IsMagicHurricaneSkill(nSkillID)) {
+        return 0;
+    }
+    SkillInfo* si = SkillInfo::GetInstance();
+    if (!si) {
+        return 0;
+    }
+    void* zref[2] = { nullptr, nullptr };
+    GetCharacterData(CWvsContext::GetInstance(), zref); // ZRef<CharacterData>; ptr at zref[1]
+    if (!zref[1]) {
+        return 0;
+    }
+    const void* pEntry = nullptr;
+    const int nLevel = pGetSkillLevel(reinterpret_cast<int>(si), zref[1], nSkillID,
+            reinterpret_cast<int>(&pEntry));
+    reinterpret_cast<void(__thiscall*)(void*, void*)>(0x00428C44)(zref, nullptr); // ZRef::_ReleaseRaw
+    if (nLevel <= 0 || !pEntry) {
+        return 0;
+    }
+    // Same keydown duration OnKeyDownSkillEnd hands the attack: at least 30ms, capped at the max.
+    int tKeyDown = pGetUpdateTime()
+            - *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + KEYDOWN_START_OFF);
+    if (tKeyDown <= 30) {
+        tKeyDown = 30;
+    }
+    const int nMax = pKeyDownSkillMaxTime(nSkillID);
+    if (nMax > 0 && tKeyDown > nMax) {
+        tKeyDown = nMax;
+    }
+    pTryDoingMagicAttack(pUser, pEntry, nLevel, 0, tKeyDown);
+    return 1;
+}
+
+static DWORD dwKeyDownTickRet  = 0x0094BA75; // the `jz` that follows the Hurricane id compare
+static DWORD dwKeyDownTickTake = 0x0094BA7E; // Hurricane branch: 100ms elapsed -> repeat this tick
+static DWORD dwKeyDownLevelRet = 0x0094BADB; // instruction after the GetSkillLevel call
+static DWORD dwKeyDownSkipAmmo = 0x0094BBAE; // `mov [ebp-10h], 1`, i.e. past every ammo check
+static DWORD dwKeyDownAttackRet = 0x0094BBED; // instruction after the TryDoingShootAttack call
+
+// Cave 1 (0x0094BA70): add our skills to the id test that grants the 100ms repeat tick. eax holds
+// m_nKeyDownSkill here; `pop` does not touch flags, so the test result survives the restore.
+void __declspec(naked) KeyDownTickGate() {
+    __asm {
+            push eax
+            call IsMagicHurricaneSkill
+            add esp, 4
+            test eax, eax
+            pop eax
+            jnz take
+            cmp eax, 3121004            // overwritten instruction (Hurricane)
+            jmp [dwKeyDownTickRet]
+        take:
+            jmp [dwKeyDownTickTake]
+    }
+}
+
+// Cave 2 (0x0094BAD6): the tick's arrow/bullet checks (GetProperBulletPosition, the star/bullet
+// count) run before the attack and would abort the hold for a magic skill, which has no ammo.
+// Replicate the overwritten GetSkillLevel call, then jump our skills straight past them.
+void __declspec(naked) KeyDownAmmoGate() {
+    __asm {
+            call [pGetSkillLevel]       // overwritten instruction (args and ecx already set up)
+            push eax                    // skill level
+            push dword ptr [ebx + 0x2AE8]
+            call IsMagicHurricaneSkill
+            add esp, 4
+            test eax, eax
+            pop eax
+            jz original
+            mov edi, eax                // skill level, as the instruction we jump over would
+            xor esi, esi                // the code we land in expects esi == 0
+            jmp [dwKeyDownSkipAmmo]
+        original:
+            jmp [dwKeyDownLevelRet]
+    }
+}
+
+// Cave 3 (0x0094BBE8): the tick's actual attack. For our skills fire TryDoingMagicAttack (which
+// MagicHurricaneAttack does, with its own arguments) and drop the six arguments the caller already
+// pushed for TryDoingShootAttack; otherwise make the original call. ebx is the CUserLocal*.
+void __declspec(naked) KeyDownAttackGate() {
+    __asm {
+            push ebx
+            call MagicHurricaneAttack
+            add esp, 4
+            test eax, eax
+            jnz handled
+            mov ecx, ebx                // thiscall target, clobbered by the call above
+            call [pTryDoingShootAttack] // overwritten instruction
+            jmp [dwKeyDownAttackRet]
+        handled:
+            add esp, 24                 // the 6 pushed shoot arguments nobody consumed
+            jmp [dwKeyDownAttackRet]
+    }
+}
+
+// Key release. Hurricane answers it with SendSkillCancelRequest -- the hits already went out
+// during the hold, so all that is left is telling the server the keydown ended. Same for ours;
+// the original still runs afterwards for the sound/effect/state cleanup.
+auto pOnKeyDownSkillEnd = (void(__thiscall*)(void*))0x0095BEDF;
+
+void __fastcall OnKeyDownSkillEnd_hook(void* _this, void* edx) {
+    if (_this) {
+        const int nSkillID =
+                *reinterpret_cast<int*>(reinterpret_cast<char*>(_this) + KEYDOWN_SKILL_OFF);
+        if (IsMagicHurricaneSkill(nSkillID)) {
+            CUserLocal__SendSkillCancelRequest(reinterpret_cast<CUserLocal*>(_this), nSkillID);
+        }
+    }
+    pOnKeyDownSkillEnd(_this);
+}
+
 auto elementCharge = (int(__cdecl*)(int))0x007908E7;
 int __cdecl elementChargeHook(int skillid) {
     if (skillid == 3111018) {
@@ -4197,6 +4400,46 @@ void __cdecl TossApply(void* pMob, int nAttacker, int nSkillID) {
     MobGenerateMovePath(pMob, 6, 0, 0, 0, 10, userX, 0, 0, 1);
 }
 
+// ===== Knockback for other skills ==========================================================
+// Same primitive as the toss, but down GenerateMovePath's plain hit-displacement path instead
+// of the Aran launch: a2 = 6 (a hit action, required for the displacement switch), a5 = 8 (the
+// 700-unit horizontal push with no lift), a9 = 0 (not a toss). The engine takes the SIGN of that
+// push from a3 -- non-zero pushes +x, zero pushes -x -- so we set it from where the mob stands
+// relative to us and the mob always flies away, never through the player.
+static const std::vector<int> g_knockbackSkills = {
+    1211000, // Charged Blow
+};
+
+void __cdecl KnockbackApply(void* pMob, int nAttacker, int nSkillID, int nHitIdx) {
+    if (nHitIdx != 0) {
+        return; // one push per attack, not one per hit of a multi-hit
+    }
+    if (std::find(g_knockbackSkills.begin(), g_knockbackSkills.end(), nSkillID)
+            == g_knockbackSkills.end()) {
+        return;
+    }
+    void* pUser = *reinterpret_cast<void**>(0x00BEBF98);
+    if (!pUser || !pMob || IsBadReadPtr(pMob, 0x190)) {
+        return;
+    }
+    if (nAttacker != *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x11A8)) {
+        return; // only our own hits knock back
+    }
+    int userX = 0;
+    if (IWzVector2D* pvc = reinterpret_cast<CUserLocal*>(pUser)->m_pvc) {
+        if (CVecCtrl* vc = CVecCtrl::FromInterface(pvc)) {
+            userX = static_cast<int>(vecCtrlGetSecure(vc, 0x20));
+        }
+    }
+    // Mob x is the short at +0x1F2 of the vec-ctrl path block (the one mobSetPosX reseats).
+    char* path = mobVecCtrlPath(reinterpret_cast<Mob*>(pMob));
+    if (!path) {
+        return;
+    }
+    const int mobX = *reinterpret_cast<short*>(path + 0x1F2);
+    MobGenerateMovePath(pMob, 6, mobX >= userX ? 1 : 0, 0, 0, 8, userX, 0, 0, 0);
+}
+
 static DWORD dwHitQueueRet = 0x0066B063;
 
 void __declspec(naked) HitQueueCave() {
@@ -4209,6 +4452,16 @@ void __declspec(naked) HitQueueCave() {
         push    ecx                         ; this = CMob*
         call    TossApply
         add     esp, 12
+        mov     ecx, [esp + 0x18]           ; this = CMob*, reloaded (cdecl call clobbered it)
+        mov     ebx, [esp + 0x20 + 0x04]    ; arg_0 = attacker char id
+        mov     edx, [esp + 0x20 + 0x08]    ; arg_4 = skill id
+        mov     eax, [esp + 0x20 + 0x20]    ; arg_14 hit index (the [ebp+24h] the engine reads)
+        push    eax
+        push    edx
+        push    ebx
+        push    ecx
+        call    KnockbackApply
+        add     esp, 16
         popad
         mov     eax, 0x00AA1A50             ; overwritten instruction (EH prolog handler)
         jmp     [dwHitQueueRet]
@@ -4803,6 +5056,17 @@ void AttachSkillEdits() {
     ATTACH_HOOK(thingyWindArcher, windarcherhook);
     ATTACH_HOOK(SetDamaged_Hook, SetDamaged);
     ATTACH_HOOK(elementCharge, elementChargeHook);
+    ATTACH_HOOK(isKeydownSkill, isKeydownSkillHook);
+    // Hurricane-style hold-to-repeat for g_magicHurricaneSkills, three caves in CUserLocal::Update:
+    //   0x0094BA70 - add them to the id test that grants the 100ms repeat tick
+    //   0x0094BAD6 - jump the tick past the arrow/bullet checks (a magic skill has no ammo)
+    //   0x0094BBE8 - attack with TryDoingMagicAttack instead of TryDoingShootAttack
+    // Plus SendSkillCancelRequest on release, which is what Hurricane does. All dormant while the
+    // list is empty. Each patch site is exactly the 5 bytes the jmp needs.
+    CodeCave((void*)KeyDownTickGate, 0x0094BA70, 0);
+    CodeCave((void*)KeyDownAmmoGate, 0x0094BAD6, 0);
+    CodeCave((void*)KeyDownAttackGate, 0x0094BBE8, 0);
+    ATTACH_HOOK(pOnKeyDownSkillEnd, OnKeyDownSkillEnd_hook);
 
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
