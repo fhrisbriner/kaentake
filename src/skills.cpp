@@ -25,6 +25,7 @@ chrono::time_point<chrono::steady_clock> immunetimer;
 chrono::time_point<chrono::steady_clock> aniCancelTimer;
 chrono::time_point<chrono::steady_clock> activeTimer;
 chrono::time_point<chrono::steady_clock> standTimer;
+chrono::time_point<chrono::steady_clock> movementLockTimer;
 CVecCtrl* CVecPointer = nullptr;
 bool jobPatchesApplied = false;
 static std::mt19937 rng(std::random_device{}());
@@ -113,6 +114,8 @@ int sniperShred = 0;
 int duelistShred = 0;
 int galeShot = 0;
 int masterSkies = 0;
+int hermitBoss = 0;
+int stone = 0;
 constexpr int POISON_PASSIVE_SKILLID = 2110009;
 
 // NOT A SKILL
@@ -129,6 +132,14 @@ int pad = 0;
 int summonSeekRangeX = 800; // gate-1 (sub_678ECC cave) search half-width around player (known-good value)
 int summonSeekRangeY = 400; // gate-1 (sub_678ECC cave) search half-height around player
 int summonReach = 1500;     // gate-2 summon attack reach written into v7[13] (+0x34); default ~500
+
+// Attack-follow gate: seeking summons only acquire targets within this window after the local
+// player last attacked/cast, so they fight when you fight and idle when you idle. <= 0 disables
+// the gate (always auto-aggro, the old behavior). Stationary octopus-type summons don't use the
+// seek path and are unaffected.
+int summonFollowWindowMs = 6000;
+DWORD lastPlayerAttackTick = 0; // GetTickCount() of last local-player attack/skill cast
+int summonSeekGateOpen = 1;     // recomputed by UpdateSummonSeekGate before each summon seek
 double clMultiplier = 1.25;
 
 int get_weapon_type() {
@@ -259,6 +270,16 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je smoke
 
+            mov eax, 1121002
+            cmp esi, eax
+            je buff
+
+            mov eax, 1121012
+            cmp esi, eax
+            je melee
+
+
+
                 // Spearman
             mov eax, 1211012
             cmp esi, eax
@@ -275,6 +296,22 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 1211014
             cmp esi, eax
             je melee
+
+            mov eax, 1221011
+            cmp esi, eax
+            je buff
+
+            mov eax, 1221016
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221021
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221052
+            cmp esi, eax
+            je summons
 
             mov eax, 1201017
             cmp esi, eax
@@ -404,8 +441,58 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 2121007
+            cmp esi, eax
+            je prepare
 
-                // Priest
+            mov eax, 2121026
+            cmp esi, eax
+            je magic
+
+            mov eax, 2121027
+            cmp esi, eax
+            je magic
+
+            //BISHOP
+
+            mov eax, 2221015
+            cmp esi, eax
+            je buff
+
+            mov eax, 2221021
+            cmp esi, eax
+            je magic
+
+            mov eax, 2221106
+            cmp esi, eax
+            je buff
+
+            // IL ARCHMAGE
+
+            mov eax, 2421005
+            cmp esi, eax
+            je summons
+
+            mov eax, 2421006
+            cmp esi, eax
+            je magic
+
+            mov eax, 2421007
+            cmp esi, eax
+            je magic
+
+            mov eax, 2421014
+            cmp esi, eax
+            je buff
+
+
+
+            //Paladin
+
+
+
+
+            // Priest
             mov eax, 2211011
             cmp esi, eax
             je buff
@@ -646,6 +733,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 4511016
+            cmp esi, eax
+            je buff
+
             mov eax, 4511003
             cmp esi, eax
             je melee
@@ -764,7 +855,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5111014
             cmp esi, eax
-            je shoot
+            je summons
 
             mov eax, 5111015
             cmp esi, eax
@@ -772,7 +863,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5111016
             cmp esi, eax
-            je shoot
+            je buff
 
             mov eax, 5111017
             cmp esi, eax
@@ -815,6 +906,14 @@ void __declspec(naked) doActiveSkills() {
             je buff
 
             mov eax, 4501006
+            cmp esi, eax
+            je buff
+
+            mov eax, 2211015
+            cmp esi, eax
+            je buff
+
+            mov eax, 2511011
             cmp esi, eax
             je buff
 
@@ -1148,7 +1247,22 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     }
     int invincible = ss->m_invincible.Fuse();
     int mesoguard = ss->m_mesoGuard.Fuse();
-    int mobPD = applyMobAttackStat(ms, ms->nPAD, false); // fold WATK up/down debuff
+    // psd is NOT a plain int: it's the MOBATTACKINFO* for the attack that hit us, and NULL for
+    // touch damage. Verified in the original @ 0x79309F:
+    //   base PAD = [psd+0x18] when psd != NULL (the attack node's own PADamage),
+    //   base PAD = ms->nPAD (+0x24, template PAD) when psd == NULL (touch),
+    // plus the PAD temp-stat option (+0x28) either way. Attacks can carry a custom PADamage in
+    // their WZ attack node, so a skill hit must read the attack info, not the template PAD.
+    // Fall back to the template PAD when the attack node has no/zero PADamage so custom attacks
+    // without the node keep dealing touch-level damage instead of ~0.
+    int basePAD = ms->nPAD;
+    if (psd && !IsBadReadPtr(reinterpret_cast<void*>(psd), 0x1C)) {
+        int attackPAD = *reinterpret_cast<int*>(psd + 0x18);
+        if (attackPAD > 0) {
+            basePAD = attackPAD;
+        }
+    }
+    int mobPD = applyMobAttackStat(ms, basePAD, false); // fold WATK up/down debuff
     double baseDamage = mobPD;
     int level = bs->nLevel.Fuse();
     int mobLevel = ms->nLevel;
@@ -1156,15 +1270,22 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int dex = bs->nDEX.Fuse() / 20;
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 40;
+    double stonedef = stone * 0.015;
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
     int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (stone > 0.0) {
+        preSkillMitigationDamage -= preSkillMitigationDamage * stonedef;
+    }
     if (invincible > 0) {
         preSkillMitigationDamage *= (1.0 - (invincible * 0.01));
     }
     if (mesoguard > 0) {
         preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    if (preSkillMitigationDamage <= 0) {
+        return 1;
     }
     return preSkillMitigationDamage;
 }
@@ -1187,12 +1308,19 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     int dex = bs->nDEX.Fuse() / 40;
     int luk = bs->nLUK.Fuse() / 20;
     int _int = bs->nINT.Fuse() / 10;
+    double stonedef = stone * 0.015;
     double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (500 + PDD));
     double leveldiff = 1 + (level - mobLevel) * 0.005;
     int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    if (stonedef > 0.0) {
+        preSkillMitigationDamage -= preSkillMitigationDamage * stonedef;
+    }
     if (mesoguard > 0) {
         preSkillMitigationDamage *= (1.0 - (mesoguard * 0.01));
+    }
+    if (preSkillMitigationDamage <= 0) {
+        return 1;
     }
     return preSkillMitigationDamage;
 }
@@ -1387,9 +1515,11 @@ bool isSkillIDMatched(int nSkillID) {
         2511006,
         2511004,
         2511001,
+        2511011,
 
         // ===== Priest =====
         2211004,
+        2211015,
 
         // ===== Bowman =====z
         3001013,
@@ -1476,6 +1606,7 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Bandit 3rd =====
         4511006,
+        4511016,
         4511013,
         4511003,
         4511007,
@@ -1490,7 +1621,7 @@ bool isSkillIDMatched(int nSkillID) {
         5501001,
 
         // ===== Marauder 3rd =====
-        5111013,
+        5111013, 5111016, 5111014,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
         5401002,
@@ -1633,6 +1764,8 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     sniperShred = pGetSkillLevel(_this, charData, 3210018, skillEntry);
     galeShot = pGetSkillLevel(_this, charData, 3411007, skillEntry);
     masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
+    hermitBoss = pGetSkillLevel(_this, charData, 4110031, skillEntry);
+    stone = pGetSkillLevel(_this, charData, 1510005, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -1717,7 +1850,7 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if ((nSkillID >= 5101000 && nSkillID < 5200000) || (nSkillID >= 5401000 && nSkillID < 5500000)) {
+    if ((nSkillID >= 5101000 && nSkillID < 5200000) || (nSkillID >= 5401000 && nSkillID < 5500000) || nSkillID == 15101006) {
         if (get_weapon_type() == 48) {
             return true;
         }
@@ -1742,7 +1875,10 @@ bool isCorrectWeapon(int nSkillID) {
             return true;
         }
     }
-    if (nSkillID >= 3601001 && nSkillID <= 3601006) {
+    if (nSkillID >= 3601001 && nSkillID <= 3601007) {
+        return true;
+    }
+    if (nSkillID > 10000000) {
         return true;
     }
     return false;
@@ -2210,7 +2346,7 @@ auto SetImpactNext = (void(__thiscall*)(CVecCtrl*, double, double))0x7a6353;
 void(__fastcall SetImpactNext_Hook)(CVecCtrl* _this, void* edx, double x, double y) {
     int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (job >= 300 && (int)_ReturnAddress() == 0x0096DAFF && job < 400) {
-        return SetImpactNext(_this, -x, y);
+        return SetImpactNext(_this, -x, -150);
     }
     return SetImpactNext(_this, x, y);
 }
@@ -2252,21 +2388,16 @@ int(__fastcall CUserLocal_Jump)(CUserLocal* _this, void* edx, int a2) {
     return pDoJump(_this, a2);
 }
 
-bool firsthit = false;
-
+// Shared 600ms lockout across the movement skills: once one of them actually applies its
+// impulse (movementLockTimer is armed next to SetImpactNext in the DoActiveSkill hook, so
+// casts rejected earlier in the chain don't count), the group stays locked until the window
+// expires. 5101010 sits fully outside the group (never blocked here, and the arm site skips
+// it so it doesn't lock the others); 1511009 ignores the lockout but still arms it.
+// Returns true when casting is allowed.
 bool MovementLockOut(int nSkillID) {
-    int late = 750;
-    if ((nSkillID == 1511009 && !firsthit)) {
-        firsthit = true;
-        return true;
-    }
-    if (nSkillID == 5101010) {
-        return true;
-    }
-    auto telapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - activeTimer);
-    auto skillelapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - skilltimer);
-    if (skillelapsed.count() < 220) {
-        return false;
+    if (nSkillID != 5101010 && nSkillID != 1511009) {
+        auto elapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - movementLockTimer);
+        return elapsed.count() >= 600;
     }
     return true;
 }
@@ -2343,6 +2474,26 @@ void __declspec(naked) shipSkills() {
 }
 
 
+// CSkillInfo::CheckConsumeForActiveSkill @ 0x00764256 (cdecl): validates the skill's HP/MP/meso/
+// item costs against current stats (SKILLLEVELDATA hpCon +0x94 / mpCon +0xA0 vs the secured
+// current-HP/MP shorts at CharacterData +0x61/+0x71). Returns 1 = castable, 0 = no learned level,
+// 2/3/4 = not enough HP/MP/mesos. Same check vanilla DoActiveSkill runs at 0x967759.
+auto pCheckConsumeForActiveSkill =
+        (int(__cdecl*)(void* pCharData, BasicStat* pBS, SecondaryStat* pSS, int nSkillID))0x00764256;
+
+int CheckSkillConsume(int nSkillID) {
+    void* zref[2] = { nullptr, nullptr };
+    GetCharacterData(CWvsContext::GetInstance(), zref); // ZRef<CharacterData>; ptr at zref[1]
+    if (!zref[1]) {
+        return 0;
+    }
+    int result = pCheckConsumeForActiveSkill(zref[1],
+            &CWvsContext::GetInstance()->get_m_basicStat(),
+            &CWvsContext::GetInstance()->get_m_secondaryStat(), nSkillID);
+    reinterpret_cast<void(__thiscall*)(void*, void*)>(0x00428C44)(zref, nullptr); // ZRef::_ReleaseRaw
+    return result;
+}
+
 auto pDoActiveSkill = (int(__thiscall*)(CUserLocal*, int, int, int))0x00966F7A;
 
 int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int nSkillID, unsigned int nScanCode,
@@ -2358,6 +2509,10 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             return 0;
         }
     }
+    // Attack-follow gate: any skill cast (attack, buff, or the summon itself) counts as the player
+    // being active, so the summon starts fighting immediately after you act. Basic attacks are
+    // covered separately in setAttackAction.
+    lastPlayerAttackTick = GetTickCount();
     if (CWvsContext::GetInstance()->m_basicStat.nJob.Fuse() != job) {
         job = CWvsContext::GetInstance()->m_basicStat.nJob.Fuse();
         comboStuff();
@@ -2392,6 +2547,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 2211013) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 2311005, nScanCode, pnConsumeCheck);
         }
+        if (nSkillID == 5111016) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 15101006, nScanCode, pnConsumeCheck);
+        }
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
 
@@ -2399,6 +2557,14 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         return 0;
     }
 
+    // Mana gate: vanilla DoActiveSkill runs the consume check only deep inside the original call,
+    // AFTER the side effects below (movement impulses, combo spends, attack patches) have already
+    // fired -- and paths that return 0 before calling the original skip it entirely, giving free
+    // casts with no MP. Check first; on failure hand straight to the original so it shows the
+    // proper "not enough ..." message and nothing else happens.
+    // if (CheckSkillConsume(nSkillID) != 1) {
+    //     return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    // }
 
     unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
     if (nSkillID == 3411006) {
@@ -2426,32 +2592,46 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         Patch4(0x00952F20 + 3, 1511003);
     }
 
+    // Movement impulses are computed up front but, for skills that actually cast, only
+    // applied after pDoActiveSkill reports success — a cast the client rejects (no MP,
+    // wrong weapon, cooldown, consume check) must not grant velocity.
+    bool bApplyImpactOnSuccess = false;
+    bool bArmAniCancelOnSuccess = false;
+    int movepath = 0;
+    double vx = 0.0;
+    double vy = 0.0;
+    CVecCtrl* pCv = nullptr;
     if (isMovementSkill(nSkillID) && !g_inOneTimeAction) {
-        bool move = true;
-        bool grounded = false;
-        CVecCtrl* pCv = CVecCtrl::FromInterface(_This->m_pvc);
+        pCv = CVecCtrl::FromInterface(_This->m_pvc);
         if (IsOnRope(pCv) || IsOnLadder(pCv) || !MovementLockOut(nSkillID)) {
             return 0;
         }
-        int movepath = 0;
-        double vx = 0.0;
-        double vy = 0.0;
         int skillLevel = 0;
-        int avatar = _This->m_avatar;
         if (nSkillID == 1511009 && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
-            movepath = 6;
-            vy = -800;
-            auto elapsed = chrono::steady_clock::now() - jumptimer;
-            if (elapsed < chrono::milliseconds(250)) {
+            // Grounded rising jump is pure client-side motion: the real cast is skipped
+            // (return 0 below), so there is no consume gate to defer behind — it applies
+            // immediately, rate-limited by jumptimer.
+            auto elapsedJump = chrono::steady_clock::now() - jumptimer;
+            if (elapsedJump < chrono::milliseconds(250)) {
                 return 0;
             }
-            grounded = true;
+            SetMovePath(pCv, 6);
+            movementLockTimer = chrono::steady_clock::now();
+            SetImpactNext(pCv, 0.0, -800.0);
+            return 0;
         }
-        if (nSkillID == 1511009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+        if (nSkillID == 1511009) { // not grounded -> falling or free-falling
             vx = 300.0;
             vy = 1000.0;
         }
+        // Airborne and not descending = rising (jump ascent, e.g. right after a rising
+        // jump). The dashes below only get momentum on the ground or while falling, so a
+        // rising-state cast is rejected outright instead of granting an air boost.
+        const bool bRising = IsFreeFalling(pCv) && !IsFalling(pCv);
         if (nSkillID >= 1411005 && nSkillID <= 1411006) {
+            if (bRising) {
+                return 0;
+            }
             if (nSkillID == 1411005) {
                 skillLevel = asLevel;
             } else {
@@ -2463,19 +2643,22 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             }
         }
         if (nSkillID == 4211015) {
+            if (bRising) {
+                return 0;
+            }
             skillLevel = bsLevel;
             vx = 1100.0;
         }
         if (nSkillID == 5101009 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
-            vx = -700.0;
+            vx = -520.0;
         }
         if (nSkillID == 5411021 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
-            vx = 700.0;
+            vx = 520.0;
             vy = -20.0;
         }
         if (nSkillID == 5101010) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
-                aniCancelTimer = chrono::steady_clock::now();
+                bArmAniCancelOnSuccess = true;
                 vy = -555.0;
             } else {
                 return 0;
@@ -2487,12 +2670,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (isFallingSkill(nSkillID) && !IsFalling(pCv) && !IsFreeFalling(pCv)) {
             return 0;
         }
-        if (isRisingSkill(nSkillID))
-            SetMovePath(pCv, movepath);
-        SetImpactNext(pCv, vx, vy);
-        if (grounded) {
-            return 0;
-        }
+        bApplyImpactOnSuccess = true;
     }
     if (nSkillID == 5411022) {
         if (getCurrentComboCount() < 100) {
@@ -2516,11 +2694,11 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         }
     }
     auto elapsed = chrono::steady_clock::now() - skilltimer;
-    if (nSkillID == 3001013 || nSkillID == 1001007) {
+    if (nSkillID == 3001013 || nSkillID == 1001007 || nSkillID == 1411005 || nSkillID == 1411006 || nSkillID == 4211015) {
         jumptimer = chrono::steady_clock::now();
     }
     if (elapsed < chrono::milliseconds(150)) {
-        if ((nSkillID == 3001013) || nSkillID == 1001007) {
+        if ((nSkillID == 3001013) || nSkillID == 1001007 || nSkillID == 1411005 || nSkillID == 1411006 || nSkillID == 4211015) {
             return 0;
         }
     }
@@ -2534,7 +2712,23 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         Patch1(0x0096792A + 3, 0x09);
         Patch1(0x0096792A + 4, 0x00);
     }
-    return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    const int nResult = pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    // Deferred movement impulse: only a successful cast (consume checks passed, skill
+    // actually fired — see CMacroSysMan::Update, which treats this return the same way)
+    // gets its velocity applied.
+    if (nResult && bApplyImpactOnSuccess) {
+        if (isRisingSkill(nSkillID)) {
+            SetMovePath(pCv, movepath);
+        }
+        if (nSkillID != 5101010) {
+            movementLockTimer = chrono::steady_clock::now();
+        }
+        if (bArmAniCancelOnSuccess) {
+            aniCancelTimer = chrono::steady_clock::now();
+        }
+        SetImpactNext(pCv, vx, vy);
+    }
+    return nResult;
 }
 
 auto is_guided_skill = (int(__cdecl*)(int))0x0076662D;
@@ -2704,10 +2898,24 @@ void*(__fastcall CalcDamage__PDamage)(
             nAction, shadow_partner, a14, a15, a16, a17, a18, a19, a20, a21);
 }
 
+auto createWorldMap = (void(__thiscall*)(void*, int))0x009EB75B;
+void (__fastcall noMap)(void* _this, void* edx, int) {
+}
 
 auto skillDelayHook = (int(__cdecl*)(int))0x00765047;
 
+void __cdecl UpdateSummonSeekGate(); // defined near the summonSeekRect cave below
+
 int(__cdecl summondelay)(int nSkillID) {
+    // Attack-follow gate, turret-path coverage: octopus-type/stationary summons never touch the
+    // sub_678ECC seek (gated in summonSeekRect), but every summon's attack scheduling asks this
+    // function for its attack period. Gate shut -> report a 10-minute period so the attack is never
+    // due; gate open -> normal period, so attacks resume on the next check. 10 min (not INT_MAX)
+    // to keep tLast + delay arithmetic in the client far from signed overflow.
+    UpdateSummonSeekGate();
+    if (!summonSeekGateOpen) {
+        return 600000;
+    }
     // Summon attack period = 2500ms minus 50ms per learned level of the summon skill (higher level
     // -> attacks faster). Look up the player's level in nSkillID via CSkillInfo::GetSkillLevel.
     int lvl = 0;
@@ -2786,6 +2994,7 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
         nWeaponDegree -= 2;
         if (nWeaponBooster != 0) {
             weaponSpeed += nWeaponBooster;
+            nWeaponDegree += nWeaponBooster;
         }
     }
     weaponSpeed = nWeaponDegree;
@@ -2817,9 +3026,9 @@ auto get_vertical_adjust_of_attack_range = (int(__cdecl*)(int))0x0076664D;
 
 int(__cdecl vertical)(int nSkillID) {
     if (nSkillID == 3601007 || nSkillID == 3511003) {
-        return 100;
+        return 60;
     }
-    if (nSkillID == 3001004) {
+    if (nSkillID == 3001004 || nSkillID == 3211015) {
         return 30;
     }
     if (nSkillID == 4111005) {
@@ -2916,6 +3125,12 @@ void _declspec(naked) please() {
 auto SetAttackAction_Hook = (signed int(__thiscall*)(int*, int, int, int*, int))0x0092EDB2;
 
 int __fastcall setAttackAction(int* a1, void* edx, int a3, int a4, int* a5, int a6) {
+    // Attack-follow gate: any local-player attack action (including basic attacks, which never go
+    // through DoActiveSkill) opens the summon seek window. Fires for every CUser, so filter to the
+    // CUserLocal singleton (0xBEBF98) or nearby players would drive your summon.
+    if (reinterpret_cast<int>(a1) == *reinterpret_cast<int*>(0x00BEBF98)) {
+        lastPlayerAttackTick = GetTickCount();
+    }
     int wspeed = weaponSpeed;
     if (mastery <= 0) {
         switch (get_weapon_type()) {
@@ -3115,7 +3330,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
     int mobLevel = (mob && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_stat.nLevel : 0;
     if (mob && mobLevel >= 1 && mobLevel <= 400) {
         int playerLevel = CWvsContext::GetInstance()->get_m_basicStat().nLevel.Fuse();
-        if (playerLevel + 5 < mobLevel) {
+        if (playerLevel + 10 < mobLevel) {
             levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
             if (playerLevel + 20 < mobLevel) {
                 levelMult = .8 + (mobLevel - playerLevel - 20) * -0.02;
@@ -3134,7 +3349,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
             // Boss flag lives in the template at +0x64 (0/1). EDIT bossMult below to taste.
             isBoss = (mob->m_pTemplate->bIsBoss.Fuse() != 0);
             if (isBoss) {
-                bossMult = 1.0; // <-- set your boss damage modifier here
+                bossMult = 1.0 + (0.015 * hermitBoss) ; // <-- set your boss damage modifier here
             }
             int wt = get_weapon_type();
             bool magic = (wt == 32 || wt == 37 || wt == 38);
@@ -3249,6 +3464,8 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
     return result;
 }
 
+void SummonPull_OnHit(MobStat* pStat); // summon pull, defined with the rest of that block below
+
 auto summonPDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x0079216D;
 int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, int a4, BasicStat* a5,
         SecondaryStat* a6, int a7, int a8, int a9) {
@@ -3257,6 +3474,7 @@ int __fastcall summonPDamage_hook(void* calc, void* edx, int a2, MobStat* a3, in
     if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
         return 0;
     }
+    SummonPull_OnHit(a3); // no-op unless this summon pulls
     int str = a5->nSTR.Fuse();
     int dex = a5->nDEX.Fuse();
     int luk = a5->nLUK.Fuse();
@@ -3298,6 +3516,7 @@ int __fastcall summonMDamage_hook(void* calc, void* edx, int a2, MobStat* a3, in
     if (!a3 || !a5 || IsBadReadPtr(a3, sizeof(MobStat)) || IsBadReadPtr(a5, sizeof(BasicStat))) {
         return 0;
     }
+    SummonPull_OnHit(a3); // no-op unless this summon pulls
     int int_ = a5->nINT.Fuse();
     int magic = CWvsContext::GetInstance()->get_m_secondaryStat().m_magic.Fuse();
     int bonusMagic = CWvsContext::GetInstance()->get_m_secondaryStat().m_bonusMagic.Fuse();
@@ -3363,6 +3582,423 @@ int GetSkillMobCount(int skillId) {
     return GetSkillLevelDataLong(skillId, 0x130);
 }
 
+// ===== Summon pull =========================================================================
+// Drags every mob a summon hits toward the summon. Client-side: mob positions are driven by
+// whichever client the server made the mob's controller, and that client reports them back in
+// its normal mob-move packets -- so nudging a mob we control propagates to the server and to
+// everyone else for free. Mobs controlled by another player are skipped: our nudge would be
+// cosmetic and their next move packet would snap it back.
+//
+// Hit set comes from the summon damage hooks (summonPDamage_hook / summonMDamage_hook), which
+// the engine already calls once per hit mob inside CSummoned::TryDoingAttackManual with
+// a3 == &mob->m_stat. Bracketing that call lets us collect the exact mobs that got hit
+// without touching the attack loop itself.
+//
+// Add a summon skill id here to give it the pull, e.g. 3211002 (Silver Hawk) / 2311006
+// (Summon Dragon) / 5211001 (Octopus). Empty = feature dormant, every summon behaves as before.
+static const std::vector<int> g_summonPullSkills = {
+
+};
+
+// Tunables. Each hit closes summonPullPercent of the remaining gap; 100 = snap the mob onto
+// the summon. summonPullMaxStep caps how far one hit can move a mob (0 = uncapped), so
+// lowering the percent and setting a cap turns the vacuum back into a gradual drag.
+int summonPullPercent = 100;  // % of the gap closed per hit
+int summonPullMaxStep = 0;    // px, per-hit cap (0 = no cap)
+int summonPullMaxDy   = 150;  // px, skip mobs this far above/below the summon (other platform)
+int summonPullDeadzone = 12;  // px, close enough - stop nudging
+
+// CMob::IsActive (0x00663922) == "this client controls the mob" (CMobPool::SetLocalMob ->
+// SetActive(1), SetRemoteMob -> SetActive(0)).
+auto CMob_IsActive = (int(__thiscall*)(void*))0x00663922;
+
+// The client's own secure-double codec. These MUST be used for CVecCtrl position fields
+// instead of the ZtlSecure template in secure.h: the template writes a checksum the client
+// does not recompute the same way, and the client throws its secure-data exception on the
+// next read (the "error code 5 / Access is denied" box). Same pair CVecCtrl__CalcFloat_hook
+// below uses. Layout is ZtlSecure<double> { double at[2]; uint cs; } -> cs sits at at+0x10.
+static auto pullFuseDouble = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338);
+static auto pullTearDouble = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6);
+
+static double vecCtrlGetSecure(CVecCtrl* vc, unsigned int off) {
+    char* p = reinterpret_cast<char*>(vc) + off;
+    return pullFuseDouble(reinterpret_cast<double*>(p), *reinterpret_cast<unsigned int*>(p + 0x10));
+}
+
+static void vecCtrlSetSecure(CVecCtrl* vc, unsigned int off, double value) {
+    char* p = reinterpret_cast<char*>(vc) + off;
+    *reinterpret_cast<unsigned int*>(p + 0x10) = pullTearDouble(reinterpret_cast<double*>(p), value);
+}
+
+// Mob physics. CMob keeps two pointers into its vec ctrl and CMob::SetActive uses BOTH:
+//   [CMob+0x118]-0xC  -- the block holding the live position/foothold as shorts at +0x1F2..
+//   [CMob+0x11C]-0xC  -- the object whose vtable slot 1 is CVecCtrl::SetActive
+// Repositioning a mob means handing SetActive a new x, exactly like the engine does when the
+// server grants us control. Writing the secure doubles (m_x) instead does NOT work: physics
+// recomputes them from the path every tick, so the write is gone within a frame.
+static char* mobVecCtrlPath(Mob* mob) {
+    if (!mob || IsBadReadPtr(mob, 0x120)) {
+        return nullptr;
+    }
+    char* p = *reinterpret_cast<char**>(reinterpret_cast<char*>(mob) + 0x118) - 0xC;
+    return (p && !IsBadWritePtr(p, 0x200)) ? p : nullptr;
+}
+
+static char* mobVecCtrlObj(Mob* mob) {
+    if (!mob || IsBadReadPtr(mob, 0x120)) {
+        return nullptr;
+    }
+    char* p = *reinterpret_cast<char**>(reinterpret_cast<char*>(mob) + 0x11C) - 0xC;
+    return (p && !IsBadReadPtr(p, sizeof(void*))) ? p : nullptr;
+}
+
+// CWvsPhysicalSpace2D::GetFoothold on the singleton at 0x00BEBFA0.
+auto space2dGetFoothold = (void*(__thiscall*)(void*, unsigned long))0x0050D811;
+
+// CVecCtrl::SetActive(bActive, x, y, a4, a5, a6, pFoothold) -- vtable slot 1.
+typedef void(__thiscall* VecCtrlSetActive_t)(void*, int, int, int, int, int, int, void*);
+
+// Move a mob to nX using the engine's own reseat path.
+static bool mobSetPosX(Mob* mob, int nX) {
+    char* path = mobVecCtrlPath(mob);
+    char* obj = mobVecCtrlObj(mob);
+    if (!path || !obj) {
+        return false;
+    }
+    const int y   = *reinterpret_cast<short*>(path + 0x1F4);
+    const int a4  = *reinterpret_cast<short*>(path + 0x1F6);
+    const int a5  = *reinterpret_cast<short*>(path + 0x1F8);
+    const int a6  = *reinterpret_cast<unsigned char*>(path + 0x1FA);
+    const unsigned long fhId = *reinterpret_cast<unsigned short*>(path + 0x1FC);
+    void* pSpace = *reinterpret_cast<void**>(0x00BEBFA0);
+    if (!pSpace) {
+        return false;
+    }
+    void* pFoothold = space2dGetFoothold(pSpace, fhId);
+    void** vt = *reinterpret_cast<void***>(obj);
+    if (!vt || IsBadReadPtr(vt, 2 * sizeof(void*))) {
+        return false;
+    }
+    reinterpret_cast<VecCtrlSetActive_t>(vt[1])(obj, 1, nX, y, a4, a5, a6, pFoothold);
+    // Belt and braces: also poke the fields the engine reads back, on both candidate objects.
+    // CVecCtrl::SetActive writes the secure doubles at +0x20/+0x38 and re-inits the CMovePath
+    // at +0x1AC, but the position shorts at +0x1F2 are what CMob::SetActive reads, so keep
+    // them in step rather than assuming which one physics rebuilds from.
+    *reinterpret_cast<short*>(path + 0x1F2) = static_cast<short>(nX);
+    vecCtrlSetSecure(reinterpret_cast<CVecCtrl*>(path), 0x20, static_cast<double>(nX));
+    if (obj != path) {
+        vecCtrlSetSecure(reinterpret_cast<CVecCtrl*>(obj), 0x20, static_cast<double>(nX));
+    }
+    return true;
+}
+
+// Cached render position. CMob::GetPos is `lea eax,[ecx+0x50C]` on the +4 base -> POINT at
+// CMob+0x510. Kept in sync with the physics x so the attack packet encoded later in this same
+// frame (it encodes GetPos) agrees with where we just put the mob.
+static POINT* mobCachedPos(Mob* mob) {
+    return reinterpret_cast<POINT*>(reinterpret_cast<char*>(mob) + 0x510);
+}
+
+// Position of any game object with the +4 IGObj base (CMob, CSummoned): vtable slot 4 is
+// GetPos and returns a pointer to the object's POINT.
+static const POINT* gobjPos(void* pObj) {
+    if (!pObj || IsBadReadPtr(pObj, 8)) {
+        return nullptr;
+    }
+    char* base = reinterpret_cast<char*>(pObj) + 4;
+    void** vt = *reinterpret_cast<void***>(base);
+    if (!vt || IsBadReadPtr(vt, 5 * sizeof(void*))) {
+        return nullptr;
+    }
+    using GetPos_t = const POINT*(__thiscall*)(void*);
+    const POINT* p = reinterpret_cast<GetPos_t>(vt[4])(base);
+    return (p && !IsBadReadPtr(p, sizeof(POINT))) ? p : nullptr;
+}
+
+static bool isPullSummon(int nSkillID) {
+    return std::find(g_summonPullSkills.begin(), g_summonPullSkills.end(), nSkillID)
+            != g_summonPullSkills.end();
+}
+
+static void* g_pPullSummon = nullptr;    // non-null only inside a pulling summon's attack
+static std::vector<Mob*> g_pullTargets;
+
+// Called from the summon damage hooks, once per mob the summon hit.
+void SummonPull_OnHit(MobStat* pStat) {
+    if (!g_pPullSummon || !pStat) {
+        return;
+    }
+    Mob* mob = reinterpret_cast<Mob*>(reinterpret_cast<char*>(pStat) - 0x1A0);
+    if (IsBadReadPtr(mob, sizeof(Mob))) {
+        return;
+    }
+    if (std::find(g_pullTargets.begin(), g_pullTargets.end(), mob) == g_pullTargets.end()) {
+        g_pullTargets.push_back(mob);
+    }
+}
+
+static void applySummonPull(void* pSummon) {
+    const POINT* summonPos = gobjPos(pSummon);
+    if (!summonPos) {
+        LogInfo("SummonPull: no summon pos, targets=%d", (int)g_pullTargets.size());
+        return;
+    }
+    for (Mob* mob : g_pullTargets) {
+        if (IsBadReadPtr(mob, sizeof(Mob)) || !CMob_IsActive(mob)) {
+            LogInfo("SummonPull: mob=%p skipped (bad ptr or not controlled by us)", mob);
+            continue; // someone else controls it - moving it here would just desync
+        }
+        MobTemplate* tmpl = mob->m_pTemplate;
+        if (tmpl && !IsBadReadPtr(tmpl, sizeof(MobTemplate)) && tmpl->bIsBoss.Fuse()) {
+            continue; // bosses stay put
+        }
+        char* path = mobVecCtrlPath(mob);
+        if (!path) {
+            continue;
+        }
+        const double x = *reinterpret_cast<short*>(path + 0x1F2);
+        const double y = *reinterpret_cast<short*>(path + 0x1F4);
+        // Self-check: the path position must agree with the mob's cached render POINT. If it
+        // doesn't, the block we resolved isn't this mob's -- skip rather than corrupt it.
+        const POINT* cached = mobCachedPos(mob);
+        if (fabs(x - cached->x) > 64.0 || fabs(y - cached->y) > 64.0) {
+            LogInfo("SummonPull: mob=%p skipped (path/cached mismatch %.0f,%.0f vs %d,%d)",
+                    mob, x, y, cached->x, cached->y);
+            continue;
+        }
+        if (fabs(y - summonPos->y) > summonPullMaxDy) {
+            LogInfo("SummonPull: mob=%p skipped (dy=%.0f > %d)", mob, fabs(y - summonPos->y), summonPullMaxDy);
+            continue; // different platform
+        }
+        const double dx = summonPos->x - x;
+        if (fabs(dx) <= summonPullDeadzone) {
+            continue;
+        }
+        double step = dx * (summonPullPercent / 100.0);
+        if (summonPullMaxStep > 0) {
+            if (step > summonPullMaxStep) {
+                step = summonPullMaxStep;
+            } else if (step < -summonPullMaxStep) {
+                step = -summonPullMaxStep;
+            }
+        }
+        const double newX = x + step;
+        if (!mobSetPosX(mob, static_cast<int>(newX))) {
+            LogInfo("SummonPull: mob=%p reseat failed", mob);
+            continue;
+        }
+        mobCachedPos(mob)->x = static_cast<LONG>(newX);
+        // Read straight back: tells us whether CVecCtrl::SetActive took at all, versus taking
+        // and then being reverted before the next attack (server mob-move for a mob we don't
+        // actually control). ctrl = CMob+0x130 secure long: >0 ours, <0 someone else's.
+        const int readBack = *reinterpret_cast<short*>(path + 0x1F2);
+        const double dblX = pullFuseDouble(reinterpret_cast<double*>(path + 0x20),
+                *reinterpret_cast<unsigned int*>(path + 0x30));
+        const int ctrl = summonSecureFuseLong(
+                reinterpret_cast<const int*>(reinterpret_cast<char*>(mob) + 0x130),
+                *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(mob) + 0x138));
+        LogInfo("SummonPull: mob=%p %.0f -> %.0f path=%p obj=%p short=%d dbl=%.0f ctrl=%d",
+                mob, x, newX, path, mobVecCtrlObj(mob), readBack, dblX, ctrl);
+    }
+}
+
+auto summonTryDoingAttackManual = (void(__thiscall*)(void*, int))0x007A4D42;
+void __fastcall summonTryDoingAttackManual_hook(void* pSummon, void* edx, int tCur) {
+    // this[45] (+0xB4) is the summon's skill id.
+    const int nSkillID = (pSummon && !IsBadReadPtr(pSummon, 0xB8))
+            ? *reinterpret_cast<int*>(reinterpret_cast<char*>(pSummon) + 0xB4) : 0;
+    if (!isPullSummon(nSkillID)) {
+        // Rate-limited so the log stays readable while still showing what id a summon reports.
+        static DWORD lastLog = 0;
+        const DWORD now = GetTickCount();
+        if (now - lastLog > 2000) {
+            lastLog = now;
+            LogInfo("SummonPull: attack from summon skill=%d (not in pull list)", nSkillID);
+        }
+        summonTryDoingAttackManual(pSummon, tCur);
+        return;
+    }
+    LogInfo("SummonPull: attack from pull summon skill=%d", nSkillID);
+    g_pullTargets.clear();
+    g_pPullSummon = pSummon;
+    summonTryDoingAttackManual(pSummon, tCur);
+    g_pPullSummon = nullptr;
+    applySummonPull(pSummon);
+    g_pullTargets.clear();
+}
+
+// ===== Rising Toss for other skills ========================================================
+// CMob::OnHit already owns mob displacement: every hit ends in
+//   CMob::GenerateMovePath(mob, a4, a5==0, 0, a9, a10, a12, a13, a14, bToss)
+// and that last flag is what turns the normal knockback into the Rising Toss launch. The
+// engine computes it (var_14 @ ebp-0x14) as roughly
+//   (action == 10 || ...) && GetSkillLevel(charData, 21110003) && !isBoss-ish && ...
+// i.e. gated on the player having Rising Toss learned. We cave the `push [ebp-0x14]` that
+// feeds it to GenerateMovePath (0x00668D8E) and substitute a 1 when the skill that caused
+// this hit is in the list below -- so any skill can toss, using the engine's own physics
+// rather than us writing mob coordinates.
+//
+// The skill id of the hit is CMob::OnHit's arg_4 (ebp+0x70).
+static const std::vector<int> g_tossSkills = {
+    5101010, 1511009
+};
+
+static bool g_forceToss = false;
+
+void __cdecl TossSkillCheck(int nSkillID, int nMobAction) {
+    g_forceToss = std::find(g_tossSkills.begin(), g_tossSkills.end(), nSkillID) != g_tossSkills.end();
+    // The flag only takes effect when GenerateMovePath sees mob action 6..8 (the hit actions)
+    // and an action delay >= 90, so log both to see what the hits actually carry.
+    static DWORD lastLog = 0;
+    const DWORD now = GetTickCount();
+    if (g_forceToss || now - lastLog > 1000) {
+        lastLog = now;
+        LogInfo("Toss: skill=%d mobAction=%d force=%d", nSkillID, nMobAction, (int)g_forceToss);
+    }
+}
+
+// Entry probe for CMob::OnHit (called only from CMob::Update, once per queued hit). Dumps the
+// values every outer condition in front of the displacement block tests, so we can see which
+// one rejects instead of guessing:
+//   attacker vs local char id (CUserLocal+0x11A8), mob ctrl state (mob+0x130 secure),
+//   a10 (must be non-zero), and moveAbility (m_pTemplate+0x40 secure; 0 = immovable, which
+//   sends the hit down the "effect only" path and never displaces).
+void __cdecl OnHitLog(void* pMob, int nAttacker, int nSkillID, int a10) {
+    static DWORD lastLog = 0;
+    const DWORD now = GetTickCount();
+    if (now - lastLog < 250) {
+        return;
+    }
+    lastLog = now;
+    int localId = 0;
+    if (void* pUser = *reinterpret_cast<void**>(0x00BEBF98)) {
+        localId = *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x11A8);
+    }
+    int ctrl = 0;
+    int moveAbility = -1;
+    if (pMob && !IsBadReadPtr(pMob, 0x190)) {
+        char* mob = reinterpret_cast<char*>(pMob);
+        ctrl = summonSecureFuseLong(reinterpret_cast<const int*>(mob + 0x130),
+                *reinterpret_cast<unsigned int*>(mob + 0x138));
+        char* tmpl = *reinterpret_cast<char**>(mob + 0x188);
+        if (tmpl && !IsBadReadPtr(tmpl, 0x50)) {
+            moveAbility = summonSecureFuseLong(reinterpret_cast<const int*>(tmpl + 0x40),
+                    *reinterpret_cast<unsigned int*>(tmpl + 0x48));
+        }
+    }
+    LogInfo("OnHit: skill=%d attacker=%d local=%d ctrl=%d a10=%d moveAbility=%d",
+            nSkillID, nAttacker, localId, ctrl, a10, moveAbility);
+}
+
+static DWORD dwOnHitRet = 0x00668B88;
+
+void __declspec(naked) OnHitEntryCave() {
+    __asm {
+        pushad
+        mov     ebx, [esp + 0x20 + 0x04]    ; a2  = attacker char id
+        mov     edx, [esp + 0x20 + 0x08]    ; a3  = skill id
+        mov     esi, [esp + 0x20 + 0x24]    ; a10
+        push    esi
+        push    edx
+        push    ebx
+        push    ecx                         ; this = CMob*
+        call    OnHitLog
+        add     esp, 16
+        popad
+        mov     eax, 0x00AA1A50             ; overwritten instruction (EH prolog handler)
+        jmp     [dwOnHitRet]
+    }
+}
+
+// The gate in front of that call. CMob::OnHit only reaches GenerateMovePath when the mob's
+// action timer (mob+0x3CC) is zero, the skill is one of three hardcoded ids, or the player is
+// an Aran (job/100 == 21) / job 2000. That is why Rising Toss works and nothing else does --
+// on any other class the whole hit-displacement path is skipped. This cave sits on the job
+// lookup at 0x00668D72 and jumps straight to the call for skills in our list, which is exactly
+// what the Aran branch does.
+// Measured with the entry probe, a normal (non-Aran) hit looks like:
+//   skill=5101010 attacker=6 local=6 ctrl=-3 a10=0 moveAbility=1
+// so the branch dies on its first two tests -- `a10` is 0, and the mob control state is -3
+// (another client controls it; the engine only wants -2 or > 0). Everything downstream,
+// including the Aran job gate, is unreachable. This cave replaces the whole condition chain
+// at 0x00668CC0: keep the "hit came from us" test, then for a listed skill jump straight to
+// the GenerateMovePath call site, which is where TossFlagCave substitutes the toss flag.
+// Reaching the engine's own call site turned out to be a dead end: every hit fails the branch
+// on `a10 == 0` and `ctrl == -3` long before it, and a cave over the whole chain never ran
+// either. So skip CMob::OnHit entirely and call the displacement primitive ourselves, from the
+// per-hit entry (sub_66B05E, the "mob got hit by X" queue point, whose arg_0 is the attacker
+// char id and arg_4 the skill id).
+//
+// Argument mapping recovered from the engine's own call
+//   GenerateMovePath(mob, a4, a5==0, 0, a9, a10, a12, a13, a14, bToss):
+//   a2 = mob hit action (must be 6..8 for the toss branch)
+//   a3 = 64-bit, passed as two slots
+//   a5 = hit action type; 10 is the Aran toss that calls sub_9BECC1(dbl_AF82B8)
+//   a6 = attacker x, a9 = the toss flag (sub_9BECC1(dbl_AF82B0))
+auto MobGenerateMovePath = (void(__thiscall*)(void*, int, int, int, int, int, int, int, int, int))0x0066B6FC;
+
+void __cdecl TossApply(void* pMob, int nAttacker, int nSkillID) {
+    if (std::find(g_tossSkills.begin(), g_tossSkills.end(), nSkillID) == g_tossSkills.end()) {
+        return;
+    }
+    void* pUser = *reinterpret_cast<void**>(0x00BEBF98);
+    if (!pUser || !pMob || IsBadReadPtr(pMob, 0x190)) {
+        return;
+    }
+    if (nAttacker != *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x11A8)) {
+        return; // only our own hits toss
+    }
+    int userX = 0;
+    if (IWzVector2D* pvc = reinterpret_cast<CUserLocal*>(pUser)->m_pvc) {
+        if (CVecCtrl* vc = CVecCtrl::FromInterface(pvc)) {
+            userX = static_cast<int>(pullFuseDouble(reinterpret_cast<double*>(reinterpret_cast<char*>(vc) + 0x20),
+                    *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(vc) + 0x30)));
+        }
+    }
+    LogInfo("Toss: applying to mob=%p skill=%d userX=%d", pMob, nSkillID, userX);
+    MobGenerateMovePath(pMob, 6, 0, 0, 0, 10, userX, 0, 0, 1);
+}
+
+static DWORD dwHitQueueRet = 0x0066B063;
+
+void __declspec(naked) HitQueueCave() {
+    __asm {
+        pushad
+        mov     ebx, [esp + 0x20 + 0x04]    ; arg_0 = attacker char id
+        mov     edx, [esp + 0x20 + 0x08]    ; arg_4 = skill id
+        push    edx
+        push    ebx
+        push    ecx                         ; this = CMob*
+        call    TossApply
+        add     esp, 12
+        popad
+        mov     eax, 0x00AA1A50             ; overwritten instruction (EH prolog handler)
+        jmp     [dwHitQueueRet]
+    }
+}
+
+static DWORD dwTossFlagRet = 0x00668D93;
+
+void __declspec(naked) TossFlagCave() {
+    __asm {
+        pushad
+        push    dword ptr [ebp + 0x78]      ; arg_C = mob hit action
+        push    dword ptr [ebp + 0x70]      ; arg_4 = skill id of this hit
+        call    TossSkillCheck
+        add     esp, 8
+        popad
+        cmp     byte ptr [g_forceToss], 0
+        jz      keepOriginal
+        push    1                           ; force the Rising Toss launch
+        jmp     done
+    keepOriginal:
+        push    dword ptr [ebp - 0x14]      ; overwritten instruction: engine's own flag
+    done:
+        xor     eax, eax                    ; overwritten instruction
+        jmp     [dwTossFlagRet]
+    }
+}
+
 auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A;
 int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, void* bstr, int attackIdx) {
     int ret = loadSummonAttackInfo(thisCSB, retbuf, bstr, attackIdx);
@@ -3400,9 +4036,32 @@ int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, v
 // -- the arg order dword_BF040C expects) but with the configurable summonSeekRange X/Y, then jumps
 // back to the &rect push + call. At cave entry edi = playerY, ebx = playerX (loaded just above), and
 // ecx is not yet touched (saved after our region), so only eax is clobbered -- safe.
+// Attack-follow gate check, called from the summonSeekRect cave before each seek. Recomputes
+// summonSeekGateOpen so the naked asm only has to test a global (no register juggling around the
+// tick math). Not static: referenced by name from inline asm.
+void __cdecl UpdateSummonSeekGate() {
+    summonSeekGateOpen = summonFollowWindowMs <= 0
+            || GetTickCount() - lastPlayerAttackTick <= (DWORD)summonFollowWindowMs;
+}
+
 DWORD summonSeekRectBack = 0x00678EF1;
 void __declspec(naked) summonSeekRect() {
     __asm {
+        pushad // C call clobbers eax/ecx/edx; edx liveness here unknown, so save everything
+        call UpdateSummonSeekGate
+        popad
+        cmp summonSeekGateOpen, 0
+        jne seekOpen
+        // Gate shut (player hasn't attacked within summonFollowWindowMs): push a degenerate box at
+        // far-off coords (all four edges = 0x7FFF0000) so the mob finder matches nothing and the
+        // summon idles. Same 4-push shape as the open path, so stack layout is identical.
+        mov eax, 0x7FFF0000
+        push eax
+        push eax
+        push eax
+        push eax
+        jmp [summonSeekRectBack]
+    seekOpen:
         mov eax, edi
         add eax, summonSeekRangeY // bottom = playerY + rangeY
         push eax
@@ -3846,6 +4505,19 @@ void AttachSkillEdits() {
     // is needed to reach mobs on platforms above/below too).
     CodeCave((void*)summonSeekRect, 0x00678EDB, 22);
     ATTACH_HOOK(loadSummonAttackInfo, loadSummonAttackInfo_hook);
+    // Summon pull: brackets the attack so the damage hooks can collect the mobs that got hit,
+    // then drags the ones we control toward the summon. Dormant while g_summonPullSkills is empty.
+    ATTACH_HOOK(summonTryDoingAttackManual, summonTryDoingAttackManual_hook);
+
+    // Rising Toss for arbitrary skills, two caves in CMob::OnHit:
+    //   0x00668D72 - open the Aran-only gate so listed skills reach GenerateMovePath at all
+    //                (mov eax,[esi] 2 + mov ecx,esi 2 + call [eax+40h] 3 = 7 bytes, 2 to NOP)
+    //   0x00668D8E - substitute the toss flag it passes as the last argument
+    //                (push [ebp-0x14] 3 + xor eax,eax 2 = exactly the 5 the jmp needs)
+    CodeCave((void*)OnHitEntryCave, 0x00668B83, 0);
+    // Toss: call GenerateMovePath ourselves at the per-hit queue entry (sub_66B05E), because
+    // CMob::OnHit's own path is unreachable for non-Aran hits (a10 == 0 / ctrl == -3).
+    CodeCave((void*)HitQueueCave, 0x0066B05E, 0);
     // NOTE: the octoMultiHit seek-routing cave (0x7A5062) is intentionally NOT installed. All summons
     // now get the +0x80 rect path in loadSummonAttackInfo_hook, which gives stationary octopus
     // summons their multi-hit via FindHitMobInRect without the fragile seek/cave detour.
@@ -4266,6 +4938,18 @@ int(__fastcall CanSendExclRequest_Hook)(CWvsContext* pThis, void* edx, int a1, i
     return CanSendExclRequest(pThis, a1, a2);
 }
 
+// Guild member count as short instead of byte: NOT APPLIED -- the server still encodes both
+// fields as bytes, so widening the client reads desyncs the packet stream and crashes on
+// guild open. Re-enable only in lockstep with the server change. The two client reads that
+// cap the count at 255 (verified against v83 `Angel.exe`):
+//   1. GUILDDATA::Decode (0x4E4553): count via Decode1 @ 0x4E45E6, then movzx edi, al
+//      @ 0x4E45EB. Capacity after the member arrays is already Decode4 and the member
+//      containers size with ints -- only the count itself is a byte.
+//   2. CWvsContext::OnGuildResult, IncMaxMemberNum result (case 0x3A): new capacity via
+//      Decode1 @ 0xA38328, then movzx eax, al @ 0xA38334.
+// Patch is: PatchCall both call sites to CInPacket::Decode2 (0x0042470C) and flip each
+// movzx opcode byte (+1) from 0xB6 to 0xB7. Instruction lengths are unchanged.
+
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
     Patch1(0x00620F2B + 1, 0x1F); // Password Remove character limit
@@ -4276,6 +4960,8 @@ void AttachOtherHooks() {
     Patch4(0x007926DD + 1, 999999);
     Patch4(0x0077E215 + 1, 999999);
     Patch4(0x00780620 + 1, 999999);
+
+    ATTACH_HOOK(createWorldMap, noMap);
 
     // Close Range Attacks
     Patch1(0x009516C2, 0xE9);
@@ -4306,6 +4992,21 @@ void AttachOtherHooks() {
     Patch1(0x009EA030, 0x81);
     Patch1(0x009EA031, 0xFE);
     Patch1(0x009EA032, 0xB4);
+
+    // Disable the world map entirely: stub CWorldMapDlg::CreateWorldMapDlg @ 0x009EB366 to
+    // `xor eax,eax; retn 8` (overwrites the 5-byte `mov eax, offset ehFuncInfo` prologue).
+    // Every open path funnels through this one function -- the W hotkey
+    // (CWvsContext::UseFuncKeyMapped, call @ 0x00A0781A), the minimap globe button
+    // (CUIMiniMap::OnButtonClicked, call @ 0x0085AD47), the NPC world-map script path
+    // (call @ 0x00840108) and two misc dialog paths (calls @ 0x0087E7B1 / 0x0087E834).
+    // All five callers handle a 0 return: they pop the vanilla "the world map is not
+    // available" notice and destruct their stack-constructed CWorldMapDlg cleanly, so
+    // there's no leak and no half-created window.
+    Patch1(0x009EB366, 0x33);   // xor eax, eax
+    Patch1(0x009EB367, 0xC0);
+    Patch1(0x009EB368, 0xC2);   // retn 8
+    Patch1(0x009EB369, 0x08);
+    Patch1(0x009EB36A, 0x00);
 
 
     // Maker Skill Instant

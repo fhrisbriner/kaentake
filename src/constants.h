@@ -6,7 +6,7 @@
 
 #define CONSTANTS_CENTER_STATUSBAR TRUE
 
-#define LOCALHOST "127.0.0.1"
+#define LOCALHOST "15.204.66.127"
 
 #if defined(MN_LOCAL_BUILD) && MN_LOCAL_BUILD
   #define CONSTANTS_DEFAULT_HOST LOCALHOST
@@ -15,6 +15,12 @@
 #endif
 #define CONSTANTS_USE_COMMAND_LINE FALSE
 #define CONSTANTS_USE_CONFIG_FILE  FALSE
+#define CONFIG_NEXON_SEARCH     "63.251.217."
+
+extern int g_ScreenPosX;
+extern int g_ScreenPosY;
+
+
 
 extern char* g_sServerHost;
 extern long g_nServerPort;

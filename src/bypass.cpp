@@ -151,6 +151,17 @@ void CWvsApp::SetUp_hook() {
 
     // CWvsApp::InitializePCOM(this);
     reinterpret_cast<void(__thiscall*)(CWvsApp*)>(0x009F6D77)(this);
+    // Stage 2 crash-report hardening: pin PCOM.dll for the process lifetime. On crash
+    // teardown the game's reporter unloads PCOM.dll *before* MapleNight.dll destroys the
+    // IWz/COM objects whose vtables live in it, so a destructor's virtual Release() calls
+    // through a dangling vtable in freed memory -> a second 0xC0000005 that also kills the
+    // crash reporter (no dump written). Pinning keeps PCOM.dll mapped so that Release()
+    // always lands on valid code; a stage-1 hiccup then stays reportable instead of turning
+    // into a hard double-fault. PCOM.dll is loaded by InitializePCOM above, so pin it now.
+    {
+        HMODULE hPcom = nullptr;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_PIN, "PCOM.dll", &hPcom);
+    }
     // CWvsApp::CreateMainWindow(this);
     reinterpret_cast<void(__thiscall*)(CWvsApp*)>(0x009F6D97)(this);
     // TSingleton<CClientSocket::CreateInstance();
@@ -245,6 +256,8 @@ void CWvsApp::CallUpdate_hook(int tCurTime) {
 }
 
 void CWvsApp::Run_hook(int* pbTerminate) {
+    static bool s_timerResSet = false;
+    if (!s_timerResSet) { timeBeginPeriod(1); s_timerResSet = true; } // 1ms timeGetTime resolution
     MSG msg;
     ISMSG isMsg;
     memset(&msg, 0, sizeof(msg));
@@ -301,7 +314,15 @@ void CWvsApp::Run_hook(int* pbTerminate) {
                 // CWvsApp::ISMsgProc(this, isMsg.message, isMsg.wParam, isMsg.lParam);
                 reinterpret_cast<void(__thiscall*)(CWvsApp*, unsigned int, unsigned int, int)>(0x009F97B7)(this, isMsg.message, isMsg.wParam, isMsg.lParam);
             }
-            int tCurTime = get_gr()->nextRenderTime;
+            // Drive the game clock from the wall clock, NOT get_gr()->nextRenderTime.
+            // Gr2D_DX8.dll has no time source of its own -- nextRenderTime advances once per
+            // RenderFrame (i.e. once per present/vsync). CallUpdate_hook steps game logic in
+            // fixed 30ms ticks off this value, so when it is tied to the present cadence the
+            // whole game speeds up on >60Hz monitors and slows down below 60Hz. timeGetTime()
+            // is real milliseconds, so one 30ms tick elapses per 30ms of real time at ANY
+            // refresh rate. (winmm is already linked; timeBeginPeriod(1) below gives it 1ms
+            // resolution so the tick cadence stays smooth.)
+            int tCurTime = (int)timeGetTime();
             CallUpdate_hook(tCurTime);
             // CWndMan::RedrawInvalidatedWindows();
             reinterpret_cast<void(__cdecl*)()>(0x009E4547)();
@@ -362,6 +383,93 @@ int CLogin::SendCheckPasswordPacket_hook(char* sID, char* sPasswd) {
 }
 
 
+// CSoundMan::Init reaches into PCOM.dll's SoundDX8 object, which configures the
+// DirectSound primary buffer (SetCooperativeLevel(DSSCL_PRIORITY) + CreateSoundBuffer
+// (DSBCAPS_PRIMARYBUFFER) + SetFormat) through the vtable slots called here. Under
+// Wine/Proton DSSCL_PRIORITY is only partially implemented, and that path dereferences
+// an invalid/-1 pointer *inside* the PCOM call before it returns -- so the client's own
+// HRESULT check (if v16 >= 0) can't catch it, and it faults 0xC0000005 before the login
+// window. Wrap the original in SEH: on Windows the call succeeds and this is
+// transparent; on Wine an internal audio-init fault degrades to "no sound" (Init returns
+// 0, which the game already tolerates) instead of crashing. Reaching login beats sound.
+using CSoundMan_Init_t = int(__thiscall*)(void*, HWND, unsigned int, int, int, int);
+static CSoundMan_Init_t CSoundMan_Init = reinterpret_cast<CSoundMan_Init_t>(0x00772CDF);
+
+int __fastcall CSoundMan_Init_hook(void* self, void* /*edx*/, HWND hwnd, unsigned int a3, int a4, int a5, int a6) {
+    __try {
+        return CSoundMan_Init(self, hwnd, a3, a4, a5, a6);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        LogInfo("CSoundMan::Init faulted (Wine DirectSound primary-buffer path) - continuing without sound");
+        return 0;
+    }
+}
+
+
+// ---- Wine DirectSound DSSCL_PRIORITY primary-buffer crash guard (API level) ----
+// The client (via PCOM.dll's SoundDX8 object) uses the legacy pattern of taking
+// SetCooperativeLevel(DSSCL_PRIORITY) and CreateSoundBuffer(DSBCAPS_PRIMARYBUFFER) +
+// SetFormat to force the output format. Wine only partially implements DSSCL_PRIORITY;
+// that primary-buffer path deref's an invalid/-1 pointer *inside* dsound.dll, faulting the
+// client with 0xC0000005 before the login window (see the two-stage crash report). PCOM.dll
+// owns the calls and isn't ours to edit, so we neutralize it at the DirectSound API: force
+// every IDirectSound(8)::SetCooperativeLevel to DSSCL_NORMAL. Under NORMAL, Wine's primary
+// SetFormat returns a clean error instead of taking the buggy path, and secondary-buffer
+// mixing (BGM/SE) still works -- so Wine keeps sound AND reaches login. Gated to Wine only,
+// so Windows behavior is completely unchanged.
+#ifndef DSSCL_NORMAL
+#define DSSCL_NORMAL 0x00000001
+#endif
+
+using DSoundCreate_t = HRESULT(WINAPI*)(const GUID*, void**, void*);
+using SetCoopLevel_t = HRESULT(STDMETHODCALLTYPE*)(void* self, HWND, DWORD);
+static SetCoopLevel_t g_realSetCoopLevel = nullptr;
+
+static HRESULT STDMETHODCALLTYPE SetCoopLevel_thunk(void* self, HWND hwnd, DWORD level) {
+    if (level != DSSCL_NORMAL) {
+        LogInfo("IDirectSound::SetCooperativeLevel: forcing DSSCL_NORMAL (was %u) - Wine primary-buffer guard", level);
+        level = DSSCL_NORMAL;
+    }
+    return g_realSetCoopLevel(self, hwnd, level);
+}
+
+static bool IsRunningUnderWine() {
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    return ntdll && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+}
+
+// Patch IDirectSound8 vtable slot 6 (SetCooperativeLevel). The vtable is shared per class,
+// so patching it via one throwaway instance covers every device the client later creates,
+// no matter how it creates it.
+static void InstallDSoundCoopLevelGuard() {
+    if (!IsRunningUnderWine()) {
+        return; // Windows: DSSCL_PRIORITY works, leave the audio path untouched.
+    }
+    HMODULE hDSound = LoadLibraryA("dsound.dll");
+    if (!hDSound) {
+        return;
+    }
+    auto pDirectSoundCreate8 = reinterpret_cast<DSoundCreate_t>(GetProcAddress(hDSound, "DirectSoundCreate8"));
+    if (!pDirectSoundCreate8) {
+        return;
+    }
+    void* pDS = nullptr;
+    if (FAILED(pDirectSoundCreate8(nullptr, &pDS, nullptr)) || !pDS) {
+        return; // no audio device under this Wine session -> nothing to guard, no harm.
+    }
+    void** vtbl = *reinterpret_cast<void***>(pDS);
+    void** slot = &vtbl[6]; // IUnknown(0-2), CreateSoundBuffer(3), GetCaps(4), DuplicateSoundBuffer(5), SetCooperativeLevel(6)
+    DWORD oldProtect;
+    if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &oldProtect)) {
+        g_realSetCoopLevel = reinterpret_cast<SetCoopLevel_t>(*slot);
+        *slot = reinterpret_cast<void*>(&SetCoopLevel_thunk);
+        VirtualProtect(slot, sizeof(void*), oldProtect, &oldProtect);
+        LogInfo("Wine detected: patched IDirectSound8::SetCooperativeLevel -> force DSSCL_NORMAL");
+    }
+    // Release the throwaway device (IUnknown::Release == vtable slot 2). The vtable patch persists.
+    reinterpret_cast<HRESULT(STDMETHODCALLTYPE*)(void*)>(vtbl[2])(pDS);
+}
+
+
 int CWndMan::TranslateMessage_hook(UINT& msg, WPARAM& wParam, LPARAM& lParam, LRESULT* plResult) {
     if (msg == WM_MOUSEWHEEL) {
         // CWndMan::ProcessMouse(this, msg, wParam, lParam);
@@ -379,6 +487,8 @@ void AttachClientBypass() {
     ATTACH_HOOK(CWvsApp::Run, CWvsApp::Run_hook);
     ATTACH_HOOK(CLogin::SendCheckPasswordPacket, CLogin::SendCheckPasswordPacket_hook);
     ATTACH_HOOK(CWndMan::TranslateMessage, CWndMan::TranslateMessage_hook);
+    ATTACH_HOOK(CSoundMan_Init, CSoundMan_Init_hook); // Wine DirectSound primary-buffer crash guard (belt)
+    InstallDSoundCoopLevelGuard();                    // Wine: force DSSCL_NORMAL (root-cause stage-1 fix)
     PatchNop(0x00460AED, 2);
     PatchNop(0x004F350C, 6); // Apply 6 NOPs at address 0x004F351E
     PatchNop(0x004F351E, 6); //Apply 6 NOPs at address 0x004F350C

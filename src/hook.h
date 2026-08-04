@@ -73,6 +73,8 @@ void InitExpOverride();
 void PacketHooks();
 void AttachMapObjectFade();
 void BGMOverride();
+void AttachBagWindowMod();
+void BagWindow_OnLeaveField();   // storagebag.cpp — close the bag window on logout/stage exit
 
 
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
@@ -103,6 +105,7 @@ inline void AttachClientHooks() {
     (PacketHooks());
     (AttachMapObjectFade());
     (BGMOverride());
+    (AttachBagWindowMod());
 }
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {

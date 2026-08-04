@@ -93,6 +93,9 @@ struct LauncherWindow {
 
 LauncherWindow *g_launcherWindow = nullptr;
 bool g_launcherExitRequested = false;
+// Set when the data update (download/apply) fails, so WinMain can report "update failed"
+// instead of the misleading "data verification failed" for that path.
+bool g_dataUpdateFailed = false;
 std::mutex g_lastVerifyFailedMutex;
 std::string g_lastVerifyFailedPath;
 
@@ -893,6 +896,10 @@ bool HandleUpdaterProgressLine(HWND hwnd, const std::string &line) {
     } else if (phase == "manifest") {
         status = L"Downloading patch manifest...";
         start = 0.14;
+        end = 0.15;
+    } else if (phase == "scan") {
+        status = L"Checking existing files...";
+        start = 0.15;
         end = 0.18;
     } else if (phase == "download") {
         status = L"Downloading patch files...";
@@ -1084,7 +1091,16 @@ bool RunExternalUpdater(HWND hwnd, std::wstring &installedVersion) {
     return !installedVersion.empty();
 }
 
+// Data verification is disabled for now: launching skips the Updater.exe verify pass
+// entirely. Flip this back to true to restore the pre-launch CRC check.
+constexpr bool kDataVerificationEnabled = false;
+
 bool RunExternalVerifier(HWND hwnd) {
+    if (!kDataVerificationEnabled) {
+        DebugLog(L"Data verification skipped: disabled");
+        return true;
+    }
+
     constexpr wchar_t updaterExe[] = L"Updater.exe";
     if (GetFileAttributesW(updaterExe) == INVALID_FILE_ATTRIBUTES) {
         DebugLog(L"Updater.exe not found next to launcher for verification");
@@ -1280,11 +1296,12 @@ bool WaitForUpdateButtonIfNeeded(HWND hwnd, std::wstring &installedVersion) {
     DebugLog(L"Update button accepted");
     SetUpdatePrompt(hwnd, L"Update confirmed", L"Preparing patch", false);
     if (!RunExternalUpdater(hwnd, installedVersion)) {
+        g_dataUpdateFailed = true;
         SetProgress(hwnd, L"Update failed", L"Please try again", 1.0, true, true);
         SleepWithMessagePump(1400);
         return false;
     }
-    SetProgress(hwnd, L"Update applied", L"Checking game files before launch", 1.0, true, false);
+    SetProgress(hwnd, L"Update applied", L"Ready to launch", 1.0, true, false);
     SleepWithMessagePump(450);
     return true;
 }
@@ -1440,7 +1457,25 @@ LRESULT CALLBACK LauncherWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             snapshot.showUpdateButton = g_launcherWindow->state.showUpdateButton;
         }
 
-        Gdiplus::FontFamily titleFamily(L"Segoe UI");
+        // Resolve the UI font once. "Segoe UI" is a Vista+ Microsoft font that is NOT
+        // redistributable and is absent from almost every Wine/Proton prefix. Unlike GDI,
+        // GDI+ does NOT substitute a missing FontFamily -- DrawString with an unavailable
+        // family silently draws nothing, so ALL launcher text disappears under Wine while
+        // the brush-drawn background/buttons still render. Probe for an installed sans-serif
+        // and fall back to the GDI+ generic family (guaranteed present) so text always shows.
+        static const std::wstring uiFontName = [] () -> std::wstring {
+            for (const wchar_t* name : { L"Segoe UI", L"Tahoma", L"Arial",
+                                         L"Liberation Sans", L"DejaVu Sans" }) {
+                Gdiplus::FontFamily probe(name);
+                if (probe.IsAvailable()) return name;
+            }
+            wchar_t generic[LF_FACESIZE] = { 0 };
+            const Gdiplus::FontFamily* g = Gdiplus::FontFamily::GenericSansSerif();
+            if (g) g->GetFamilyName(generic);
+            return generic[0] ? std::wstring(generic) : std::wstring(L"Arial");
+        }();
+
+        Gdiplus::FontFamily titleFamily(uiFontName.c_str());
         Gdiplus::Font titleFont(&titleFamily, 32, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
         Gdiplus::Font statusFont(&titleFamily, 18, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
         Gdiplus::Font detailFont(&titleFamily, 13, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
@@ -1827,10 +1862,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             std::lock_guard<std::mutex> lock(g_lastVerifyFailedMutex);
             failedPath = g_lastVerifyFailedPath;
         }
-        DebugLog(L"Launcher exiting: data verification failed path=%S", failedPath.c_str());
-        if (failedPath.empty()) {
+        if (g_dataUpdateFailed) {
+            DebugLog(L"Launcher exiting: data update failed");
+            ErrorMessage("Update failed.\n\nCheck your internet connection and try again.\nSee logs\\updater.log for details.");
+        } else if (failedPath.empty()) {
+            DebugLog(L"Launcher exiting: data verification failed");
             ErrorMessage("Data verification failed");
         } else {
+            DebugLog(L"Launcher exiting: data verification failed path=%S", failedPath.c_str());
             ErrorMessage("Data verification failed: %s\n\nSee logs\\updater-verify.log for details.", failedPath.c_str());
         }
         return 1;
