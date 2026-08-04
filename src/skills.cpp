@@ -941,6 +941,196 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je buff
 
+            mov eax, 1121002
+            cmp esi, eax
+            je buff
+
+            mov eax, 1121012
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221011
+            cmp esi, eax
+            je buff
+
+            mov eax, 1221016
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221021
+            cmp esi, eax
+            je melee
+
+            mov eax, 1221052
+            cmp esi, eax
+            je summons
+
+            mov eax, 1421003
+            cmp esi, eax
+            je melee
+
+            mov eax, 1421004
+            cmp esi, eax
+            je melee
+
+            mov eax, 1421009
+            cmp esi, eax
+            je melee
+
+            mov eax, 1521002
+            cmp esi, eax
+            je buff
+
+            mov eax, 1521100
+            cmp esi, eax
+            je melee
+
+            mov eax, 1521229
+            cmp esi, eax
+            je melee
+
+            mov eax, 3601011
+            cmp esi, eax
+            je buff
+
+
+
+            mov eax, 2121005
+            cmp esi, eax
+            je summons
+
+            mov eax, 2121026
+            cmp esi, eax
+            je magic
+
+            mov eax, 2121027
+            cmp esi, eax
+            je magic
+
+            mov eax, 2221000
+            cmp esi, eax
+            je buff
+
+            mov eax, 2221015
+            cmp esi, eax
+            je buff
+
+            mov eax, 2221018
+            cmp esi, eax
+            je magic
+
+            mov eax, 2221021
+            cmp esi, eax
+            je magic
+
+            mov eax, 2421005
+            cmp esi, eax
+            je summons
+
+            mov eax, 2421007
+            cmp esi, eax
+            je magic
+
+            mov eax, 2421014
+            cmp esi, eax
+            je buff
+
+            mov eax, 2521009
+            cmp esi, eax
+            je magic
+
+            mov eax, 2521014
+            cmp esi, eax
+            je magic
+
+            mov eax, 2521023
+            cmp esi, eax
+            je buff
+
+            mov eax, 2521032
+            cmp esi, eax
+            je buff
+
+            mov eax, 3221007
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3221018
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3421005
+            cmp esi, eax
+            je buff
+
+            mov eax, 3421008
+            cmp esi, eax
+            je buff
+
+            mov eax, 3521007
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3521008
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3521012
+            cmp esi, eax
+            je buff
+
+            mov eax, 3521052
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3601014
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3601015
+            cmp esi, eax
+            je summons
+
+            mov eax, 4121019
+            cmp esi, eax
+            je shoot
+
+            mov eax, 4521011
+            cmp esi, eax
+            je melee
+
+            mov eax, 4521012
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601017
+            cmp esi, eax
+            je summons
+
+            mov eax, 4521013
+            cmp esi, eax
+            je melee
+
+            mov eax, 5121008
+            cmp esi, eax
+            je melee
+
+            mov eax, 5121011
+            cmp esi, eax
+            je melee
+
+            mov eax, 5121013
+            cmp esi, eax
+            je melee
+
+            mov eax, 5421009
+            cmp esi, eax
+            je buff
+
+            mov eax, 5521016
+            cmp esi, eax
+            je summons
+
             mov eax, 2301005
             jmp doActiveJmpBack
 
@@ -1444,18 +1634,27 @@ bool isSkillIDMatched(int nSkillID) {
         // ===== Crusader =====
         1111009,
         1111015,
+        1121002,
+        1121012,
 
         // ===== Spearman =====
         1211012,
         1211013,
         1211014,
         1211000,
+        1221011,
+        1221016,
+        1221021,
+        1221052,
 
         // ===== Duelist =====
         1411003,
         1411005,
         1411006,
         1411008,
+        1421003,
+        1421004,
+        1421009,
 
         // ====== Crusher =====
         1201017,
@@ -1468,6 +1667,9 @@ bool isSkillIDMatched(int nSkillID) {
         1511007,
         1511006,
         1511009,
+        1521002,
+        1521100,
+        1521229,
 
         // ===== Magician =====
         2001010,
@@ -1495,6 +1697,9 @@ bool isSkillIDMatched(int nSkillID) {
         2111010,
         2111012,
         2111013,
+        2121005,
+        2121026,
+        2121027,
 
         // ===== Priest =====
         2211011,
@@ -1503,6 +1708,10 @@ bool isSkillIDMatched(int nSkillID) {
         2221015,
         2211016,
         2211013,
+        2221000,
+        2221015,
+        2221018,
+        2221021,
 
         // ===== IL Mage =====
         2411010,
@@ -1510,12 +1719,19 @@ bool isSkillIDMatched(int nSkillID) {
         2411012,
         2411013,
         2411023,
+        2421005,
+        2421007,
+        2421014,
 
         // ===== Holy Knight =====
         2511006,
         2511004,
         2511001,
         2511011,
+        2521009,
+        2521014,
+        2521023,
+        2521032,
 
         // ===== Priest =====
         2211004,
@@ -1545,6 +1761,8 @@ bool isSkillIDMatched(int nSkillID) {
         3411007,
         3411005,
         3411010,
+        3421005,
+        3421008,
 
         // ===== Sniper =====
         3511003,
@@ -1552,10 +1770,16 @@ bool isSkillIDMatched(int nSkillID) {
         3511004,
         3511019,
         3511002,
+        3521007,
+        3521008,
+        3521012,
+        3521052,
 
         3211014,
         3211016,
         3211015,
+        3221007,
+        3221018,
 
         3601000,
         3601001,
@@ -1567,6 +1791,10 @@ bool isSkillIDMatched(int nSkillID) {
         3601007,
         3601009,
         3601010,
+        3601011,
+        3601014,
+        3601015,
+        3601017,
 
         // ===== Thief =====
         4001004,
@@ -1583,6 +1811,7 @@ bool isSkillIDMatched(int nSkillID) {
         4111020,
         4111021,
         4111017,
+        4121019,
 
         // ===== Bandit =====
         4201014,
@@ -1611,6 +1840,9 @@ bool isSkillIDMatched(int nSkillID) {
         4511003,
         4511007,
         4511001,
+        4521011,
+        4521012,
+        4521013,
 
         5211012,
         5211016,
@@ -1622,6 +1854,9 @@ bool isSkillIDMatched(int nSkillID) {
 
         // ===== Marauder 3rd =====
         5111013, 5111016, 5111014,
+        5121008,
+        5121011,
+        5121013,
         // 5501006, 5501002
         // ===== Brawler 2nd =====
         5401002,
@@ -1636,6 +1871,7 @@ bool isSkillIDMatched(int nSkillID) {
         5411022,
         5411020,
         5411026,
+        5421009,
 
         // ===== Summoner ====
         5511015,
@@ -1643,6 +1879,7 @@ bool isSkillIDMatched(int nSkillID) {
         5511014,
         5511017,
         5511006,
+        5521016,
     };
 
     return std::find(std::begin(skillIDs), std::end(skillIDs), nSkillID) != std::end(skillIDs);
