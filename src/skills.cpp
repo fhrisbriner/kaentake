@@ -111,6 +111,7 @@ int sharpenlevel = 0;
 int poisonBonusLevel = 0; // level of the poison-damage passive (read in GetSkillLevel hook)
 int rangerShred = 0;
 int sniperShred = 0;
+int barbShred = 0;
 int duelistShred = 0;
 int galeShot = 0;
 int masterSkies = 0;
@@ -396,6 +397,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je melee
 
+            mov eax, 1421004
+            cmp esi, eax
+            je melee
+
+            mov eax, 1421003
+            cmp esi, eax
+            je melee
+
                 // Barbarian
 
             mov eax, 1511006
@@ -415,6 +424,14 @@ void __declspec(naked) doActiveSkills() {
             je melee
 
             mov eax, 1511007
+            cmp esi, eax
+            je buff
+
+            mov eax, 1521003
+            cmp esi, eax
+            je buff
+
+            mov eax, 1521011
             cmp esi, eax
             je buff
 
@@ -1016,19 +1033,12 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 1221021
             cmp esi, eax
-            je buff
+            je melee
 
             mov eax, 1221052
             cmp esi, eax
             je summons
 
-            mov eax, 1421003
-            cmp esi, eax
-            je melee
-
-            mov eax, 1421004
-            cmp esi, eax
-            je melee
 
             mov eax, 1421009
             cmp esi, eax
@@ -1187,6 +1197,18 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 5521016
             cmp esi, eax
             je summons
+
+            mov eax, 5521009
+            cmp esi, eax
+            je shoot
+
+            mov eax, 5421007
+            cmp esi, eax
+            je melee
+
+            mov eax, 2421006
+            cmp esi, eax
+            je magic
 
             mov eax, 2301005
             jmp doActiveJmpBack
@@ -1687,6 +1709,8 @@ bool isSkillIDMatched(int nSkillID) {
         1211000,
         1501016,
         1501012,
+        1521003,
+        1521011,
 
         // ===== Crusader =====
         1111009,
@@ -1710,9 +1734,10 @@ bool isSkillIDMatched(int nSkillID) {
         1411005,
         1411006,
         1411008,
-        1421003,
-        1421004,
         1421009,
+        1421004,
+        1421003,
+        
 
         // ====== Crusher =====
         1201017,
@@ -1781,6 +1806,7 @@ bool isSkillIDMatched(int nSkillID) {
         2421005,
         2421007,
         2421014,
+        2421006,
 
         // ===== Holy Knight =====
         2511006,
@@ -1931,6 +1957,7 @@ bool isSkillIDMatched(int nSkillID) {
         5411020,
         5411026,
         5421009,
+        5421007,
 
         // ===== Summoner ====
         5511015,
@@ -1939,6 +1966,7 @@ bool isSkillIDMatched(int nSkillID) {
         5511017,
         5511006,
         5521016,
+        5521009,
     };
 
     return std::find(std::begin(skillIDs), std::end(skillIDs), nSkillID) != std::end(skillIDs);
@@ -2058,6 +2086,7 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     duelistShred = pGetSkillLevel(_this, charData, 1410012, skillEntry);
     rangerShred = pGetSkillLevel(_this, charData, 3110000, skillEntry);
     sniperShred = pGetSkillLevel(_this, charData, 3210018, skillEntry);
+    barbShred = pGetSkillLevel(_this, charData, 1510008, skillEntry);
     galeShot = pGetSkillLevel(_this, charData, 3411007, skillEntry);
     masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
     hermitBoss = pGetSkillLevel(_this, charData, 4110031, skillEntry);
@@ -2607,7 +2636,8 @@ bool isCopyCatSkill(int skillId) {
     int secondDigit = (job / 10) % 10;
     int third = skillId / 1000;
     int thirdDigit = (third / 10) % 10;
-    if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013) {
+    if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013 ||
+        skillId == 5521009 || skillId == 5421007 || skillId == 2421006) {
         return true;
     }
     if (thirdDigit == 0) {
@@ -2691,7 +2721,7 @@ int(__fastcall CUserLocal_Jump)(CUserLocal* _this, void* edx, int a2) {
 // it so it doesn't lock the others); 1511009 ignores the lockout but still arms it.
 // Returns true when casting is allowed.
 bool MovementLockOut(int nSkillID) {
-    if (nSkillID != 5101010 && nSkillID != 1511009) {
+    if (nSkillID != 5101010 && nSkillID != 1511009 && nSkillID != 1421003) {
         auto elapsed = chrono::duration_cast<chrono::milliseconds>(chrono::steady_clock::now() - movementLockTimer);
         return elapsed.count() >= 600;
     }
@@ -2712,6 +2742,8 @@ bool isMovementSkill(int skillid) {
         // Duelist
         1411005,
         1411006,
+        1421004,
+        1421003,
         // chief bandit
         4211015,
         // striker
@@ -2725,11 +2757,11 @@ bool isMovementSkill(int skillid) {
 }
 
 bool isFallingSkill(int nSkillID) {
-    return nSkillID == 5411021 || nSkillID == 5101009 || nSkillID == 3601009;
+    return nSkillID == 5411021 || nSkillID == 5101009 || nSkillID == 3601009 || nSkillID == 1421004;
 }
 
 bool isRisingSkill(int nSkillID) {
-    return nSkillID == 5101010 || nSkillID == 1511009;
+    return nSkillID == 5101010 || nSkillID == 1511009 || nSkillID == 1421003;
 }
 
 DWORD dwShipSkills = 0x0096719D;
@@ -2846,6 +2878,15 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 5111016) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 15101006, nScanCode, pnConsumeCheck);
         }
+        if (nSkillID == 5521009) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 5221009, nScanCode, pnConsumeCheck);
+        }
+        if (nSkillID == 5421007) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 5121007, nScanCode, pnConsumeCheck);
+        }
+        if (nSkillID == 2421006) {
+            return CUserLocal__DoActiveSkill_Hook(_This, edx, 2221006, nScanCode, pnConsumeCheck);
+        }
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
 
@@ -2952,10 +2993,22 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             vx = 520.0;
             vy = -20.0;
         }
+        if (nSkillID == 1421004 && ((IsFalling(pCv)) || IsFreeFalling(pCv))) {
+            vx = 450.0;
+            vy = -80.0;
+        }
         if (nSkillID == 5101010) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
                 bArmAniCancelOnSuccess = true;
                 vy = -555.0;
+            } else {
+                return 0;
+            }
+        }
+        if (nSkillID == 1421003) {
+            if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
+                bArmAniCancelOnSuccess = true;
+                vy = -1100.0;
             } else {
                 return 0;
             }
@@ -3052,6 +3105,9 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
         return 750;
     }
     if (nSkillID == 5411021) {
+        return 750;
+    }
+    if (nSkillID == 1421004) {
         return 750;
     }
     if (nSkillID == 1211000 || nSkillID == 1211014) {
@@ -3797,12 +3853,12 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
             double mobDef = magic ? mob->m_pTemplate->nMDDamage.Fuse()
                                   : mob->m_pTemplate->nPDDamage.Fuse();
             mobDef = applyMobDefenseStat(&mob->m_stat, mobDef, magic); // fold WDEF/MDEF up/down debuff
-            // Armor-break shreds are physical (archer/thief) only -- never amplify magic.
-            if (!magic && (sniperShred > 0 || rangerShred > 0 || duelistShred > 0 || galeShot > 0)) {
+            // Armor-break shreds are physical only -- never amplify magic.
+            if (!magic && (sniperShred > 0 || rangerShred > 0 || duelistShred > 0 || galeShot > 0 || barbShred > 0)) {
                 if (nSkillID == 3411007) {
                     defenseShred -= 0.02 * galeShot;
                 } else {
-                    defenseShred -= (0.02 * (sniperShred + rangerShred + duelistShred));
+                    defenseShred -= (0.02 * (sniperShred + rangerShred + duelistShred + barbShred));
                 }
             }
             if (mobDef > 0.0) {
