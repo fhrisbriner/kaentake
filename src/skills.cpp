@@ -3110,7 +3110,8 @@ int(__cdecl get_cool_time_t)(int nSkillID) {
     if (nSkillID == 1421004) {
         return 750;
     }
-    if (nSkillID == 1211000 || nSkillID == 1211014) {
+    if (nSkillID == 1211000 || nSkillID == 1211014 || nSkillID == 1221016
+            || nSkillID == 1221021) {
         return 1720;
     }
     return (get_cool_time(nSkillID));
@@ -4878,49 +4879,48 @@ void InitCorsairMods() {
 // get_cool_time and folds the result into the action delay); otherwise it jmps to the original
 // loc_95197E. edx is untouched, so the get_cool_time(edx) call downstream still sees the skill id.
 void InstallMeleeCooltimeGate() {
-    const DWORD patchAddr   = 0x009518F9; // the 5-byte `jmp loc_95197E` (default: no cooltime)
-    const DWORD applyAddr   = 0x0095191E; // branch that calls get_cool_time and applies the delay
-    const DWORD defaultAddr = 0x0095197E; // original fall-through target
+    const DWORD patchAddr   = 0x009518F9;
+    const DWORD applyAddr   = 0x0095191E;
+    const DWORD defaultAddr = 0x0095197E;
 
-    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 48, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!cave)
         return;
+
     BYTE* p = cave;
 
-    // cmp edx, 1211000
-    *p++ = 0x81;
-    *p++ = 0xFA;
-    DWORD skillId = 1211000;
-    memcpy(p, &skillId, 4);
-    p += 4;
-    // je applyAddr
-    *p++ = 0x0F;
-    *p++ = 0x84;
-    DWORD rel = applyAddr - ((DWORD)p + 4);
-    memcpy(p, &rel, 4);
-    p += 4;
-    // cmp edx, 1211014
-    *p++ = 0x81;
-    *p++ = 0xFA;
-    DWORD skillId2 = 1211014;
-    memcpy(p, &skillId2, 4);
-    p += 4;
-    // je applyAddr
-    *p++ = 0x0F;
-    *p++ = 0x84;
-    rel = applyAddr - ((DWORD)p + 4);
-    memcpy(p, &rel, 4);
-    p += 4;
+    auto EmitCmpJe = [&](DWORD skillId)
+    {
+        // cmp edx, skillId
+        *p++ = 0x81;
+        *p++ = 0xFA;
+        memcpy(p, &skillId, 4);
+        p += 4;
+
+        // je applyAddr
+        *p++ = 0x0F;
+        *p++ = 0x84;
+        DWORD rel = applyAddr - ((DWORD)p + 4);
+        memcpy(p, &rel, 4);
+        p += 4;
+    };
+
+    EmitCmpJe(1211000);
+    EmitCmpJe(1211014);
+    EmitCmpJe(1221016);
+    EmitCmpJe(1221021);
+
     // jmp defaultAddr
     *p++ = 0xE9;
-    rel = defaultAddr - ((DWORD)p + 4);
+    DWORD rel = defaultAddr - ((DWORD)p + 4);
     memcpy(p, &rel, 4);
     p += 4;
 
-    // Redirect the original fall-through jmp into the cave.
+    // Redirect original jump to our cave
     DWORD relToCave = (DWORD)cave - patchAddr - 5;
     BYTE patch[5] = { 0xE9 };
     memcpy(patch + 1, &relToCave, 4);
+
     WriteProcessMemory(GetCurrentProcess(), (void*)patchAddr, patch, 5, nullptr);
 }
 
@@ -4933,47 +4933,99 @@ void InstallMeleeCooltimeGate() {
 // skill id at this point (cmp ebx,... @ 0x0066B115) and is untouched by the formula, so it is safe to
 // test. Overwrites the 7-byte imul+add (0x0066B124..0x0066B12A); returns to 0x0066B12B (mov edx,esi).
 void InstallDamageShowTimeGate() {
-    const DWORD patchAddr  = 0x0066B124; // imul eax,[ebp+24h] ; add eax,[ebp+10h]  (7 bytes)
-    const DWORD returnAddr = 0x0066B12B; // mov edx, esi  (next instruction after the add)
-    const DWORD skillId    = 1211000;
-    const DWORD skillId2   = 1211014;
+    const DWORD patchAddr  = 0x0066B124;
+    const DWORD returnAddr = 0x0066B12B;
     const DWORD showMs     = 660;
 
-    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 96, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!cave)
         return;
+
     BYTE* p = cave;
 
-    // imul eax, [ebp+24h]   (original)
+    // Original instructions
+    // imul eax, [ebp+24h]
     *p++ = 0x0F; *p++ = 0xAF; *p++ = 0x45; *p++ = 0x24;
-    // add eax, [ebp+10h]    (original)
+    // add eax, [ebp+10h]
     *p++ = 0x03; *p++ = 0x45; *p++ = 0x10;
-    // cmp ebx, skillId (1211000)
-    *p++ = 0x81; *p++ = 0xFB;
-    memcpy(p, &skillId, 4); p += 4;
-    // je override (+8: skip the cmp ebx,skillId2 [6] + jne [2] below)
-    *p++ = 0x74; *p++ = 0x08;
-    // cmp ebx, skillId2 (1211014)
-    *p++ = 0x81; *p++ = 0xFB;
-    memcpy(p, &skillId2, 4); p += 4;
-    // jne +8 (skip the 8-byte override: `mov eax,[ebp+10h]` + `add eax, showMs`)
-    // v16 is an ABSOLUTE timestamp (base @ [ebp+10h] + hitIndex*120), not a relative delay, so for
-    // these skills we reload the base and add showMs -> shows showMs after the hit (not an instant past time).
-    *p++ = 0x75; *p++ = 0x08;
-    // mov eax, [ebp+10h]   (base timestamp a4)
-    *p++ = 0x8B; *p++ = 0x45; *p++ = 0x10;
+
+    BYTE* jnePatch = nullptr;
+
+    auto EmitCmpJe = [&](DWORD skillId)
+    {
+        // cmp ebx, skillId
+        *p++ = 0x81;
+        *p++ = 0xFB;
+        memcpy(p, &skillId, 4);
+        p += 4;
+
+        // je override
+        *p++ = 0x0F;
+        *p++ = 0x84;
+
+        DWORD* relPtr = (DWORD*)p;
+        p += 4;
+
+        if (!jnePatch)
+            jnePatch = (BYTE*)relPtr;
+
+        DWORD rel = 0; // patched later
+        memcpy(relPtr, &rel, 4);
+    };
+
+    EmitCmpJe(1211000);
+    EmitCmpJe(1211014);
+    EmitCmpJe(1221016);
+    EmitCmpJe(1221021);
+
+    // jmp returnAddr (if no matches)
+    *p++ = 0xE9;
+    BYTE* noMatchTarget = p;
+    DWORD rel = returnAddr - ((DWORD)p + 4);
+    memcpy(p, &rel, 4);
+    p += 4;
+
+    BYTE* overrideLabel = p;
+
+    // mov eax, [ebp+10h]
+    *p++ = 0x8B;
+    *p++ = 0x45;
+    *p++ = 0x10;
+
     // add eax, showMs
     *p++ = 0x05;
-    memcpy(p, &showMs, 4); p += 4;
+    memcpy(p, &showMs, 4);
+    p += 4;
+
     // jmp returnAddr
     *p++ = 0xE9;
-    DWORD rel = returnAddr - ((DWORD)p + 4);
-    memcpy(p, &rel, 4); p += 4;
+    rel = returnAddr - ((DWORD)p + 4);
+    memcpy(p, &rel, 4);
+    p += 4;
 
-    // Patch the original 7 bytes: jmp cave (5) + nop nop (2).
+    // Fix up all JE targets
+    BYTE* scan = cave + 7;
+    while (scan < noMatchTarget)
+    {
+        if (scan[0] == 0x81 && scan[1] == 0xFB)
+        {
+            BYTE* je = scan + 6;
+            DWORD* relPtr = (DWORD*)(je + 2);
+            DWORD r = (DWORD)overrideLabel - ((DWORD)relPtr + 4);
+            *relPtr = r;
+            scan = je + 6;
+        }
+        else
+        {
+            ++scan;
+        }
+    }
+
+    // Patch original code
     BYTE patch[7] = { 0xE9, 0, 0, 0, 0, 0x90, 0x90 };
     DWORD relToCave = (DWORD)cave - patchAddr - 5;
     memcpy(patch + 1, &relToCave, 4);
+
     WriteProcessMemory(GetCurrentProcess(), (void*)patchAddr, patch, sizeof(patch), nullptr);
 }
 
@@ -4982,7 +5034,7 @@ void InstallDamageShowTimeGate() {
 // and the damage-number show time stays the one already computed (v14[2]) instead of being re-derived
 // from the action animation on every hit. Append skill ids here -- nothing else needs to change.
 static const std::vector<int> g_singleHitActionSkills = {
-    1211000, // Charged Blow (pairs with InstallDamageShowTimeGate's flat 660ms number)
+    1211000, 1221016// Charged Blow (pairs with InstallDamageShowTimeGate's flat 660ms number)
 };
 
 // CMob::SetDamaged (sub_66B05E) decides per hit whether to run the `.HitAfter` block @ 0x0066B2BB:
