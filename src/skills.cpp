@@ -235,12 +235,30 @@ int __cdecl IsNoChargeSkill(int nSkillID) {
 // what arms the keydown state the repeat tick runs off. See the three caves near
 // isKeydownSkillHook for the machinery.
 static const std::vector<int> g_magicHurricaneSkills = {
-    2121017 // put the skill id here, e.g. 2321099
+    2121017, // fire hurricane
 };
 
 int __cdecl IsMagicHurricaneSkill(int nSkillID) {
     return std::find(g_magicHurricaneSkills.begin(), g_magicHurricaneSkills.end(), nSkillID)
             != g_magicHurricaneSkills.end();
+}
+
+// ===== Prepare (charge) magic attack ========================================================
+// The 2321001 / 2221001 / 2121001 pattern: hold the key to charge, release to fire ONE magic
+// attack. Unlike the Hurricane port above this needs no attack machinery of ours at all -- the
+// client already owns the whole path. Two pieces make a skill take it:
+//   is_keydown_skill says yes, so DoActiveSkill_Prepare arms the keydown state and plays the
+//   skill's own prepare/keydown WZ animation (which is why the action comes out right here and
+//   not through the per-attack `action` table), and
+//   OnKeyDownSkillEnd's id test @ 0x0095C059 sends the release into TryDoingMagicAttack.
+static const std::vector<int> g_prepareMagicSkills = {
+    // empty: this is the CHARGE flavour (hold to charge, release fires once). Kept because the
+    // wiring is three lines; add an id here for a Big Bang style skill.
+};
+
+int __cdecl IsPrepareMagicSkill(int nSkillID) {
+    return std::find(g_prepareMagicSkills.begin(), g_prepareMagicSkills.end(), nSkillID)
+            != g_prepareMagicSkills.end();
 }
 
 void __declspec(naked) doActiveSkills() {
@@ -258,6 +276,13 @@ void __declspec(naked) doActiveSkills() {
         // state CUserLocal::Update ticks off; the attack itself comes from the repeat tick.
             push esi
             call IsMagicHurricaneSkill
+            add esp, 4
+            test eax, eax
+            jnz prepare
+
+        // Charge magic attacks take the same route: prepare arms the keydown, release attacks.
+            push esi
+            call IsPrepareMagicSkill
             add esp, 4
             test eax, eax
             jnz prepare
@@ -1162,6 +1187,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 4121017
+            cmp esi, eax
+            je shoot
+
             mov eax, 4521011
             cmp esi, eax
             je melee
@@ -1897,6 +1926,7 @@ bool isSkillIDMatched(int nSkillID) {
         4111021,
         4111017,
         4121019,
+        4121017,
 
         // ===== Bandit =====
         4201014,
@@ -2636,8 +2666,10 @@ bool isCopyCatSkill(int skillId) {
     int secondDigit = (job / 10) % 10;
     int third = skillId / 1000;
     int thirdDigit = (third / 10) % 10;
+    // 2421006 is deliberately NOT here: it no longer borrows another skill's id, it carries its
+    // own and gets 2221006's behavior through InstallIceDemonAlias instead.
     if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013 ||
-        skillId == 5521009 || skillId == 5421007 || skillId == 2421006) {
+        skillId == 5521009 || skillId == 5421007) {
         return true;
     }
     if (thirdDigit == 0) {
@@ -2884,9 +2916,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         if (nSkillID == 5421007) {
             return CUserLocal__DoActiveSkill_Hook(_This, edx, 5121007, nScanCode, pnConsumeCheck);
         }
-        if (nSkillID == 2421006) {
-            return CUserLocal__DoActiveSkill_Hook(_This, edx, 2221006, nScanCode, pnConsumeCheck);
-        }
         return CUserLocal__DoActiveSkill_Hook(_This, edx, nSkillID - 300000, nScanCode, pnConsumeCheck);
     }
 
@@ -2904,7 +2933,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     // }
 
     unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
-    if (nSkillID == 3411006) {
+    if (nSkillID == 3411006 || nSkillID == 4121017) {
         unsigned char arrayApply[] = { 0xE9, 0xF6, 0x00, 0x00, 0x00, 0x90 };
         Patch1Array(0x0095497e, arrayApply, sizeof(arrayApply));
     } else {
@@ -3190,8 +3219,8 @@ int __cdecl isKeydownSkillHook(int nSkillID) {
     if (IsNoChargeSkill(nSkillID)) {
         return 0;
     }
-    if (IsMagicHurricaneSkill(nSkillID)) {
-        return 1; // hold-to-repeat needs the keydown state DoActiveSkill_Prepare arms
+    if (IsMagicHurricaneSkill(nSkillID) || IsPrepareMagicSkill(nSkillID)) {
+        return 1; // both need the keydown state DoActiveSkill_Prepare arms
     }
     return isKeydownSkill(nSkillID);
 }
@@ -3205,6 +3234,30 @@ auto pTryDoingMagicAttack = (int(__thiscall*)(void*, const void*, int, int, int)
 auto pTryDoingShootAttack = (int(__thiscall*)(void*, const void*, int, int, int, int, int))0x009537D5;
 auto pGetUpdateTime = (int(__cdecl*)())0x00987257;
 auto pKeyDownSkillMaxTime = (int(__cdecl*)(int))0x00500971; // 1000 or 2000ms per skill
+auto pIsActionAppointed = (int(__thiscall*)(const void*, int))0x0076611C;
+auto pGetActionNameFromCode = (void*(__cdecl*)(void*, int))0x004A8CE6;
+
+// The skill loader (sub_75CD52 @ 0x0075D1E4..0x0075D267) walks the WZ `action` node's children,
+// runs each through get_action_code_from_name, and DROPS any that comes back < 0 -- so an action
+// name the client doesn't know leaves SKILLENTRY+0x18 null and the attack falls back to the
+// weapon's basic-attack table. The accepted names are the 162 the client itself knows: code N is
+// StringPool id 0x3F0 + N (see the s_aCharacterActionData dynamic initializer @ 0x004A38E7), and
+// those strings are XOR-obfuscated in the pool, so ask the client for them rather than guessing.
+// Dumped once, lazily, so CActionMan::Init has certainly run by then.
+static void DumpActionNamesOnce() {
+    static bool bDumped = false;
+    if (bDumped) {
+        return;
+    }
+    bDumped = true;
+    for (int nCode = 0; nCode < 162; ++nCode) {
+        void* pData = nullptr;
+        pGetActionNameFromCode(&pData, nCode);
+        // _bstr_t::Data_t's first field is the wide string; null means the slot has no name.
+        const wchar_t* pName = pData ? *reinterpret_cast<const wchar_t* const*>(pData) : nullptr;
+        LogInfo("ActionName %3d = %S", nCode, pName ? pName : L"(null)");
+    }
+}
 
 // One repeat tick of a hold-to-repeat magic skill. Returns 1 when it fired, so the cave below can
 // skip the engine's TryDoingShootAttack. Re-reads the skill entry and level through CSkillInfo
@@ -3217,6 +3270,7 @@ int __cdecl MagicHurricaneAttack(void* pUser) {
     if (!IsMagicHurricaneSkill(nSkillID)) {
         return 0;
     }
+    DumpActionNamesOnce();
     SkillInfo* si = SkillInfo::GetInstance();
     if (!si) {
         return 0;
@@ -3243,8 +3297,28 @@ int __cdecl MagicHurricaneAttack(void* pUser) {
     if (nMax > 0 && tKeyDown > nMax) {
         tKeyDown = nMax;
     }
-    pTryDoingMagicAttack(pUser, pEntry, nLevel, 0, tKeyDown);
+    const int nResult = pTryDoingMagicAttack(pUser, pEntry, nLevel, 0, tKeyDown);
+    // get_random_magic_attack_action (0x007662F5) falls back to the weapon's generic attack table
+    // -- a basic attack -- unless the skill has an appointed action. Log what it actually sees:
+    // +0x0C == 3 makes it take the generic path even with an action, and the action array at
+    // +0x18 (built from the WZ `action` node) empty means IsActionAppointed said no.
+    const char* e = reinterpret_cast<const char*>(pEntry);
+    const int nField0C = *reinterpret_cast<const int*>(e + 0x0C);
+    const int* pActions = *reinterpret_cast<const int* const*>(e + 0x18);
+    const int nActions = pActions ? pActions[-1] : -1;
+    const int bAppointed = pIsActionAppointed(pEntry, nLevel);
+    LogInfo("MagicHurricane: skill=%d lvl=%d tKeyDown=%d result=%d +0x0C=%d actions=%p count=%d "
+            "appointed=%d", nSkillID, nLevel, tKeyDown, nResult, nField0C, pActions, nActions,
+            bAppointed);
     return 1;
+}
+
+int __cdecl IsMagicHurricaneUser(void* pUser) {
+    if (!pUser) {
+        return 0;
+    }
+    return IsMagicHurricaneSkill(
+            *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + KEYDOWN_SKILL_OFF));
 }
 
 static DWORD dwKeyDownTickRet  = 0x0094BA75; // the `jz` that follows the Hurricane id compare
@@ -3288,6 +3362,65 @@ void __declspec(naked) KeyDownAmmoGate() {
             jmp [dwKeyDownSkipAmmo]
         original:
             jmp [dwKeyDownLevelRet]
+    }
+}
+
+auto pTryDoingMeleeAttack = (int(__thiscall*)(void*, const void*, int, int*, int, int, int, int))0x00950921;
+static DWORD dwKeyDownMeleeRet = 0x0094BBD8; // the `test eax,eax` after the melee call
+
+// Cave 2b (0x0094BBD3): the tick tries a plain melee attack FIRST and only falls through to the
+// ranged attack when that returns 0. Hurricane survives it because a bow cannot melee -- but a
+// wand can, so for a magic hold-to-repeat skill the melee call SUCCEEDS, the `jnz` right after it
+// jumps to OnKeyDownSkillEnd, and the skill dies at the end of its prepare without ever attacking.
+// Skip the call for our skills and report 0 so the tick continues into the magic attack below.
+// TryDoingMeleeAttack is callee-cleanup, so skipping it means popping the 7 arguments (28 bytes)
+// the caller pushed at 0x0094BBC7..0x0094BBD0 ourselves.
+void __declspec(naked) KeyDownMeleeGate() {
+    __asm {
+            push ebx                    // CUserLocal*
+            call IsMagicHurricaneUser
+            add esp, 4
+            test eax, eax
+            jnz skip
+            mov ecx, ebx                // thiscall target, clobbered by the call above
+            call [pTryDoingMeleeAttack] // overwritten instruction
+            jmp [dwKeyDownMeleeRet]
+        skip:
+            add esp, 28                 // the 7 arguments the callee would have popped
+            xor eax, eax                // "melee did not handle this tick"
+            jmp [dwKeyDownMeleeRet]
+    }
+}
+
+static DWORD dwMagicOneTimeFail = 0x00955ADD; // TryDoingMagicAttack's "refuse" exit
+static DWORD dwMagicOneTimeRet  = 0x009559DD; // instruction after the one-time-action gate
+
+// Cave 4 (0x009559D7): TryDoingMagicAttack refuses outright while the avatar is still inside a
+// one-time action, i.e. while the previous attack animation plays -- `GetOneTimeAction() > -1`
+// -> jg 0x00955ADD (return 0). A hold-to-repeat skill ticks every 100ms but its animation runs
+// ~600ms, so all but one tick in five got rejected and the skill landed hits at plain attack
+// speed. Drop the gate for our skills only; every other skill keeps it. edi is the CUserLocal*
+// here (0x009559C9 builds its avatar pointer from edi). The flags from `cmp eax, -1` have to
+// survive our call, hence pushfd/popfd -- with the branch decided before the flags come back.
+void __declspec(naked) MagicOneTimeActionGate() {
+    __asm {
+            push eax
+            pushfd
+            push edi                    // CUserLocal*
+            call IsMagicHurricaneUser
+            add esp, 4
+            test eax, eax
+            jnz ours                    // decide while our own flags are still live
+            popfd
+            pop eax                     // pop leaves the restored flags alone
+            jle notFail                 // overwritten instruction, inverted: no indirect jcc on x86
+            jmp [dwMagicOneTimeFail]
+        notFail:
+            jmp [dwMagicOneTimeRet]
+        ours:
+            popfd
+            pop eax
+            jmp [dwMagicOneTimeRet]     // ignore the gate, keep attacking mid-animation
     }
 }
 
@@ -4150,6 +4283,19 @@ static char* mobVecCtrlObj(Mob* mob) {
     return (p && !IsBadReadPtr(p, sizeof(void*))) ? p : nullptr;
 }
 
+// Boss flag out of the mob template (+0x64, secure 0/1). Unreadable mob or template -> not a boss,
+// so a bad pointer never turns into a displacement we then apply to garbage.
+static bool mobIsBoss(Mob* mob) {
+    if (!mob || IsBadReadPtr(mob, 0x190)) {
+        return false;
+    }
+    MobTemplate* tmpl = mob->m_pTemplate;
+    if (!tmpl || IsBadReadPtr(tmpl, sizeof(MobTemplate))) {
+        return false;
+    }
+    return tmpl->bIsBoss.Fuse() != 0;
+}
+
 // CWvsPhysicalSpace2D::GetFoothold on the singleton at 0x00BEBFA0.
 auto space2dGetFoothold = (void*(__thiscall*)(void*, unsigned long))0x0050D811;
 
@@ -4445,6 +4591,9 @@ void __cdecl TossApply(void* pMob, int nAttacker, int nSkillID) {
     }
     if (nAttacker != *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x11A8)) {
         return; // only our own hits toss
+    }
+    if (mobIsBoss(reinterpret_cast<Mob*>(pMob))) {
+        return; // bosses don't get launched -- the engine's own toss flag excludes them too
     }
     int userX = 0;
     if (IWzVector2D* pvc = reinterpret_cast<CUserLocal*>(pUser)->m_pvc) {
@@ -4878,6 +5027,113 @@ void InitCorsairMods() {
 // fall-through jmp: if edx (the skill id) == 1211000 it diverts to 0x95191E (the branch that calls
 // get_cool_time and folds the result into the action delay); otherwise it jmps to the original
 // loc_95197E. edx is untouched, so the get_cool_time(edx) call downstream still sees the skill id.
+// ===== Skill-id aliasing ====================================================================
+// Gives a custom skill another skill's client behavior without renumbering it or borrowing its
+// id on the wire. The client recognizes such behavior through a handful of hardcoded
+// `cmp <operand>, <skill id>` tests, so each one is replaced by a cave that ALSO matches the
+// alias. The cave copies the original compare byte-for-byte and only swaps the immediate, which
+// keeps it independent of the operand form -- both `cmp eax, imm32` (5 bytes) and
+// `cmp [ebp+var], imm32` (7 bytes) appear among these sites.
+//
+// On a match the cave does NOT jump to the site's branch target: it only forces ZF and returns to
+// the instruction after the compare, letting the site's own jz do the jumping. That matters
+// because a site may carry instructions BETWEEN its compare and that jz (0x0096AEF4 has the
+// `mov [edi],1` that arms the keydown state) -- branching early would skip them. `cmp esp,esp`
+// sets ZF without touching a register or memory, so nothing else has to be preserved.
+//
+// Cave layout: cmp <same operand>, alias / jne notAlias / cmp esp,esp / jmp back /
+//              notAlias: <original compare> / jmp back.
+static void InstallSkillIdAlias(DWORD cmpAddr, int cmpLen, int nAliasSkill) {
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!cave)
+        return;
+
+    BYTE orig[8] = {};
+    memcpy(orig, (void*)cmpAddr, cmpLen); // imm32 is always the last 4 bytes of the compare
+
+    BYTE* p = cave;
+    memcpy(p, orig, cmpLen);
+    memcpy(p + cmpLen - 4, &nAliasSkill, 4);
+    p += cmpLen;
+    // jne notAlias  (over `cmp esp,esp` [2] + `jmp back` [5])
+    *p++ = 0x75; *p++ = 0x07;
+    // cmp esp, esp -> ZF = 1, so the site's own jz takes its branch
+    *p++ = 0x3B; *p++ = 0xE4;
+    // jmp back to the instruction after the compare
+    *p++ = 0xE9;
+    DWORD rel = (cmpAddr + cmpLen) - ((DWORD)p + 4);
+    memcpy(p, &rel, 4); p += 4;
+    // notAlias: the original compare, so the site's own jz sees the flags it expects
+    memcpy(p, orig, cmpLen);
+    p += cmpLen;
+    // jmp back
+    *p++ = 0xE9;
+    rel = (cmpAddr + cmpLen) - ((DWORD)p + 4);
+    memcpy(p, &rel, 4); p += 4;
+
+    // jmp cave, padded with nops out to the full length of the compare we replaced.
+    BYTE patch[8];
+    memset(patch, 0x90, sizeof(patch));
+    patch[0] = 0xE9;
+    DWORD relToCave = (DWORD)cave - cmpAddr - 5;
+    memcpy(patch + 1, &relToCave, 4);
+    WriteProcessMemory(GetCurrentProcess(), (void*)cmpAddr, patch, cmpLen, nullptr);
+}
+
+// 2421006 behaves as 2221006 (Ice Demon) does, while still being 2421006 everywhere -- the id the
+// server sees, the id the consume/cooldown checks use, the id its own WZ data is read from.
+// These are every hardcoded 2221006 test in the client except the DoActiveSkill routing compare
+// (0x00967DDB), which the doActiveSkills router already covers by sending 2421006 to magicAttack.
+// Hold-to-repeat skills don't want the charge meter: DoActiveSkill_Prepare @ 0x0096AEF4 picks
+// between sub_95C17B (create the keydown bar layer at CUserLocal+0x313C) and sub_581FAA (clear it)
+// off a hardcoded id list -- Hurricane and friends are in it, which is why they charge silently.
+// DrawKeyDownBar bails immediately when that layer is null, so joining the list is all it takes.
+// The `mov [edi],1` sitting between that compare and its jz doesn't touch flags, so the alias cave
+// can return into it as usual.
+void InstallNoKeyDownBar() {
+    for (int nSkillID : g_magicHurricaneSkills) {
+        InstallSkillIdAlias(0x0096AEF4, 5, nSkillID);
+    }
+    for (int nSkillID : g_prepareMagicSkills) {
+        InstallSkillIdAlias(0x0096AEF4, 5, nSkillID);
+    }
+}
+
+// The release. OnKeyDownSkillEnd's `cmp eax, 2321001` @ 0x0095C059 is what sends a charge skill
+// into TryDoingMagicAttack (via the can-attack check at 0x0095C0F3); everything else either
+// cancels or falls out doing nothing. Joining that test is the whole feature -- the prepare and
+// keydown animations, the charge timing and the attack itself are all the client's own.
+void InstallPrepareMagicAlias() {
+    for (int nSkillID : g_prepareMagicSkills) {
+        InstallSkillIdAlias(0x0095C059, 5, nSkillID);
+    }
+}
+
+// A keydown skill that REPEATS must not re-set its attack action every tick. TryDoingMagicAttack
+// does exactly that at 0x00955BAE, and then refuses outright when SetAttackAction returns 0:
+//     0x00955BAE  call CUser::SetAttackAction
+//     0x00955BB3  test eax, eax
+//     0x00955BB5  jz   0x00955ADD          <- the ~600ms rejection we measured
+// That call is also what stamped the weapon's basic-attack animation over the keydown one. The
+// client already has the escape: 0x00955B96 tests for 22171002 and jumps past both SetAttackAction
+// and ShowSkillEffect straight to 0x00955BD5, precisely because that skill drives its own visuals.
+// Join that test and the repeat keeps the prepare/keydown animation and stops being throttled.
+void InstallMagicAttackActionSkip() {
+    for (int nSkillID : g_magicHurricaneSkills) {
+        InstallSkillIdAlias(0x00955B96, 7, nSkillID);
+    }
+}
+
+void InstallIceDemonAlias() {
+    const int nAlias = 2421006;
+    InstallSkillIdAlias(0x0075BF73, 5, nAlias); // SKILLENTRY::AdjustDamageDecRate
+    InstallSkillIdAlias(0x00955ED4, 7, nAlias); // CUserLocal::TryDoingMagicAttack
+    InstallSkillIdAlias(0x0098272F, 5, nAlias); // CUserRemote::OnMagicAttack
+    InstallSkillIdAlias(0x00982966, 5, nAlias); // CUserRemote::OnMagicAttack
+    InstallSkillIdAlias(0x00982F9F, 7, nAlias); // CUserRemote::OnMagicAttack
+}
+
+
 void InstallMeleeCooltimeGate() {
     const DWORD patchAddr   = 0x009518F9;
     const DWORD applyAddr   = 0x0095191E;
@@ -5173,7 +5429,13 @@ void AttachSkillEdits() {
     // list is empty. Each patch site is exactly the 5 bytes the jmp needs.
     CodeCave((void*)KeyDownTickGate, 0x0094BA70, 0);
     CodeCave((void*)KeyDownAmmoGate, 0x0094BAD6, 0);
+    //   0x0094BBD3 - skip the melee attempt in front of it; a wand can melee, and its success
+    //                would end the keydown before the magic attack ever runs
+    CodeCave((void*)KeyDownMeleeGate, 0x0094BBD3, 0);
     CodeCave((void*)KeyDownAttackGate, 0x0094BBE8, 0);
+    // 0x009559D7 - let the attack run mid-animation, else the ~600ms attack action throttles the
+    // 100ms tick down to plain attack speed. 6-byte `jg rel32`, so one trailing nop.
+    CodeCave((void*)MagicOneTimeActionGate, 0x009559D7, 1);
     ATTACH_HOOK(pOnKeyDownSkillEnd, OnKeyDownSkillEnd_hook);
 
     CodeCave((void*)please, 0x00791C41, 4);
@@ -5235,6 +5497,10 @@ void AttachSkillEdits() {
     // Attack-key skills go through TryDoingMeleeAttack, NOT DoActiveSkill_Prepare, so this melee
     // cave is still required for them; the DoActiveSkill_Prepare patch below only covers cast skills.
     InstallMeleeCooltimeGate();
+    InstallIceDemonAlias();
+    InstallNoKeyDownBar();
+    InstallPrepareMagicAlias();
+    InstallMagicAttackActionSkip();
     // Generalize the DoActiveSkill_Prepare cooldown map to ALL prepared/cast skills. Vanilla only
     // ran the cooldown check (@0x96A9CC) and the `map[skill] = now + get_cool_time(skill)` store
     // (@0x96B09C) for 5 hardcoded ids (1121001/1221001/1321001 + 2 others). NOP both `jnz` skips so
