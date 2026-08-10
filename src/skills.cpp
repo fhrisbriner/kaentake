@@ -2345,7 +2345,7 @@ const char* __cdecl get_job_name(int nJob) {
     case 141:
         return "Duelist";
     case 142:
-        return "Swordlord";
+        return "Dervish";
     case 120:
         return "Crusher";
     case 121:
@@ -2357,13 +2357,13 @@ const char* __cdecl get_job_name(int nJob) {
     case 151:
         return "Barbarian";
     case 152:
-        return "Berserker";
+        return "Berzerker";
     case 210:
         return "Elementalist";
     case 211:
         return "F/P Magician";
     case 212:
-        return "Archmagician F/P";
+        return "F/P Archmage";
     case 220:
         return "Cleric";
     case 221:
@@ -2375,7 +2375,7 @@ const char* __cdecl get_job_name(int nJob) {
     case 241:
         return "I/L Magician";
     case 242:
-        return "Archmagician I/L";
+        return "I/L Archmage";
     case 250:
         return "Cleric";
     case 251:
@@ -2399,13 +2399,13 @@ const char* __cdecl get_job_name(int nJob) {
     case 341:
         return "Wind Archer";
     case 342:
-        return "Stormshot";
+        return "Storm Strider";
     case 350:
         return "Crossbowman";
     case 351:
-        return "Sentinel";
-    case 352:
         return "Boltslinger";
+    case 352:
+        return "Epoch";
     case 410:
         return "Assassin";
     case 411:
@@ -2423,13 +2423,13 @@ const char* __cdecl get_job_name(int nJob) {
     case 441:
         return "Ninja";
     case 442:
-        return "Reaper";
+        return "Viper";
     case 450:
         return "Bandit";
     case 451:
         return "Smuggler";
     case 452:
-        return "Mesomaster";
+        return "Tycoon";
     case 510:
         return "Brawler";
     case 511:
@@ -2441,19 +2441,19 @@ const char* __cdecl get_job_name(int nJob) {
     case 521:
         return "Outlaw";
     case 522:
-        return "Canoneer";
+        return "Corsair";
     case 540:
         return "Brawler";
     case 541:
         return "Striker";
     case 542:
-        return "Tidemaster";
+        return "Dreadnought";
     case 550:
         return "Gunslinger";
     case 551:
         return "Captain";
     case 552:
-        return "Corsair";
+        return "Admiral";
     default:
         return get_job_name_hook(nJob);
     }
