@@ -1203,6 +1203,19 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je summons
 
+            mov eax, 3601021
+            cmp esi, eax
+            je summons
+
+            mov eax, 3601022
+            cmp esi, eax
+            je summons
+
+            mov eax, 3601023
+            cmp esi, eax
+            je summons
+
+
             mov eax, 4521013
             cmp esi, eax
             je melee
@@ -1909,6 +1922,13 @@ bool isSkillIDMatched(int nSkillID) {
         3601014,
         3601015,
         3601017,
+
+
+
+        3601021,
+        3601022,
+        3601023,
+
 
         // ===== Thief =====
         4001004,
