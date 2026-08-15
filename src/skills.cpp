@@ -841,7 +841,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 5511017
             cmp esi, eax
-            je melee
+            je shoot
 
             mov eax, 3601001
             cmp esi, eax
@@ -1144,6 +1144,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 4421015
+            cmp esi, eax
+            je shoot
+
             mov eax, 4521011
             cmp esi, eax
             je melee
@@ -1194,6 +1198,10 @@ void __declspec(naked) doActiveSkills() {
             je summons
 
             mov eax, 5521009
+            cmp esi, eax
+            je shoot
+
+            mov eax, 5521003
             cmp esi, eax
             je shoot
 
@@ -1643,7 +1651,7 @@ void comboStuff() {
 
 auto sparkThing = (int(__cdecl*)(int))0x7668B7;
 int(__cdecl sparkThingHook)(int skillId) {
-    if (skillId == 1201016 || skillId == 4111010 || skillId == 3411006 || skillId == 4121017) {
+    if (skillId == 1201016 || skillId == 4111010 || skillId == 3411006 || skillId == 4121017 || skillId == 4421015 || skillId == 5521003 || skillId == 5511017) {
         return 1;
     }
     return sparkThing(skillId);
@@ -1900,6 +1908,7 @@ bool isSkillIDMatched(int nSkillID) {
         4111017,
         4121019,
         4121017,
+        4421015,
 
         // ===== Bandit =====
         4201014,
@@ -1972,6 +1981,7 @@ bool isSkillIDMatched(int nSkillID) {
         5511006,
         5521016,
         5521009,
+        5521003,
     };
 
     return std::find(std::begin(skillIDs), std::end(skillIDs), nSkillID) != std::end(skillIDs);
@@ -3149,7 +3159,7 @@ int __fastcall DoActiveSkill_MeleeAttack_hook(void* _this, void* edx, const void
 
 auto hitMobInRect = (int(__cdecl*)(int))0x00766722;
 int(__cdecl hitMobInRect_hook)(int skillId) {
-    if (skillId == 4101008 || skillId == 3411006 || skillId == 4121017) {
+    if (skillId == 4101008 || skillId == 3411006 || skillId == 4121017 || skillId == 4421015 || skillId == 5521003 || skillId == 5511017) {
         return 1;
     }
     return hitMobInRect(skillId);
@@ -3158,7 +3168,7 @@ int(__cdecl hitMobInRect_hook)(int skillId) {
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
-    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006 || nSkillID == 3511003 || nSkillID == 4121017) {
+    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
         return 1;
     }
     return (remove_bullet_skill_hook(nSkillID));
@@ -3389,7 +3399,7 @@ int(__cdecl octopus)(int nSkillID) {
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003 || nSkillID == 4121017) {
+    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -4611,7 +4621,7 @@ int(__stdcall tget_flipX(void* _this, int* a2)) {
 
 auto thingyWindArcher = (int(__cdecl*)(int))0x00766867;
 int(__cdecl windarcherhook)(int a1) {
-    if (a1 == 3411006 || a1 == 4121017) {
+    if (a1 == 3411006 || a1 == 4121017 || a1 == 4421015 || a1 == 5521003 || a1 == 5511017) {
         return 1;
     }
     return thingyWindArcher(a1);
@@ -4680,7 +4690,7 @@ int(__cdecl isMoveableSkillt)(int nSkillID) {
 auto _is_attack_area_set_by_data = (int(__cdecl*)(int))0x7666CB;
 
 int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
-    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3411006 || nSkillID == 4121017) {
+    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3411006 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
         return 1;
     }
     return _is_attack_area_set_by_data(nSkillID);
