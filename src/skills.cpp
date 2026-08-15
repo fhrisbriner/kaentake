@@ -2022,7 +2022,8 @@ int GetRawSkillLevel(void* charData, int skillID) {
     }
     return level;
 }
-
+bool hitonce = false;
+int shadowSL = 0;
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
@@ -2039,7 +2040,17 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         if (jobID == 410 || jobID == 411 || jobID == 412 || jobID == 441 || jobID == 442) {
             mastery = pGetSkillLevel(_this, charData, 4100000, skillEntry);
             critSkillID = 4100001;
-            iframes = pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
+            if (hitonce && pGetSkillLevel(_this, charData, 4110020, skillEntry) > 10) {
+                hitonce = false;
+            }
+            if (pGetSkillLevel(_this, charData, 4110020, skillEntry) > 10 && !hitonce) {
+                shadowSL = pGetSkillLevel(_this, charData, 4110020, skillEntry);
+                iframes = 1500 + pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
+                hitonce = true;
+            }
+            else if (!hitonce) {
+                iframes = 1500 + pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
+            }
         }
         if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 451 || jobID == 452) {
             mastery = pGetSkillLevel(_this, charData, 4200000, skillEntry);
@@ -2555,7 +2566,6 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         int bCheckHitRemain,
         int bSendPacket) {
 
-    // GWEN'S Shadow Shifter
     if (!jobPatchesApplied) {
         int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
         if (jobID == 341) {
@@ -2581,7 +2591,7 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
         }
     }
     if (iframes > 0) {
-        Patch4(0x009591FE + 1, 1500 + iframes);
+        Patch4(0x009591FE + 1, iframes);
     }
     return SetDamaged_Hook(_this, nDamage, vx, vy, dwObstacleData, pMob, nAttackIdx, nDir, nPowerGuard, bCheckHitRemain,
             bSendPacket);
@@ -5536,18 +5546,6 @@ int(__fastcall CanSendExclRequest_Hook)(CWvsContext* pThis, void* edx, int a1, i
     }
     return CanSendExclRequest(pThis, a1, a2);
 }
-
-// Guild member count as short instead of byte: NOT APPLIED -- the server still encodes both
-// fields as bytes, so widening the client reads desyncs the packet stream and crashes on
-// guild open. Re-enable only in lockstep with the server change. The two client reads that
-// cap the count at 255 (verified against v83 `Angel.exe`):
-//   1. GUILDDATA::Decode (0x4E4553): count via Decode1 @ 0x4E45E6, then movzx edi, al
-//      @ 0x4E45EB. Capacity after the member arrays is already Decode4 and the member
-//      containers size with ints -- only the count itself is a byte.
-//   2. CWvsContext::OnGuildResult, IncMaxMemberNum result (case 0x3A): new capacity via
-//      Decode1 @ 0xA38328, then movzx eax, al @ 0xA38334.
-// Patch is: PatchCall both call sites to CInPacket::Decode2 (0x0042470C) and flip each
-// movzx opcode byte (+1) from 0xB6 to 0xB7. Instruction lengths are unchanged.
 
 void AttachOtherHooks() {
     ATTACH_HOOK(hook_is_correct_upgrade, is_correct_upgrade_equip);
