@@ -501,6 +501,10 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+            mov eax, 2121016
+            cmp esi, eax
+            je magic
+
             //BISHOP
 
             mov eax, 2221015
@@ -1774,7 +1778,7 @@ bool isSkillIDMatched(int nSkillID) {
         2121005,
         2121026,
         2121027,
-        2121017,
+        2121016,
 
         // ===== Priest =====
         2211011,
@@ -5224,6 +5228,9 @@ void AttachSkillEdits() {
     Patch4(0x008c7cec, 1000000); // autoassign
     Patch4(0x008C7B75, 1000000); //mp assign
     CodeCave((void*)removeHP, 0x008C7B1F, 3);
+    Patch4(0x006788F6 + 2, -400);
+    Patch4(0x006788EE + 2, 400);
+    Patch4(0x00955EF0 + 1, 150);
 }
 
 DWORD Bypass1 = 0x007540A3;
