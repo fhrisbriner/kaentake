@@ -48,6 +48,12 @@ namespace {
 constexpr DWORD kHttpBufferSize = 64 * 1024;
 constexpr DWORD kFileReadChunk = 64 * 1024;
 
+// A blob download that fails transiently (WinHttp 12002 ERROR_WINHTTP_TIMEOUT, a dropped
+// keep-alive, a truncated body that fails its sha) used to abort the whole update and leave the
+// client unpatchable until the next manual run. Retry each blob a few times with backoff instead.
+constexpr int kBlobAttempts = 4;
+constexpr DWORD kBlobRetryBaseMs = 500; // 500 / 1000 / 2000 between attempts
+
 std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty()) return {};
     int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
@@ -148,12 +154,20 @@ struct HttpResponse {
 class Connection {
 public:
     Connection(HINTERNET session, const std::wstring& host, INTERNET_PORT port, bool https)
-        : https_(https) {
-        conn_ = WinHttpConnect(session, host.c_str(), port, 0);
-        if (!conn_) Logf("WinHttpConnect err=%lu host=%ls", GetLastError(), host.c_str());
+        : session_(session), host_(host), port_(port), https_(https) {
+        Open();
     }
     ~Connection() { if (conn_) WinHttpCloseHandle(conn_); }
     bool ok() const { return conn_ != nullptr; }
+
+    // After a timeout the keep-alive connection is usually dead, so a retry on the same handle
+    // just times out again. Drop it and dial the host afresh.
+    bool Reconnect() {
+        if (conn_) WinHttpCloseHandle(conn_);
+        conn_ = nullptr;
+        Open();
+        return conn_ != nullptr;
+    }
 
     // Send a GET for `path` (URL path including leading /). On success, fills
     // `status` and leaves the response body available via the returned request
@@ -242,6 +256,14 @@ public:
     }
 
 private:
+    void Open() {
+        conn_ = WinHttpConnect(session_, host_.c_str(), port_, 0);
+        if (!conn_) Logf("WinHttpConnect err=%lu host=%ls", GetLastError(), host_.c_str());
+    }
+
+    HINTERNET session_ = nullptr;
+    std::wstring host_;
+    INTERNET_PORT port_ = 0;
     HINTERNET conn_ = nullptr;
     bool https_ = false;
 };
@@ -873,16 +895,30 @@ int RunSync(const SyncOptions& opt) {
                     continue;
                 }
             }
+            // Retry transient failures rather than failing the run: a single timed-out blob used
+            // to abort every worker. A bad sha is retried too -- a truncated body looks exactly
+            // like this -- and the attempt cap stops a genuinely corrupt blob looping forever.
             uint64_t got = 0;
-            if (!conn.GetToFile(it.urlPath, tmpPath, got)) {
-                Logf("download failed %ls", it.urlPath.c_str());
+            bool itemOk = false;
+            for (int attempt = 1; attempt <= kBlobAttempts; ++attempt) {
+                if (failed.load(std::memory_order_relaxed)) return;
+                got = 0;
+                std::string h;
+                if (conn.GetToFile(it.urlPath, tmpPath, got)) {
+                    if (Sha256File(tmpPath, h) && h == it.sha) { itemOk = true; break; }
+                    Logf("sha mismatch %s expected=%s got=%s attempt=%d/%d", it.relpath.c_str(),
+                         it.sha.c_str(), h.c_str(), attempt, kBlobAttempts);
+                } else {
+                    Logf("download failed %ls attempt=%d/%d", it.urlPath.c_str(), attempt,
+                         kBlobAttempts);
+                }
                 DeleteFileW(tmpPath.c_str());
-                failed.store(true, std::memory_order_relaxed); return;
+                if (attempt == kBlobAttempts) break;
+                Sleep(kBlobRetryBaseMs << (attempt - 1));
+                conn.Reconnect();
             }
-            std::string h;
-            if (!Sha256File(tmpPath, h) || h != it.sha) {
-                Logf("sha mismatch %s expected=%s got=%s", it.relpath.c_str(), it.sha.c_str(), h.c_str());
-                DeleteFileW(tmpPath.c_str());
+            if (!itemOk) {
+                Logf("giving up on %s after %d attempts", it.relpath.c_str(), kBlobAttempts);
                 failed.store(true, std::memory_order_relaxed); return;
             }
             uint64_t newOverall = overallBytes.fetch_add(got, std::memory_order_relaxed) + got;
