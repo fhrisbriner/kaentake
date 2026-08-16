@@ -4873,8 +4873,13 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
         return;
     }
 
-    if (GetAsyncKeyState(VK_UP) & 0x8000) {
+    const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
+    const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+
+    if ((GetAsyncKeyState(VK_UP) & 0x8000) && !left && !right) {
         // Brake: park the speed we had, drop to a standstill, and go hands-off so the glide hovers.
+        // UP only brakes on its own -- held together with a direction it is just an up-press during
+        // a steer, and eating the momentum there would fight the steering.
         // Guarded on > 0 because this runs every frame UP is held -- otherwise the second frame
         // would overwrite the parked speed with the zero the first frame just set.
         if (s_wingsMag > 0.0) s_wingsSaved = s_wingsMag;
@@ -4887,8 +4892,6 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
     // Track the peak even before arming, so momentum carried into the glide is still ours to keep.
     if (mag > s_wingsMag) s_wingsMag = mag;
 
-    const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
-    const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
     if (left != right) {
         if (!s_wingsArmed && s_wingsSaved > s_wingsMag) {
             s_wingsMag = s_wingsSaved; // steering again after a brake resumes at the parked speed
