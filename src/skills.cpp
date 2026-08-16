@@ -50,6 +50,7 @@ bool jumped = false;
 int mastery = 0;        // level of the job's mastery skill
 int masterySkillID = 0; // which mastery skill that level belongs to
 int masteryValue = 0;   // Skill.wz `mastery` for that skill at that level -- drives the damage range
+int sairIgnore = 0;
 int nw = 0;
 int wa = 0;
 int tb = 0;
@@ -2101,9 +2102,15 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             mastery = trackMastery(pGetSkillLevel(_this, charData, 3100000, skillEntry), 3100000);
             critSkillID = 3000001;
         }
+        if (jobID == 3120005) {
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 3120005, skillEntry), 3120005);
+        }
         if (jobID == 320 || jobID == 321 || jobID == 322 || jobID == 351 || jobID == 352) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 3200000, skillEntry), 3200000);
             critSkillID = 3000001;
+        }
+        if (jobID == 3220004) {
+            mastery  = trackMastery(pGetSkillLevel(_this, charData, 3220004, skillEntry), 3220004);
         }
         if (jobID == 410 || jobID == 411 || jobID == 412 || jobID == 441 || jobID == 442) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 4100000, skillEntry), 4100000);
@@ -2120,15 +2127,28 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
                 iframes = 1500 + pGetSkillLevel(_this, charData, 4110020, skillEntry) * 50;
             }
         }
+        if (jobID == 412) {
+            mastery  = trackMastery(pGetSkillLevel(_this, charData, 4120000, skillEntry), 4120000);
+        }
         if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 451 || jobID == 452) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 4200000, skillEntry), 4200000);
+            critSkillID = 4220006;
+        }
+        if (jobID == 422) {
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 4220006, skillEntry), 4220006);
         }
         if (jobID == 110 || jobID == 111 || jobID == 112 || jobID == 141 || jobID == 142) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 1100000, skillEntry), 1100000);
         }
+        if (jobID == 142) {
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 1420000, skillEntry), 1420000);
+        }
         if (jobID == 120 || jobID == 121 || jobID == 122 || jobID == 151 || jobID == 152) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 1200000, skillEntry), 1200000);
             critSkillID = 1210015;
+        }
+        if (jobID == 122) {
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 1220015, skillEntry), 1220015);
         }
         if (jobID == 210 || jobID == 211 || jobID == 212 || jobID == 241 || jobID == 242) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 2100001, skillEntry), 2100001);
@@ -2136,9 +2156,16 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         if (jobID == 220 || jobID == 221 || jobID == 222 || jobID == 251 || jobID == 252) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 2200001, skillEntry), 2200001);
         }
+        if (jobID == 252) {
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 2520002, skillEntry), 2520002);
+        }
 
-        if (jobID == 520 || jobID == 521 || jobID == 551 || jobID == 552 || jobID == 522) {
+        if (jobID == 520 || jobID == 521 || jobID == 551 || jobID == 552) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 5200000, skillEntry), 5200000);
+            sairIgnore = pGetSkillLevel(_this, charData, 5220013, skillEntry);
+        }
+        if (jobID == 522) {
+            mastery  = trackMastery(pGetSkillLevel(_this, charData, 5220013, skillEntry), 5220013);
         }
         if (jobID == 510 || jobID == 511 || jobID == 512 || jobID == 541 || jobID == 542) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 5100001, skillEntry), 5100001);
@@ -3868,11 +3895,11 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
                                   : mob->m_pTemplate->nPDDamage.Fuse();
             mobDef = applyMobDefenseStat(&mob->m_stat, mobDef, magic); // fold WDEF/MDEF up/down debuff
             // Armor-break shreds are physical only -- never amplify magic.
-            if (!magic && (sniperShred > 0 || rangerShred > 0 || duelistShred > 0 || galeShot > 0 || barbShred > 0)) {
+            if (!magic && (sniperShred > 0 || rangerShred > 0 || duelistShred > 0 || galeShot > 0 || barbShred > 0 || sairIgnore > 0)) {
                 if (nSkillID == 3411007) {
                     defenseShred -= 0.02 * galeShot;
                 } else {
-                    defenseShred -= (0.02 * (sniperShred + rangerShred + duelistShred + barbShred));
+                    defenseShred -= (0.02 * (sniperShred + rangerShred + duelistShred + barbShred + sairIgnore));
                 }
             }
             if (mobDef > 0.0) {
@@ -4885,9 +4912,8 @@ auto isMoveableSkill = (int(__cdecl*)(int))0x0095F96F;
 int(__cdecl isMoveableSkillt)(int nSkillID) {
     if (nSkillID == 3111009 || nSkillID == 3121004 || nSkillID == 5221004) {
         return 1;
-    } else {
-        return isMoveableSkill(nSkillID);
     }
+        return isMoveableSkill(nSkillID);
 }
 
 
