@@ -3396,7 +3396,7 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
 
 auto octHook = (int(__cdecl*)(int))0x00766612;
 int(__cdecl ltrbOcto)(int nSKillID) {
-    return nSKillID == 3211002 || nSKillID == 3411010 || nSKillID == 4111017;
+    return nSKillID == 3211002 || nSKillID == 3411010 || nSKillID == 4111017 || nSKillID == 5511015|| nSKillID == 5511014;
 }
 
 int(__cdecl octopus)(int nSkillID) {
