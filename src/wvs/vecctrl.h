@@ -7,6 +7,13 @@
 // Secure doubles use the same ZtlSecure<double> { double at[2]; uint cs; } layout the
 // client uses: x/y position and vx/vy velocity. Read with .Fuse(), write with `= value`.
 // Gaps left opaque (minimal scope) -- only fields we touch are named.
+//
+// WARNING: the offsets in the comments are offsets INTO THE CLIENT OBJECT, but this class also
+// inherits ZRefCounted and IWzVector2D, so the members below start past those base subobjects and
+// do NOT land on them. Reading `pvc->m_bWingsNow` returns whatever sits 0x17C bytes past the end
+// of the bases (measured: 0x66001188, not the flag). Use the pointer as an opaque handle for the
+// client's own functions, and reach fields through raw byte offsets (see vecCtrlGetSecure /
+// vecCtrlSetSecure in skills.cpp) until someone models the bases properly.
 
 class CVecCtrl  : public ZRefCounted, public IWzVector2D {
 public:

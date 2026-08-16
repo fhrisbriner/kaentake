@@ -5,6 +5,7 @@
 #include "wvs/field.h"
 #include "wvs/packet.h"
 #include "wvs/mob.h"
+#include "wvs/util.h"
 #include "wvs/vecctrl.h"
 #include <chrono>
 #include <intsafe.h>
@@ -46,7 +47,9 @@ const DWORD dwAccuracyCalc = 0x0077F743;
 const DWORD dwAccuracyCalcRetn = 0x0077F7E2;
 bool siegeMode = false;
 bool jumped = false;
-int mastery = 0;
+int mastery = 0;        // level of the job's mastery skill
+int masterySkillID = 0; // which mastery skill that level belongs to
+int masteryValue = 0;   // Skill.wz `mastery` for that skill at that level -- drives the damage range
 int nw = 0;
 int wa = 0;
 int tb = 0;
@@ -122,6 +125,55 @@ constexpr int POISON_PASSIVE_SKILLID = 2110009;
 // NOT A SKILL
 int doActiveJmpBack = 0x0096793B; // return to our existing code.
 
+// Skill.wz carries a per-level `mastery` value, but the client never parses it: there is no
+// "mastery" string anywhere in the exe, and SKILLLEVELDATA only holds `x`, which for every mastery
+// skill is just the level (1->1 ... 10->10). That `x` is what the client's own mastery getter
+// (0x00764795) returns and what the damage range was built from. Read the real value ourselves.
+// Cached per (skill, level): the archive lookup is far too slow for the damage path.
+static int GetSkillMasteryFromWz(int nSkillID, int nLevel) {
+    if (nSkillID <= 0 || nLevel <= 0) return 0;
+
+    static std::unordered_map<int, int> s_cache;
+    const int key = nSkillID * 100 + nLevel;
+    auto it = s_cache.find(key);
+    if (it != s_cache.end()) return it->second;
+
+    int value = 0;
+    try {
+        // Skill imgs are named after the 3-digit job prefix: 1100000 -> Skill/110.img.
+        std::wstring path = L"Skill/" + std::to_wstring(nSkillID / 10000) + L".img";
+        IWzPropertyPtr root = get_rm()->GetObjectA(path.c_str()).GetUnknown();
+        if (root) {
+            IWzPropertyPtr skill = root->item[L"skill"].GetUnknown();
+            if (skill) {
+                IWzPropertyPtr entry = skill->item[Ztl_bstr_t(std::to_wstring(nSkillID).c_str())].GetUnknown();
+                if (entry) {
+                    IWzPropertyPtr levels = entry->item[L"level"].GetUnknown();
+                    if (levels) {
+                        // Skill levels only go up to masterLevel in the data (10 for every mastery
+                        // skill here), but +skill sources can push the learned level past that.
+                        // Walk down to the highest level node that exists instead of missing and
+                        // reporting 0 mastery, which would drop the damage range to its floor.
+                        IWzPropertyPtr lv;
+                        for (int lookup = nLevel; lookup > 0 && !lv; --lookup) {
+                            lv = levels->item[Ztl_bstr_t(std::to_wstring(lookup).c_str())].GetUnknown();
+                        }
+                        if (lv) {
+                            Ztl_variant_t v = lv->item[L"mastery"];
+                            value = get_int32(v, 0);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {
+        value = 0;
+    }
+
+    s_cache.emplace(key, value);
+    return value;
+}
+
 int pleasejmpout = 0x00791C6C;
 double int_multiplier = 4.2;
 double str_multiplier = 4.0;
@@ -196,8 +248,8 @@ void setMAD() {
     topMAD = (int_ * int_multiplier * effectiveMagic) / 100;
     totmagic = effectiveMagic;
     // Log("%7d, %7d", effectiveMagic, totmagic);
-    if (mastery > 0) {
-        botMAD = topMAD * (0.05 * mastery + 0.1);
+    if (masteryValue > 0) {
+        botMAD = topMAD * (0.01 * masteryValue + 0.1);
     } else {
         botMAD = topMAD * 0.1;
     }
@@ -2034,21 +2086,27 @@ int GetRawSkillLevel(void* charData, int skillID) {
 }
 bool hitonce = false;
 int shadowSL = 0;
+
+// Records which mastery skill the level came from, so the Skill.wz `mastery` for it can be read.
+static int trackMastery(int nLevel, int nSkillID) {
+    masterySkillID = nSkillID;
+    return nLevel;
+}
 int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID, int skillEntry) {
     int i = skillID;
     int jobID = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (i) {
         pGetSkillLevel(_this, charData, i, skillEntry);
         if (jobID == 300 || jobID == 310 || jobID == 342 || jobID == 312 || jobID == 311 || jobID == 341) {
-            mastery = pGetSkillLevel(_this, charData, 3100000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 3100000, skillEntry), 3100000);
             critSkillID = 3000001;
         }
         if (jobID == 320 || jobID == 321 || jobID == 322 || jobID == 351 || jobID == 352) {
-            mastery = pGetSkillLevel(_this, charData, 3200000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 3200000, skillEntry), 3200000);
             critSkillID = 3000001;
         }
         if (jobID == 410 || jobID == 411 || jobID == 412 || jobID == 441 || jobID == 442) {
-            mastery = pGetSkillLevel(_this, charData, 4100000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 4100000, skillEntry), 4100000);
             critSkillID = 4100001;
             if (hitonce && pGetSkillLevel(_this, charData, 4110020, skillEntry) > 10) {
                 hitonce = false;
@@ -2063,27 +2121,27 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             }
         }
         if (jobID == 420 || jobID == 421 || jobID == 422 || jobID == 451 || jobID == 452) {
-            mastery = pGetSkillLevel(_this, charData, 4200000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 4200000, skillEntry), 4200000);
         }
         if (jobID == 110 || jobID == 111 || jobID == 112 || jobID == 141 || jobID == 142) {
-            mastery = pGetSkillLevel(_this, charData, 1100000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 1100000, skillEntry), 1100000);
         }
         if (jobID == 120 || jobID == 121 || jobID == 122 || jobID == 151 || jobID == 152) {
-            mastery = pGetSkillLevel(_this, charData, 1200000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 1200000, skillEntry), 1200000);
             critSkillID = 1210015;
         }
         if (jobID == 210 || jobID == 211 || jobID == 212 || jobID == 241 || jobID == 242) {
-            mastery = pGetSkillLevel(_this, charData, 2100001, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 2100001, skillEntry), 2100001);
         }
         if (jobID == 220 || jobID == 221 || jobID == 222 || jobID == 251 || jobID == 252) {
-            mastery = pGetSkillLevel(_this, charData, 2200001, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 2200001, skillEntry), 2200001);
         }
 
         if (jobID == 520 || jobID == 521 || jobID == 551 || jobID == 552 || jobID == 522) {
-            mastery = pGetSkillLevel(_this, charData, 5200000, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 5200000, skillEntry), 5200000);
         }
         if (jobID == 510 || jobID == 511 || jobID == 512 || jobID == 541 || jobID == 542) {
-            mastery = pGetSkillLevel(_this, charData, 5100001, skillEntry);
+            mastery = trackMastery(pGetSkillLevel(_this, charData, 5100001, skillEntry), 5100001);
         }
         if (jobID == 311 || jobID == 312) {
             PassiveSpeed = pGetSkillLevel(_this, charData, 3110000, skillEntry);
@@ -2100,7 +2158,9 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
         }
         if (jobID == 0 || jobID == 100 || jobID == 200 || jobID == 300 || jobID == 400 || jobID == 500) {
             mastery = 0;
+            masterySkillID = 0;
         }
+        masteryValue = mastery > 0 ? GetSkillMasteryFromWz(masterySkillID, mastery) : 0;
     }
     mesos = pGetSkillLevel(_this, charData, 4511006, skillEntry);
     comboAbility = pGetSkillLevel(_this, charData, 5410000, skillEntry);
@@ -2533,7 +2593,7 @@ int __fastcall MesoFormula(void* pThis, PVOID edx, void* cd, BasicStat* bs, Seco
     for (i = 0; i < 30; ++i) {
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_real_distribution<double> dist(.1 + mastery * 0.05, 1.00);
+        std::uniform_real_distribution<double> dist(.1 + masteryValue * 0.01, 1.00);
         owo = dist(gen);
         if (((1 << i) & dwDropFlag) != 0) {
             ratio = ((4.0 * bs->nLUK.Fuse() + bs->nSTR.Fuse() + bs->nDEX.Fuse()) * pad / 100) * owo;
@@ -2698,13 +2758,33 @@ int(__fastcall setInput_hook)(void* _this, void* edx, int XInput, int YInput) {
     return setInput(_this, XInput, YInput);
 }
 
+// Raw byte offsets into the live CVecCtrl. Do NOT use the members declared on the class in
+// vecctrl.h for these: that class inherits ZRefCounted and IWzVector2D, so every declared field
+// lands past the base subobjects and `pvc->m_bWingsNow` reads the wrong dword entirely. Offsets
+// verified against CVecCtrl::Wings (0x009B21DA), which sets *((DWORD*)this + 95) -> 0x17C, and the
+// ctor (0x009B0F71), which zeroes 94/95.
+static const unsigned int kVecVx = 0x50;
+static const unsigned int kVecWingsNow = 0x17C;
+
+static int& vecWingsNow(CVecCtrl* vc) {
+    return *reinterpret_cast<int*>(reinterpret_cast<char*>(vc) + kVecWingsNow);
+}
+
 auto SetImpactNext = (void(__thiscall*)(CVecCtrl*, double, double))0x7a6353;
 void(__fastcall SetImpactNext_Hook)(CVecCtrl* _this, void* edx, double x, double y) {
+    // SetImpactNext's very first instruction clears the wings flag at 0x17C, so ANY knockback --
+    // taking a hit above all -- ends the glide. Carry the flag across the call: a hit should
+    // stagger the player and shove them around, not cancel the skill.
+    const int wingsBefore = _this ? vecWingsNow(_this) : 0;
+
     int job = CWvsContext::GetInstance()->get_m_basicStat().nJob.Fuse();
     if (job >= 300 && (int)_ReturnAddress() == 0x0096DAFF && job < 400) {
-        return SetImpactNext(_this, -x, -150);
+        SetImpactNext(_this, -x, -150);
+    } else {
+        SetImpactNext(_this, x, y);
     }
-    return SetImpactNext(_this, x, y);
+
+    if (wingsBefore) vecWingsNow(_this) = wingsBefore;
 }
 
 auto isHerosWill = (int(__cdecl*)(int))0x00765E2D;
@@ -3496,7 +3576,7 @@ double div100 = 0.01;
 double random_number = 0.0;
 
 void redoMagic() {
-    double min = mastery > 0 ? (mastery * 0.05) + 0.1 : 0.15;
+    double min = masteryValue > 0 ? (masteryValue * 0.01) + 0.1 : 0.15;
     min = min(min, 0.99);
 
     std::uniform_real_distribution<double> dist(min, 1.0);
@@ -3622,13 +3702,51 @@ double __cdecl ztlfuse_double(int a1, int a2) {
     return val;
 }
 
+// The client's get-mastery. Both damage-range users of it (CalcDamage::PDamage @0x0078E0D5 and
+// CUIStatDetail::Draw @0x008C2B83) feed the return straight into (m * 5 + 10) * 0.009, so handing
+// back the Skill.wz `mastery` only works together with the constant patches in PatchMasteryRange,
+// which turn that into (m * 1 + 10) * 0.01 == 0.01 * mastery + 0.1. The remaining callers
+// (SecondaryStat::SetFrom, the TryDoing*Attack trio) only test it against zero or pass it along.
 auto mastery_Calcs_Hook = (int(__cdecl*)(int, int, int, int, int, int))0x00764795;
 
 int __cdecl mCalc(int a1, int a2, int a3, int a4, int a5, int a6) {
-    if (mastery > 10 || mastery < 0) {
-        return 10;
+    const unsigned int caller = reinterpret_cast<unsigned int>(_ReturnAddress());
+
+    // The three attack paths pass this on as the AFTERIMAGE level -- the ghost trail under
+    // Character/AfterImage/<weapon>.img, which only has nodes 0..10. A Skill.wz mastery value (up
+    // to 60) has no node there and the trail breaks, and so does a learned mastery level above 10
+    // once +skill sources push it there. Lock all of them to the level-0 trail.
+    if (caller == 0x0095104A     // CUserLocal::TryDoingMeleeAttack
+        || caller == 0x00953D4D  // CUserLocal::TryDoingShootAttack
+        || caller == 0x00957448) // CUserLocal::TryDoingNormalAttack
+    {
+        return 0;
     }
-    return mastery;
+
+    // Damage-range sites (CalcDamage::PDamage, CUIStatDetail::Draw) want the Skill.wz mastery,
+    // paired with the constant patches in PatchMasteryRange. SecondaryStat::SetFrom, the only
+    // other caller, just tests the result against zero.
+    if (masteryValue < 0) {
+        return 0;
+    }
+    if (masteryValue > 90) {
+        return 90; // (90 + 10) * 0.01 == 1.0: a full-range roll, never an inverted one
+    }
+    return masteryValue;
+}
+
+// Damage-range constants for the two client sites above. Vanilla multiplies mastery by 5.0
+// (dbl_AF8298) and scales by 0.009 (dbl_AFE8B8); both are shared globals used elsewhere, so we
+// repoint the two fmul operands at our own doubles instead of editing theirs. The fadd of 10.0
+// in between is already what we want.
+static double kMasteryPerPoint = 1.0;
+static double kMasteryScale = 0.01;
+
+static void PatchMasteryRange() {
+    Patch4(0x0078E0EA + 2, reinterpret_cast<unsigned int>(&kMasteryPerPoint)); // PDamage: fmul 5.0
+    Patch4(0x0078E0F6 + 2, reinterpret_cast<unsigned int>(&kMasteryScale));    // PDamage: fmul 0.009
+    Patch4(0x008C2A94 + 2, reinterpret_cast<unsigned int>(&kMasteryPerPoint)); // StatDetail: fmul 5.0
+    Patch4(0x008C2AA0 + 2, reinterpret_cast<unsigned int>(&kMasteryScale));    // StatDetail: fmul 0.009
 }
 
 auto ztlSecureFuse_short = (unsigned int(__cdecl*)(int, int))0x004746DD;
@@ -3821,7 +3939,7 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
     double dmg = base * (skillDmgPct / 100.0);
 
     // Mastery damage range, per line (matches MesoFormula / redoMagic in this file).
-    double minMult = 0.1 + mastery * 0.05;
+    double minMult = 0.1 + masteryValue * 0.01;
     if (minMult > 1.0) {
         minMult = 1.0;
     }
@@ -4653,36 +4771,112 @@ int(__fastcall tOnSkillKeyDownEnd(void* _this)) {
     return OnSkillKeyDownEnd(_this);
 }
 
-static auto _ZtlSecureFuse_double = reinterpret_cast<double(__cdecl*)(double* at, unsigned int uCS)>(0x00539338);  // v83
-static auto _ZtlSecureTear_double = reinterpret_cast<unsigned int(__fastcall*)(double* at, double t)>(0x005393B6); // v83
-
 auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(void*, int))0x009B2C3C; // v83
+
+// Wings glide: keep full horizontal speed through a direction switch.
+//
+// The engine keeps steering: CalcFloat turns the player's movement keys into m_vx itself, through
+// CInputSystem/DirectInput, so it honours remapped keys -- GetAsyncKeyState(VK_LEFT/RIGHT) reads
+// false here and can't be used. What CalcFloat also does is ramp m_vx down to 0 and back up when
+// the input direction flips, and bleed it off on the neutral frames between the key release and
+// the opposite key press. That ramp is the lost momentum.
+//
+// So we take only the SIGN from the engine (that is the steering) and supply the MAGNITUDE
+// ourselves: hold the glide's peak speed and re-apply it every frame. The turn then lands on the
+// first frame the engine's m_vx crosses zero, at full speed, with no rebuild.
+static CVecCtrl* s_wingsOwner = nullptr;
+static double s_wingsMag = 0.0;   // magnitude held across the whole glide
+static int s_wingsSign = 1;       // direction the movement keys last asked for
+static bool s_wingsArmed = false; // true once a direction key is pressed; until then, hands off
+static double s_wingsSaved = 0.0; // speed parked by the UP brake, handed back on the next steer
+
+// ms_pInstance for CUserLocal (same read as the Master Skies airborne check above).
+static CVecCtrl* GetLocalVecCtrl() {
+    CUserLocal* localUser = *reinterpret_cast<CUserLocal**>(0x00BEBF98);
+    return localUser ? CVecCtrl::FromInterface(localUser->m_pvc) : nullptr;
+}
+
+// Measured on this client (CalcFloat telemetry, 30ms frames):
+//   * m_vx at 0x50 is what actually moves the player and our post-call write sticks -- a forced
+//     300.0 came back as 299.970 on the next frame, so float drag is only ~0.03/frame.
+//   * A glide carries its entry momentum unchanged (-204.000 held flat for seconds), but the
+//     wings' OWN steering is worth about 9. Flip direction and the engine ramps m_vx across zero
+//     at ~24 per 100ms and then settles at that 9: the inherited speed is gone for good. That
+//     ramp is the lost momentum.
+//   * GetAsyncKeyState reads LEFT/RIGHT/DOWN fine here (the telemetry logged 4 / 2 / 1 / 6).
+//
+// So: the engine keeps deciding WHERE you go, we decide HOW FAST. Sign comes from the movement
+// keys, magnitude is held at the glide's peak, and both are written every frame -- but only after
+// a direction key is actually pressed, so starting the glide no longer flings the player sideways
+// at full speed. Until then the engine's own physics run untouched and we just watch the speed.
+static const double kWingsMinSpeed = 200.0; // stock inherited glide sits near 204; steering alone is ~9
 
 void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
     // Call the original function first
     OriginalCVecCtrl__CalcFloat(this_, tElapse);
-    // Check if wings are active (m_bWingsNow at offset 0x17C)
-    bool isWingsActive = *(bool*)((uintptr_t)this_ + 0x17C); // v83
 
-    if (isWingsActive) {
-        // Get the horizontal velocity (if you want to use it)
-        double vx = _ZtlSecureFuse_double(
-                reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60));
-        // Check if left or right keys are pressed
-        if (GetAsyncKeyState(VK_LEFT) & 0x8000) {
-            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
-                    reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                    -speed);
-        } else if (GetAsyncKeyState(VK_RIGHT) & 0x8000) {
-            *reinterpret_cast<unsigned int*>(reinterpret_cast<uintptr_t>(this_) + 0x60) = _ZtlSecureTear_double(
-                    reinterpret_cast<double*>(reinterpret_cast<uintptr_t>(this_) + 0x50),
-                    speed);
-        } else if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
-            // Cancel wings: clear m_bWingsNow in the object so float state ends
-            *(bool*)((uintptr_t)this_ + 0x17C) = false;
-        }
+    CVecCtrl* pvc = reinterpret_cast<CVecCtrl*>(this_);
+    // Local player only: CalcFloat runs for every floating object, and holding a remote player's
+    // speed up from here would fight the movement packets that actually drive them.
+    if (!pvc || pvc != GetLocalVecCtrl()) return;
+
+    // Wings only. CalcFloat also runs for an ordinary jump or fall (WorkUpdateActive calls it
+    // whenever the walk flag at 0x110 is clear), and those should keep stock physics.
+    if (!vecWingsNow(pvc)) {
+        s_wingsOwner = nullptr;
+        return;
     }
+
+    const double vx = vecCtrlGetSecure(pvc, kVecVx);
+    const double mag = vx < 0.0 ? -vx : vx;
+
+    if (s_wingsOwner != pvc) { // wings just started
+        s_wingsOwner = pvc;
+        s_wingsMag = mag; // seeded from the speed we flew in with, then grows with the glide
+        s_wingsSign = vx < 0.0 ? -1 : 1;
+        s_wingsArmed = false;
+        s_wingsSaved = 0.0;
+    }
+
+    if (GetAsyncKeyState(VK_DOWN) & 0x8000) {
+        // Cancel the skill: clearing the wings flag drops the float's slow-fall and hands the
+        // player back to normal gravity, which is what CVecCtrl::Wings turned on when it set it.
+        vecWingsNow(pvc) = 0;
+        s_wingsOwner = nullptr;
+        return;
+    }
+
+    if (GetAsyncKeyState(VK_UP) & 0x8000) {
+        // Brake: park the speed we had, drop to a standstill, and go hands-off so the glide hovers.
+        // Guarded on > 0 because this runs every frame UP is held -- otherwise the second frame
+        // would overwrite the parked speed with the zero the first frame just set.
+        if (s_wingsMag > 0.0) s_wingsSaved = s_wingsMag;
+        vecCtrlSetSecure(pvc, kVecVx, 0.0);
+        s_wingsMag = 0.0;
+        s_wingsArmed = false;
+        return;
+    }
+
+    // Track the peak even before arming, so momentum carried into the glide is still ours to keep.
+    if (mag > s_wingsMag) s_wingsMag = mag;
+
+    const bool left = (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0;
+    const bool right = (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0;
+    if (left != right) {
+        if (!s_wingsArmed && s_wingsSaved > s_wingsMag) {
+            s_wingsMag = s_wingsSaved; // steering again after a brake resumes at the parked speed
+            s_wingsSaved = 0.0;
+        }
+        s_wingsSign = left ? -1 : 1;
+        s_wingsArmed = true;
+    }
+    if (!s_wingsArmed) return; // no direction asked for yet: no launch, engine keeps the wheel
+
+    // Magnitude only ever grows: a boost mid-glide is kept, the engine's post-flip collapse to ~9
+    // is not. Floor keeps a glide that started slow from crawling.
+    if (s_wingsMag < kWingsMinSpeed) s_wingsMag = kWingsMinSpeed;
+
+    vecCtrlSetSecure(pvc, kVecVx, s_wingsSign * s_wingsMag);
 }
 
 
@@ -5145,6 +5339,7 @@ void AttachSkillEdits() {
     ATTACH_HOOK(_is_attack_area_set_by_data, is_attack_area_set_by_data);
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
+    PatchMasteryRange();
     // ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(octHook, octopus);
