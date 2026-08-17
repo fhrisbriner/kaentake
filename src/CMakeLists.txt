@@ -14,6 +14,7 @@ add_library(injector SHARED
         itemicon.cpp
         tempstat.cpp
         stringpool.cpp
+        memstat.cpp
         debug.cpp
         hook.cpp
         skills.cpp
@@ -33,6 +34,14 @@ target_link_libraries(injector PRIVATE
         Detours
         WzLib
 )
+
+# Pin the DLL to its preferred base (0x10000000) instead of letting ASLR relocate it.
+# 22 CodeCave/PatchJmp sites patch `E9 rel32` jumps from the client image (~0x00400000) into this
+# DLL, and rel32 is a signed 32-bit displacement (+-2GB). Without LARGE_ADDRESS_AWARE that always
+# holds, because nothing can live above 0x80000000. If MapleStory.exe is ever made LAA, a DLL
+# relocated into the upper 2GB would make every one of those jumps wrap to a wild address --
+# intermittently, per-machine, depending on the base ASLR picked. Pinning removes the variable.
+target_link_options(injector PRIVATE "/DYNAMICBASE:NO")
 
 set_target_properties(injector PROPERTIES
         OUTPUT_NAME ${PROJECT_NAME}

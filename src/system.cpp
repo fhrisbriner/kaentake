@@ -77,6 +77,7 @@ static LONG CALLBACK CrashLogHandler(EXCEPTION_POINTERS* pEx) {
         }
         LogInfo("%s", sLine);
     }
+    LogFlush(); // buffered from here on -- force the crash tail to disk before the process dies
     return EXCEPTION_CONTINUE_SEARCH; // let the normal crash path proceed
 }
 

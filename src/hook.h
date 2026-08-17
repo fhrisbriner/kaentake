@@ -75,6 +75,24 @@ void AttachMapObjectFade();
 void BGMOverride();
 void AttachBagWindowMod();
 void BagWindow_OnLeaveField();   // storagebag.cpp — close the bag window on logout/stage exit
+void AttachMemStat();            // memstat.cpp — samples memory around CField::Init (map change)
+
+// Per-frame ticks, driven from CWvsApp::CallUpdate_hook. Both self-throttle on GetTickCount, so
+// calling them every frame is cheap; the intervals live next to their implementations.
+void ResMan_FlushTick();         // resman.cpp  — periodic IWzResMan::FlushCachedObjects
+void MemStat_Tick();             // memstat.cpp — periodic memory sample
+void MemStat_LogNow(const char* pszReason);
+SIZE_T MemStat_GetPrivateBytes();
+
+// Compact VA snapshot. largestFree/holes are the fragmentation signal -- a flush can leave
+// private bytes almost unchanged while restoring tens of MB of contiguous address space.
+struct MemBrief {
+    unsigned int uPrivateMB;
+    unsigned int uMappedMB;
+    unsigned int uLargestFreeMB;
+    unsigned int nHoles;
+};
+void MemStat_GetBrief(MemBrief& out);
 
 
 #define LOGGED_STEP(CALL) do { LogInfo("AttachClientHooks: -> " #CALL); CALL; LogInfo("AttachClientHooks: <- " #CALL); } while (0)
@@ -106,6 +124,7 @@ inline void AttachClientHooks() {
     (AttachMapObjectFade());
     (BGMOverride());
     (AttachBagWindowMod());
+    (AttachMemStat());
 }
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {
@@ -154,9 +173,33 @@ void PatchNop(T pAddress, size_t uCount) {
     free(pValue);
 }
 
+// E9/E8 rel32 encode a SIGNED 32-bit displacement, so the target has to sit within +-2GB of the
+// patch site. Today that is automatic: without LARGE_ADDRESS_AWARE the entire address space is
+// below 0x80000000, so any DLL base is within 2GB of the client image at 0x00400000.
+//
+// Under LAA that guarantee disappears. The address space runs to 0xFFFEFFFF, and if ASLR ever
+// relocates MapleNight.dll above ~0x80400000 every one of these patches would silently encode a
+// wrapped displacement -- each hooked client function jumping to a wild address, intermittently,
+// on whichever machines drew an unlucky base. The linker pins the DLL to 0x10000000
+// (/DYNAMICBASE:NO) so this cannot happen; this check exists so that if the base ever moves
+// again the failure is a log line instead of an unexplained crash.
+inline bool CheckRel32(uintptr_t uFrom, uintptr_t uTo, const char* pszWhat) {
+    const long long llRel =
+            static_cast<long long>(uTo) - static_cast<long long>(uFrom) - 5ll;
+    if (llRel < INT32_MIN || llRel > INT32_MAX) {
+        LogInfo("%s: rel32 OUT OF RANGE (0x%08X -> 0x%08X, delta %lld) -- patch SKIPPED",
+                pszWhat, uFrom, uTo, llRel);
+        return false;
+    }
+    return true;
+}
+
 template <typename T, typename U>
 void PatchJmp(T pAddress, U pDestination) {
     uintptr_t uAddress = Rebase(TO_UINTPTR(pAddress));
+    if (!CheckRel32(uAddress, TO_UINTPTR(pDestination), "PatchJmp")) {
+        return;
+    }
     unsigned char bOp = 0xE9;
     unsigned int uRel = TO_UINTPTR(pDestination) - uAddress - 5;
     PatchMemory(TO_PVOID(uAddress), &bOp, sizeof(bOp));
@@ -170,6 +213,9 @@ void PatchCall(T pAddress, U pDestination, size_t uSize = 5) {
         return;
     }
     uintptr_t uAddress = Rebase(TO_UINTPTR(pAddress));
+    if (!CheckRel32(uAddress, TO_UINTPTR(pDestination), "PatchCall")) {
+        return;
+    }
     unsigned char bOp = 0xE8;
     unsigned int uRel = TO_UINTPTR(pDestination) - uAddress - 5;
     PatchMemory(TO_PVOID(uAddress), &bOp, sizeof(bOp));

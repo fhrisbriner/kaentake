@@ -1497,6 +1497,12 @@ void FillBytes(const DWORD dwOriginAddress, const unsigned char ucValue, const i
 
 
 void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCount) {
+    // Same +-2GB rel32 constraint as PatchJmp -- see CheckRel32 in hook.h. Checked before the
+    // NOPs go down, so a rejected cave leaves the original instructions intact rather than a
+    // shredded prologue with no jump.
+    if (!CheckRel32(dwOriginAddress, reinterpret_cast<uintptr_t>(ptrCodeCave), "CodeCave")) {
+        return;
+    }
     if (nNOPCount)
         FillBytes(dwOriginAddress, 0x90, nNOPCount);
     Patch1(dwOriginAddress, 0xe9); // jmp instruction
@@ -2213,7 +2219,32 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     return pGetSkillLevel(_this, charData, i, skillEntry);
 }
 
-auto CUIStatusBar__ChatLogAdd = (void*(__thiscall*)(int, const char*, int, int, int, void*))0x008DB070;
+// void __thiscall CUIStatusBar::ChatLogAdd(const char* sMsg, long lType, long nChannelID,
+//                                          int bWhisperIcon, ZRef<GW_ItemSlotBase> item)
+// The trailing ZRef is passed BY VALUE and occupies two stack dwords, so the callee pops 0x18
+// (`retn 18h` @ 0x008DB45A) -- six stack arguments after the ecx `this`. A detour that declares
+// only five pops 0x14 and leaves the caller's stack four bytes short on every chat line.
+auto CUIStatusBar__ChatLogAdd =
+    (void(__thiscall*)(int, const char*, int, int, int, void*, void*))0x008DB070;
+
+// Timestamps every line in the chat box. ChatLogAdd is where all of them meet -- CHATLOG_ADD's
+// system notices, whispers, party/guild/buddy messages, broadcasts, megaphones and the player's
+// own typed lines -- and it takes the text as a plain char*, so a prefix is all this takes.
+// Lines the DLL itself pushes through CUIStatusBar__ChatLogAdd land on the trampoline instead and
+// stay unstamped, which keeps our own debug output visually distinct from real chat.
+int chatTimestamps = 1; // 0 disables without rebuilding the hook
+
+void __fastcall ChatLogAdd_Hook(int _this, void* edx, const char* sMsg, int lType, int nChannelID,
+                                int bWhisperIcon, void* item0, void* item1) {
+    char stamped[1024];
+    if (chatTimestamps && sMsg) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        snprintf(stamped, sizeof(stamped), "[%02d:%02d] %s", st.wHour, st.wMinute, sMsg);
+        sMsg = stamped;
+    }
+    CUIStatusBar__ChatLogAdd(_this, sMsg, lType, nChannelID, bWhisperIcon, item0, item1);
+}
 
 bool isCorrectWeapon(int nSkillID) {
     if (nSkillID >= 4 && nSkillID <= 999999) {
@@ -3769,6 +3800,10 @@ int __cdecl mCalc(int a1, int a2, int a3, int a4, int a5, int a6) {
 static double kMasteryPerPoint = 1.0;
 static double kMasteryScale = 0.01;
 
+static void PatchSkillCooldownBlock() {
+    PatchNop(0x0096770E, 5); // call CHATLOG_ADD
+}
+
 static void PatchMasteryRange() {
     Patch4(0x0078E0EA + 2, reinterpret_cast<unsigned int>(&kMasteryPerPoint)); // PDamage: fmul 5.0
     Patch4(0x0078E0F6 + 2, reinterpret_cast<unsigned int>(&kMasteryScale));    // PDamage: fmul 0.009
@@ -4120,6 +4155,15 @@ int GetSkillMobCount(int skillId) {
     return GetSkillLevelDataLong(skillId, 0x130);
 }
 
+// Combat tracing. These fire once per mob per hit, so on a boss they are the hottest log sites
+// in the DLL -- a 15-mob multi-hit fight produces hundreds of lines a second, and every line is
+// a write on the game thread. Off by default; flip to 1 when debugging summon pull / toss /
+// on-hit behavior. (LogInfo itself is buffered now, but the cheapest line is the one not
+// formatted at all.)
+int debugCombatLog = 0;
+#define COMBAT_LOG(...) do { if (debugCombatLog) { LogInfo(__VA_ARGS__); } } while (0)
+
+
 // ===== Summon pull =========================================================================
 // Drags every mob a summon hits toward the summon. Client-side: mob positions are driven by
 // whichever client the server made the mob's controller, and that client reports them back in
@@ -4291,12 +4335,12 @@ void SummonPull_OnHit(MobStat* pStat) {
 static void applySummonPull(void* pSummon) {
     const POINT* summonPos = gobjPos(pSummon);
     if (!summonPos) {
-        LogInfo("SummonPull: no summon pos, targets=%d", (int)g_pullTargets.size());
+        COMBAT_LOG("SummonPull: no summon pos, targets=%d", (int)g_pullTargets.size());
         return;
     }
     for (Mob* mob : g_pullTargets) {
         if (IsBadReadPtr(mob, sizeof(Mob)) || !CMob_IsActive(mob)) {
-            LogInfo("SummonPull: mob=%p skipped (bad ptr or not controlled by us)", mob);
+            COMBAT_LOG("SummonPull: mob=%p skipped (bad ptr or not controlled by us)", mob);
             continue; // someone else controls it - moving it here would just desync
         }
         MobTemplate* tmpl = mob->m_pTemplate;
@@ -4313,12 +4357,12 @@ static void applySummonPull(void* pSummon) {
         // doesn't, the block we resolved isn't this mob's -- skip rather than corrupt it.
         const POINT* cached = mobCachedPos(mob);
         if (fabs(x - cached->x) > 64.0 || fabs(y - cached->y) > 64.0) {
-            LogInfo("SummonPull: mob=%p skipped (path/cached mismatch %.0f,%.0f vs %d,%d)",
+            COMBAT_LOG("SummonPull: mob=%p skipped (path/cached mismatch %.0f,%.0f vs %d,%d)",
                     mob, x, y, cached->x, cached->y);
             continue;
         }
         if (fabs(y - summonPos->y) > summonPullMaxDy) {
-            LogInfo("SummonPull: mob=%p skipped (dy=%.0f > %d)", mob, fabs(y - summonPos->y), summonPullMaxDy);
+            COMBAT_LOG("SummonPull: mob=%p skipped (dy=%.0f > %d)", mob, fabs(y - summonPos->y), summonPullMaxDy);
             continue; // different platform
         }
         const double dx = summonPos->x - x;
@@ -4335,7 +4379,7 @@ static void applySummonPull(void* pSummon) {
         }
         const double newX = x + step;
         if (!mobSetPosX(mob, static_cast<int>(newX))) {
-            LogInfo("SummonPull: mob=%p reseat failed", mob);
+            COMBAT_LOG("SummonPull: mob=%p reseat failed", mob);
             continue;
         }
         mobCachedPos(mob)->x = static_cast<LONG>(newX);
@@ -4348,7 +4392,7 @@ static void applySummonPull(void* pSummon) {
         const int ctrl = summonSecureFuseLong(
                 reinterpret_cast<const int*>(reinterpret_cast<char*>(mob) + 0x130),
                 *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(mob) + 0x138));
-        LogInfo("SummonPull: mob=%p %.0f -> %.0f path=%p obj=%p short=%d dbl=%.0f ctrl=%d",
+        COMBAT_LOG("SummonPull: mob=%p %.0f -> %.0f path=%p obj=%p short=%d dbl=%.0f ctrl=%d",
                 mob, x, newX, path, mobVecCtrlObj(mob), readBack, dblX, ctrl);
     }
 }
@@ -4364,12 +4408,12 @@ void __fastcall summonTryDoingAttackManual_hook(void* pSummon, void* edx, int tC
         const DWORD now = GetTickCount();
         if (now - lastLog > 2000) {
             lastLog = now;
-            LogInfo("SummonPull: attack from summon skill=%d (not in pull list)", nSkillID);
+            COMBAT_LOG("SummonPull: attack from summon skill=%d (not in pull list)", nSkillID);
         }
         summonTryDoingAttackManual(pSummon, tCur);
         return;
     }
-    LogInfo("SummonPull: attack from pull summon skill=%d", nSkillID);
+    COMBAT_LOG("SummonPull: attack from pull summon skill=%d", nSkillID);
     g_pullTargets.clear();
     g_pPullSummon = pSummon;
     summonTryDoingAttackManual(pSummon, tCur);
@@ -4404,7 +4448,7 @@ void __cdecl TossSkillCheck(int nSkillID, int nMobAction) {
     const DWORD now = GetTickCount();
     if (g_forceToss || now - lastLog > 1000) {
         lastLog = now;
-        LogInfo("Toss: skill=%d mobAction=%d force=%d", nSkillID, nMobAction, (int)g_forceToss);
+        COMBAT_LOG("Toss: skill=%d mobAction=%d force=%d", nSkillID, nMobAction, (int)g_forceToss);
     }
 }
 
@@ -4437,7 +4481,7 @@ void __cdecl OnHitLog(void* pMob, int nAttacker, int nSkillID, int a10) {
                     *reinterpret_cast<unsigned int*>(tmpl + 0x48));
         }
     }
-    LogInfo("OnHit: skill=%d attacker=%d local=%d ctrl=%d a10=%d moveAbility=%d",
+    COMBAT_LOG("OnHit: skill=%d attacker=%d local=%d ctrl=%d a10=%d moveAbility=%d",
             nSkillID, nAttacker, localId, ctrl, a10, moveAbility);
 }
 
@@ -4509,7 +4553,7 @@ void __cdecl TossApply(void* pMob, int nAttacker, int nSkillID) {
                     *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(vc) + 0x30)));
         }
     }
-    LogInfo("Toss: applying to mob=%p skill=%d userX=%d", pMob, nSkillID, userX);
+    COMBAT_LOG("Toss: applying to mob=%p skill=%d userX=%d", pMob, nSkillID, userX);
     MobGenerateMovePath(pMob, 6, 0, 0, 0, 10, userX, 0, 0, 1);
 }
 
@@ -4603,6 +4647,29 @@ void __declspec(naked) TossFlagCave() {
     }
 }
 
+// Magic summons. Which summons deal magic damage is NOT read from the WZ -- CSummonedBase::
+// LoadAttackInfo zeroes SummonedAttackInfo +0x20 (@0x7AD4DD) and then sets it to 1 only for a
+// hardcoded skill-id list (@0x7AD4E0..0x7AD52A): 2121005 Ifrit, 2221005 Elquines, 2311006 Summon
+// Dragon, 2321003 Bahamut. CSummoned::TryDoingAttackManual reads that flag (@0x7A55F6) and picks
+// the damage routine with it: 0 -> sub_79216D (physical, summonPDamage_hook, fed CSummoned +0xCC =
+// SKILLLEVELDATA `damage`), 1 -> sub_792595 (magic, summonMDamage_hook, fed CSummoned +0xD0 =
+// SKILLLEVELDATA `mad`).
+//
+// So a custom summon can carry `mad` in its level data and still be routed through the physical
+// formula forever, because its id is not in that list. 3601021-3601023 do have `mad` (500 @ lvl 20,
+// alongside `damage`), so the only missing piece is the flag -- set it here and both the routine
+// and the `mad` damage% fall into place.
+static const std::vector<int> g_magicSummonSkills = {
+    3601021,
+    3601022,
+    3601023,
+};
+
+static bool IsMagicSummonSkill(int nSkillID) {
+    return std::find(g_magicSummonSkills.begin(), g_magicSummonSkills.end(), nSkillID)
+            != g_magicSummonSkills.end();
+}
+
 auto loadSummonAttackInfo = (int(__thiscall*)(void*, int, void*, int))0x007ACB5A;
 int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, void* bstr, int attackIdx) {
     int ret = loadSummonAttackInfo(thisCSB, retbuf, bstr, attackIdx);
@@ -4631,6 +4698,14 @@ int __fastcall loadSummonAttackInfo_hook(void* thisCSB, void* edx, int retbuf, v
 
         // Area-attack flag (+0x80, v7[32]): take the rect (FindHitMobInRect) multi-hit path.
         *reinterpret_cast<int*>(attackInfo + 0x80) = 1;
+    }
+
+    // Magic flag (+0x20, v7[8]). Deliberately outside the `modify` gate above: that gate is about
+    // the seek/reach/mobCount rework, while this only picks which damage formula the attack runs,
+    // and a magic summon needs it whether or not it is an octopus-style summon.
+    if (attackInfo && IsMagicSummonSkill(reinterpret_cast<int>(bstr))
+            && !IsBadWritePtr(reinterpret_cast<void*>(attackInfo), 0x24)) {
+        *reinterpret_cast<int*>(attackInfo + 0x20) = 1;
     }
     return ret;
 }
@@ -4800,24 +4875,12 @@ int(__fastcall tOnSkillKeyDownEnd(void* _this)) {
 
 auto OriginalCVecCtrl__CalcFloat = (signed int(__thiscall*)(void*, int))0x009B2C3C; // v83
 
-// Wings glide: keep full horizontal speed through a direction switch.
-//
-// The engine keeps steering: CalcFloat turns the player's movement keys into m_vx itself, through
-// CInputSystem/DirectInput, so it honours remapped keys -- GetAsyncKeyState(VK_LEFT/RIGHT) reads
-// false here and can't be used. What CalcFloat also does is ramp m_vx down to 0 and back up when
-// the input direction flips, and bleed it off on the neutral frames between the key release and
-// the opposite key press. That ramp is the lost momentum.
-//
-// So we take only the SIGN from the engine (that is the steering) and supply the MAGNITUDE
-// ourselves: hold the glide's peak speed and re-apply it every frame. The turn then lands on the
-// first frame the engine's m_vx crosses zero, at full speed, with no rebuild.
 static CVecCtrl* s_wingsOwner = nullptr;
 static double s_wingsMag = 0.0;   // magnitude held across the whole glide
 static int s_wingsSign = 1;       // direction the movement keys last asked for
 static bool s_wingsArmed = false; // true once a direction key is pressed; until then, hands off
 static double s_wingsSaved = 0.0; // speed parked by the UP brake, handed back on the next steer
 
-// ms_pInstance for CUserLocal (same read as the Master Skies airborne check above).
 static CVecCtrl* GetLocalVecCtrl() {
     CUserLocal* localUser = *reinterpret_cast<CUserLocal**>(0x00BEBF98);
     return localUser ? CVecCtrl::FromInterface(localUser->m_pvc) : nullptr;
@@ -5369,6 +5432,8 @@ void AttachSkillEdits() {
     // ATTACH_HOOK(ztlSecureFuse_short, ztlfuse_short);
     ATTACH_HOOK(mastery_Calcs_Hook, mCalc);
     PatchMasteryRange();
+    PatchSkillCooldownBlock();
+    ATTACH_HOOK(CUIStatusBar__ChatLogAdd, ChatLogAdd_Hook);
     // ATTACH_HOOK(calcpdamage_hook, CalcDamage__PDamage);
     ATTACH_HOOK(remove_bullet_skill_hook, remove_bullets);
     ATTACH_HOOK(octHook, octopus);

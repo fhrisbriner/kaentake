@@ -63,6 +63,71 @@ void LogCrashReport(unsigned long dwError, const char* pszContext) {
     if (pszSysMsg) LocalFree(pszSysMsg);
 }
 
+// ===== Log file ============================================================================
+// LogInfo used to resolve the log path and open/close MapleNight.log on every single line, on
+// the calling thread. That is harmless for startup tracing and ruinous in combat: the client
+// logs per mob per hit, so a busy fight became hundreds of synchronous file open/close round
+// trips per second on the game thread -- each one traversing the AV filter driver. Now the path
+// is resolved once, the handle stays open, and writes are buffered with a timed flush.
+//
+// Anything that can be followed by process death has to force the bytes out itself: the crash
+// handler calls LogFlush() explicitly, and atexit covers ordinary shutdown (which is what the
+// short-lived launcher and updater rely on, since they share this file).
+
+namespace {
+
+constexpr DWORD kLogFlushIntervalMs = 1000;
+
+struct LogState {
+    CRITICAL_SECTION cs{};
+    FILE* f = nullptr;
+    DWORD tLastFlush = 0;
+    bool bDebugger = false;
+
+    LogState() {
+        InitializeCriticalSection(&cs);
+
+        // Sampled once. OutputDebugStringA takes a global mutex and does cross-process signalling
+        // even when nothing is listening, so in a hot path it is pure cost.
+        bDebugger = IsDebuggerPresent() != FALSE;
+
+        char szPath[MAX_PATH];
+        GetModuleFileNameA(nullptr, szPath, MAX_PATH);
+        char* pLastSlash = strrchr(szPath, '\\');
+        if (pLastSlash) {
+            *(pLastSlash + 1) = '\0';
+        }
+        StringCbCatA(szPath, sizeof(szPath), "MapleNight.log");
+
+        fopen_s(&f, szPath, "a");
+        if (f) {
+            setvbuf(f, nullptr, _IOFBF, 64 * 1024);
+        }
+        tLastFlush = GetTickCount();
+        atexit(&LogFlush);
+    }
+
+    // Deliberately no destructor: tearing the handle down would race other threads still logging
+    // during shutdown. atexit gets the buffered bytes out; the OS reclaims the handle either way.
+};
+
+LogState& GetLogState() {
+    static LogState s; // thread-safe init; first use is always after CRT startup
+    return s;
+}
+
+} // namespace
+
+void LogFlush() {
+    LogState& st = GetLogState();
+    EnterCriticalSection(&st.cs);
+    if (st.f) {
+        fflush(st.f);
+        st.tLastFlush = GetTickCount();
+    }
+    LeaveCriticalSection(&st.cs);
+}
+
 void LogInfo(const char* pszFormat, ...) {
     char pszDest[1024];
     va_list argList;
@@ -70,8 +135,12 @@ void LogInfo(const char* pszFormat, ...) {
     StringCbVPrintfA(pszDest, sizeof(pszDest), pszFormat, argList);
     va_end(argList);
 
-    OutputDebugStringA(pszDest);
-    OutputDebugStringA("\n");
+    LogState& st = GetLogState();
+
+    if (st.bDebugger) {
+        OutputDebugStringA(pszDest);
+        OutputDebugStringA("\n");
+    }
 
     time_t now = time(nullptr);
     char szTime[32];
@@ -79,16 +148,14 @@ void LogInfo(const char* pszFormat, ...) {
     localtime_s(&tmBuf, &now);
     strftime(szTime, sizeof(szTime), "%Y-%m-%d %H:%M:%S", &tmBuf);
 
-    char szPath[MAX_PATH];
-    GetModuleFileNameA(nullptr, szPath, MAX_PATH);
-    char* pLastSlash = strrchr(szPath, '\\');
-    if (pLastSlash) *(pLastSlash + 1) = '\0';
-    StringCbCatA(szPath, sizeof(szPath), "MapleNight.log");
-
-    FILE* f = nullptr;
-    fopen_s(&f, szPath, "a");
-    if (f) {
-        fprintf(f, "[%s] %s\n", szTime, pszDest);
-        fclose(f);
+    EnterCriticalSection(&st.cs);
+    if (st.f) {
+        fprintf(st.f, "[%s] %s\n", szTime, pszDest);
+        const DWORD tNow = GetTickCount();
+        if (tNow - st.tLastFlush >= kLogFlushIntervalMs) {
+            fflush(st.f);
+            st.tLastFlush = tNow;
+        }
     }
+    LeaveCriticalSection(&st.cs);
 }

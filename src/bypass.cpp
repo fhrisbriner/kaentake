@@ -253,6 +253,11 @@ void CWvsApp::CallUpdate_hook(int tCurTime) {
         // CActionMan::GetInstance()->SweepCache();
         reinterpret_cast<void(__thiscall*)(CActionMan*)>(0x00411BBB)(CActionMan::GetInstance());
     }
+    // CActionMan sweeps its own action cache above, but nothing sweeps the ResMan object cache
+    // outside of a map change -- see ResMan_FlushTick. Both self-throttle, so the per-frame cost
+    // is a GetTickCount compare.
+    ResMan_FlushTick();
+    MemStat_Tick();
 }
 
 void CWvsApp::Run_hook(int* pbTerminate) {

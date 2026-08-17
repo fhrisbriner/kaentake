@@ -205,6 +205,7 @@ void CConfig::LoadCharacter_hook(int nWorldID, unsigned int dwCharacterId) {
 
 static const char INI_SECTION[] = "Video";
 static const char INI_KEY_RESOLUTION[] = "Resolution";
+static const char INI_KEY_FORCE32BIT[] = "Force32BitTextures";
 
 static std::string GetIniPath() {
     char path[MAX_PATH]{};
@@ -264,6 +265,12 @@ static void WriteIniTemplate(const std::string& iniPath, int nResolution) {
     }
     out +=
         "; An unrecognised value is ignored and the last in-game setting is used.\r\n"
+        ";\r\n"
+        "; Force32BitTextures: 1 = canvas textures kept at full 32-bit (A8R8G8B8), 0 = let the\r\n"
+        ";   engine pick, which is 16-bit (A4R4G4B4) on most cards. 1 avoids colour banding on\r\n"
+        ";   gradients and soft alpha but doubles the memory every canvas texture costs. The\r\n"
+        ";   client is 32-bit with a 2GB address-space ceiling, so on big boss maps 0 can be the\r\n"
+        ";   difference between finishing the fight and crashing.\r\n"
         "\r\n"
         "[Video]\r\n"
         "Resolution=";
@@ -271,6 +278,7 @@ static void WriteIniTemplate(const std::string& iniPath, int nResolution) {
     sprintf_s(buf, sizeof(buf), "%dx%d\r\n",
               g_aResolution[nResolution].nWidth, g_aResolution[nResolution].nHeight);
     out += buf;
+    out += "Force32BitTextures=1\r\n";
 
     HANDLE h = CreateFileA(iniPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1120,9 +1128,37 @@ void AttachResolutionMod() {
     // Patching `and eax,5` -> `and eax,0` forces the result to 0x15 (D3DFMT_A8R8G8B8 = 21) always,
     // so canvases stay full 32-bit. (DXT3 branch left intact: skipping it would corrupt any
     // DXT3-compressed/format-1026 canvas, and the live downconvert here is the 4444 path, not DXT3.)
-    if (BYTE* pFmtSel = reinterpret_cast<BYTE*>(
+    //
+    // COST: this doubles the bytes of every canvas texture, 16bpp -> 32bpp. That is the whole
+    // point (no 4444 banding) but it is not free, and on a 2GB address space it is the largest
+    // single memory multiplier in the DLL. Boss-entry crash at 13:09:38 went priv 425MB -> 960MB
+    // in five seconds and died at 98% of address space with largestFree=0MB; halving canvas
+    // texture bytes is the most direct lever available against that.
+    //
+    // So it is a setting, not a constant: MapleNight.ini [Video] Force32BitTextures=0 restores
+    // the engine's 4444 pick. Default stays 1 (existing behavior) -- flip it to A/B the boss
+    // fight without a rebuild and compare the MEMSTAT priv numbers at the same point.
+    // WriteIniTemplate only runs when MapleNight.ini does not exist, so adding the key to the
+    // template does nothing for anyone who already has the file -- which is everyone. Seed it
+    // into an existing [Video] section so the knob is actually visible and editable.
+    const std::string iniPath = GetIniPath();
+    char szExisting[16]{};
+    GetPrivateProfileStringA(INI_SECTION, INI_KEY_FORCE32BIT, "", szExisting, sizeof(szExisting),
+            iniPath.c_str());
+    if (szExisting[0] == '\0') {
+        WritePrivateProfileStringA(INI_SECTION, INI_KEY_FORCE32BIT, "1", iniPath.c_str());
+    }
+    const int nForce32 = GetPrivateProfileIntA(INI_SECTION, INI_KEY_FORCE32BIT, 1, iniPath.c_str());
+    if (!nForce32) {
+        LogInfo("AttachResolutionMod: Force32BitTextures=0 - leaving GR2D format picker alone (4444)");
+    } else if (BYTE* pFmtSel = reinterpret_cast<BYTE*>(
             GetAddressByPattern("GR2D_DX8.DLL", "39 7D DC 74 09 C7 45 E0 44 58 54 33"))) {
         BYTE zero = 0x00;
         PatchMemory(pFmtSel + 20, &zero, sizeof(zero)); // and eax,5 -> and eax,0  (force A8R8G8B8)
+        LogInfo("AttachResolutionMod: canvas textures forced to A8R8G8B8 (32bpp)");
+    } else {
+        // Previously silent. Worth knowing: if this pattern ever stops matching, textures quietly
+        // fall back to 4444 and the memory profile changes underneath you.
+        LogInfo("AttachResolutionMod: GR2D format-picker pattern NOT FOUND - textures stay 4444");
     }
 }
