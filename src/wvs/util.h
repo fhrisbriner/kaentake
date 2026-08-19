@@ -17,6 +17,30 @@ inline IWzNameSpacePtr& get_root() {
     return *reinterpret_cast<IWzNameSpacePtr*>(0x00BF14E0);
 }
 
+// WZ lookups that answer with an EMPTY variant instead of throwing. Every WZ read in the
+// Monster Book modules goes through these: a missing node is an ordinary outcome there (mobs
+// with no card, items with no icon), so an exception per miss would be both wrong and slow.
+// Pair them with get_int32(v, default) to read a node in one guarded expression.
+inline Ztl_variant_t get_object_or_empty(const wchar_t* sUOL) {
+    try {
+        IWzResManPtr& rm = get_rm();
+        if (rm) return rm->GetObjectA(const_cast<wchar_t*>(sUOL));
+    } catch (...) {}
+    return Ztl_variant_t();
+}
+
+inline Ztl_variant_t get_item_or_empty(IWzProperty* pProp, const wchar_t* sKey) {
+    try {
+        if (pProp) return pProp->Getitem(const_cast<wchar_t*>(sKey));
+    } catch (...) {}
+    return Ztl_variant_t();
+}
+
+template <typename TProp>
+inline Ztl_variant_t get_item_or_empty(const TProp& pProp, const wchar_t* sKey) {
+    return get_item_or_empty(static_cast<IWzProperty*>(const_cast<TProp&>(pProp)), sKey);
+}
+
 inline int get_int32(Ztl_variant_t& v, int nDefault) {
     Ztl_variant_t vInt;
     if (V_VT(&v) == VT_EMPTY || V_VT(&v) == VT_ERROR || FAILED(ZComAPI::ZComVariantChangeType(&vInt, &v, 0, VT_I4))) {

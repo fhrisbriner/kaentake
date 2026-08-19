@@ -3,6 +3,7 @@
 #include <mutex>
 #include <string>
 
+#include "constants.h"
 #include "hook.h"
 //
 // Created by Gwen on 4/8/2026.
@@ -70,6 +71,16 @@ void OnPacketCrash(CInPacket* p, const char* type, uint16_t opcode) {
 // helper to dump packets when needed
 
 
+// Expedition Death Count wire contract. 0x3727 sits in a custom high range the v83 client has
+// no handler for; SET_FIELD is stock and must never be consumed.
+static constexpr uint16_t kDeathCountOpcode      = 0x3727;
+static constexpr uint16_t kDeathCountFieldOpcode = 0x007D;   // SET_FIELD
+
+// S2C MONSTER_BOOK_RESULT. One opcode, three payload kinds distinguished by a leading byte:
+// 0 = a mob drop table with live chances (Dropping tab), 1 = item-name search hits, 2 = the mobs
+// that drop one item. Client-mod-only; the stock v83 client has no handler for it.
+static constexpr uint16_t kMonsterBookResultOpcode = 0x372C;
+
 typedef void(__thiscall* CClientSocket__ProcessPacket_t)(uintptr_t ecx, CInPacket* iPacket);
 auto _CClientSocket__ProcessPacket = reinterpret_cast<CClientSocket__ProcessPacket_t>(0x004965F1);
 
@@ -106,6 +117,35 @@ void __fastcall CClientSocket__ProcessPacket(uintptr_t ecx, uintptr_t edx, CInPa
         } catch (...) {
             printf("[PacketHook] Failed to copy packet into log\n");
         }
+
+        // ---- Expedition Death Count HUD (deathcount.cpp) --------------------------------
+        // SET_FIELD is OBSERVED, never consumed: the stock client owns it (it is the whole field
+        // build), so we take the panel down before it runs and let the packet fall through.
+        if (opcode == kDeathCountFieldOpcode) {
+            try { DeathCount_OnFieldChange(); } catch (...) {}
+        }
+        // 0x3727 is SWALLOWED -- the v83 client has no handler for it, which is exactly why this
+        // opcode was chosen. Returning here keeps it from reaching the stock dispatcher.
+        if (opcode == kDeathCountOpcode) {
+            try { DeathCount_OnPacket(iPacket); } catch (...) {}
+            return;
+        }
+
+#if USE_MONSTER_BOOK_DROPS || USE_MONSTER_BOOK_SEARCH
+        if (opcode == kMonsterBookResultOpcode) {
+            // Both readers get the same packet and each ignores the subtypes that are not its
+            // own, so order does not matter. Each works off a guarded CanRead, only RECORDS data
+            // and never moves the packet offset -- the views are rebuilt on the main-thread
+            // flush. SWALLOWED: letting an unknown opcode reach the stock handler closes client.
+#if USE_MONSTER_BOOK_DROPS
+            try { MonsterBookDrops_OnPacket(iPacket); } catch (...) {}
+#endif
+#if USE_MONSTER_BOOK_SEARCH
+            try { MonsterBookSearch_OnPacket(iPacket); } catch (...) {}
+#endif
+            return;
+        }
+#endif
 
         // Try calling original safely
         try {

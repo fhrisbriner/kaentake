@@ -64,6 +64,25 @@ public:
         return result;
     }
 
+    // Bounds probe for readers that parse a packet WITHOUT moving its offset (the Monster Book
+    // modules read fields at fixed offsets off m_uOffset and must leave the cursor alone for the
+    // stock dispatcher). Returns false rather than throwing, so a short packet is a skipped
+    // feature instead of a client-visible exception.
+    bool CanRead(unsigned int uCount) const {
+        return m_uOffset + uCount <= m_uLength;
+    }
+
+    // Raw pointer at the current offset, for readers that index fields directly instead of
+    // decoding. Callers reach the body at [2] because ProcessPacket restores the offset onto the
+    // opcode. Always pair with CanRead -- this does no bounds checking of its own beyond the
+    // offset itself.
+    const uint8_t* CurrentPublic() const {
+        if (m_uOffset > m_uLength) {
+            return nullptr;
+        }
+        return reinterpret_cast<const uint8_t*>(&m_aRecvBuff.a[m_uOffset]);
+    }
+
     static int16_t Decode2(CInPacket *pthis) {
         if (pthis->m_uOffset + 2 > pthis->m_uLength) {
             OnPacketCrash(pthis, "Decode2");

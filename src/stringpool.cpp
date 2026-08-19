@@ -1,6 +1,11 @@
 #include "pch.h"
 #include "hook.h"
+#include "stringpool.h"
 #include "ztl/ztl.h"
+
+#include <cstring>
+#include <unordered_map>
+#include <vector>
 
 #define REPLACE_STRING(INDEX, NEW_STRING) \
     do { \
@@ -47,6 +52,19 @@ void EncodeString(int nIdx, const char* sSource, char* sDestination) {
     StringPool::ms_aString[nIdx] = sDestination;
 }
 
+
+// Runtime twin of REPLACE_STRING, for callers whose text is not a compile-time literal.
+// See stringpool.h for why each index gets its own buffer rather than a shared scratch one.
+void SetStringPoolString(int nIdx, const char* sText) {
+    if (!sText) {
+        return;
+    }
+    static std::unordered_map<int, std::vector<char>> s_aBuffer;
+    std::vector<char>& buf = s_aBuffer[nIdx];
+    // EncodeString writes [0]=0, [1..n]=encoded, [n+1]=0.
+    buf.assign(std::strlen(sText) + 2, 0);
+    EncodeString(nIdx, sText, buf.data());
+}
 
 void AttachStringPoolMod() {
     REPLACE_STRING(1163, "Maple Night");

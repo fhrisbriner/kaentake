@@ -17,6 +17,16 @@
 #define CONSTANTS_USE_CONFIG_FILE  FALSE
 #define CONFIG_NEXON_SEARCH     "63.251.217."
 
+// ---- Monster Book ----
+// Each module compiles to nothing when its flag is FALSE, and the flags are independent, with one
+// documented exception: monsterBookSearch.cpp READS the 16-per-page Dropping paging that
+// monsterBookDrops.cpp installs. It guards for that rather than assuming it, so turning DROPS off
+// degrades the search drop-icon click instead of breaking it.
+#define USE_MONSTER_BOOK_OPEN    TRUE  // icons, counters, art/HP/MP, all four tabs
+#define USE_MONSTER_BOOK_FOUNDIN TRUE  // Found In row click -> world map, text restyling
+#define USE_MONSTER_BOOK_DROPS   TRUE  // drop chance % label on the Dropping icons
+#define USE_MONSTER_BOOK_SEARCH  TRUE  // mob-name + item-name search fields
+
 extern int g_ScreenPosX;
 extern int g_ScreenPosY;
 

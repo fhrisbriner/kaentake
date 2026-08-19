@@ -258,6 +258,15 @@ void CWvsApp::CallUpdate_hook(int tCurTime) {
     // is a GetTickCount compare.
     ResMan_FlushTick();
     MemStat_Tick();
+    DeathCount_OnClientTick();
+    // Monster Book follow-ups. Both are no-ops with the book closed; they send their queued query
+    // and rebuild their view here so nothing engine-side ever runs on the packet or draw paths.
+#if USE_MONSTER_BOOK_DROPS
+    try { MonsterBookDrops_OnClientTick(); } catch (...) {}
+#endif
+#if USE_MONSTER_BOOK_SEARCH
+    try { MonsterBookSearch_OnClientTick(); } catch (...) {}
+#endif
 }
 
 void CWvsApp::Run_hook(int* pbTerminate) {

@@ -46,6 +46,26 @@ inline uintptr_t Rebase(uintptr_t addr) {
     inline static auto NAME = reinterpret_cast<T(__thiscall*)(void*, __VA_ARGS__)>(Rebase(static_cast<uintptr_t>(ADDRESS))); \
     T NAME##_hook(__VA_ARGS__);
 
+// Breadcrumb marker the ported Monster Book modules put at the top of each hook body. It exists
+// so a crash dump can name the feature that was running; the vectored crash logger covers that
+// already, so it compiles to nothing.
+#define MUSH_FEATURE(NAME) ((void)0)
+
+// The ported Monster Book modules were written against a crash-attribution and quarantine
+// subsystem ("Mush") that this DLL does not have. Our equivalent is the vectored crash logger in
+// system.cpp, which reports EIP and a stack scan, so the registration calls are no-ops:
+//
+//   REGISTER_CODECAVE / MushRegisterCode  name a patched code address so a crash inside it can be
+//                                         attributed. Ours resolves addresses from the log instead.
+//   MushFeatureQuarantined                asks whether a startup crash LOOP was detected and this
+//                                         feature should sit this session out. We have no such
+//                                         detector, so it always answers false and the feature
+//                                         always installs. If a Monster Book module ever starts a
+//                                         boot-loop, that is the switch to make real.
+#define REGISTER_CODECAVE(ADDR, NAME) ((void)(ADDR), (void)(NAME))
+inline void MushRegisterCode(uintptr_t uAddr, const char* pszName) { (void)uAddr; (void)pszName; }
+inline bool MushFeatureQuarantined(const char* pszName) { (void)pszName; return false; }
+
 #define TO_UINTPTR(VALUE) ((uintptr_t)(VALUE))
 
 #define TO_PVOID(VALUE) ((void*)(VALUE))
@@ -81,6 +101,33 @@ void AttachMemStat();            // memstat.cpp — samples memory around CField
 // calling them every frame is cheap; the intervals live next to their implementations.
 void ResMan_FlushTick();         // resman.cpp  — periodic IWzResMan::FlushCachedObjects
 void MemStat_Tick();             // memstat.cpp — periodic memory sample
+class CInPacket;
+
+// CUIMonsterBook::SetTabEnable (monsterBook.cpp); USE_MONSTER_BOOK_OPEN.
+// PAIRED with a server-side data fix: String.wz/MonsterBook.img must carry an entry for every
+// card mob, else CMonsterBookMan has no record and Basic Info prints "HP : (null)".
+void AttachMonsterBookMod();
+
+void AttachMonsterBookFoundInMod();   // Found In row click -> world map at that field
+void AttachMonsterBookDropsMod();     // drop chance % label on each Dropping icon (S2C 0x372C type 0)
+void MonsterBookDrops_OnClientTick();
+void MonsterBookDrops_OnPacket(CInPacket* pPacket);
+void AttachMonsterBookSearchMod();    // two search fields: mob name (local) + item name (types 1/2)
+void MonsterBookSearch_OnClientTick();
+void MonsterBookSearch_OnPacket(CInPacket* pPacket);
+
+// Shared right-page arbitration. DEFINED IN monsterBook.cpp so neither of the two big modules has
+// to link against the other: the drops module must not paint its % labels while the search
+// module item-result view owns the right page.
+void MonsterBookSearch_SetItemResultView(bool bOn);
+bool MonsterBookSearch_IsItemResultView();
+
+// deathcount.cpp — Expedition Death Count HUD. Server-driven and passive: OnPacket only records
+// the value, OnClientTick does all WZ/graphics work on the main-thread step.
+void DeathCount_OnPacket(CInPacket* pPacket);   // S2C 0x3727, swallowed by packet.cpp
+void DeathCount_OnFieldChange();                // S2C 0x007D SET_FIELD, observed only
+void DeathCount_OnClientTick();
+
 void MemStat_LogNow(const char* pszReason);
 SIZE_T MemStat_GetPrivateBytes();
 
@@ -125,6 +172,12 @@ inline void AttachClientHooks() {
     (BGMOverride());
     (AttachBagWindowMod());
     (AttachMemStat());
+    // Monster Book. DROPS installs the Dropping paging patch that SEARCH later reads, so the
+    // order of these two matters; the other two are independent.
+    (AttachMonsterBookMod());        // open the book up: colour icons, 0-counters, art/HP/MP, tabs
+    (AttachMonsterBookFoundInMod()); // Found In rows clickable -> world map
+    (AttachMonsterBookDropsMod());   // drop chance % on the Dropping icons
+    (AttachMonsterBookSearchMod());  // mob-name + item-name search fields
 }
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {

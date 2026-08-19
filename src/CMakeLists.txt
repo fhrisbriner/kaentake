@@ -15,6 +15,12 @@ add_library(injector SHARED
         tempstat.cpp
         stringpool.cpp
         memstat.cpp
+        deathcount.cpp
+        getmobinfobyid.cpp
+        monsterBook.cpp
+        monsterBookFoundIn.cpp
+        monsterBookDrops.cpp
+        monsterBookSearch.cpp
         debug.cpp
         hook.cpp
         skills.cpp
