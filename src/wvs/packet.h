@@ -51,6 +51,11 @@ public:
     uint16_t m_uDataLen;
     uint32_t m_uOffset;
 
+    // Named accessors over m_uOffset, for readers that walk a packet by hand (skipping an
+    // opcode, stepping over a string body) instead of decoding every field.
+    uint32_t GetOffset() const { return m_uOffset; }
+    void SetOffset(uint32_t uOffset) { m_uOffset = uOffset; }
+
     // Decode functions with overflow protection
     static uint8_t Decode1(CInPacket *pthis) {
         if (pthis->m_uOffset + 1 > pthis->m_uLength) {

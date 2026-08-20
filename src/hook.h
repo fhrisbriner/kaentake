@@ -128,6 +128,17 @@ void DeathCount_OnPacket(CInPacket* pPacket);   // S2C 0x3727, swallowed by pack
 void DeathCount_OnFieldChange();                // S2C 0x007D SET_FIELD, observed only
 void DeathCount_OnClientTick();
 
+// coloringprism.cpp / weapontint.cpp -- Coloring Prism (item 5782000).
+// weapontint.cpp owns the recolour, the tint table and both opcodes (C2S 0x372E / S2C 0x372F)
+// and installs the ONE Detour of the pair, on CAvatar::PrepareActionLayer. coloringprism.cpp
+// owns the window and, since nothing else in this DLL owns it, the CDraggableItem::OnDoubleClicked
+// detour that opens it. Full API in weapontint.h.
+void AttachWeaponTintMod();
+void AttachColoringPrismMod();
+void WeaponTint_HandleSync(CInPacket* pPacket);   // S2C 0x372F, swallowed by packet.cpp
+void WeaponTint_Tick();                           // main-thread step
+bool ColorPrism_HandleItemDrop(void* pTo, int invType, int invPos);   // from the OnDropped hook
+
 void MemStat_LogNow(const char* pszReason);
 SIZE_T MemStat_GetPrivateBytes();
 
@@ -178,6 +189,10 @@ inline void AttachClientHooks() {
     (AttachMonsterBookFoundInMod()); // Found In rows clickable -> world map
     (AttachMonsterBookDropsMod());   // drop chance % on the Dropping icons
     (AttachMonsterBookSearchMod());  // mob-name + item-name search fields
+    // Coloring Prism. The tint mod must come first: it owns the render hook and the tint table
+    // the window reads, and the window's own detour dispatches into it.
+    (AttachWeaponTintMod());
+    (AttachColoringPrismMod());
 }
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {

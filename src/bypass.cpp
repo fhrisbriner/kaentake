@@ -267,6 +267,9 @@ void CWvsApp::CallUpdate_hook(int tCurTime) {
 #if USE_MONSTER_BOOK_SEARCH
     try { MonsterBookSearch_OnClientTick(); } catch (...) {}
 #endif
+    // Coloring Prism: applies a tint the server pushed while the packet was being handled on the
+    // receive thread, so no WZ/graphics work ever runs off the main thread.
+    try { WeaponTint_Tick(); } catch (...) {}
 }
 
 void CWvsApp::Run_hook(int* pbTerminate) {

@@ -32,6 +32,9 @@ add_library(injector SHARED
         wvs/CUserLocal.h
         wvs/mob.h
         storagebag.cpp
+        weapontint.cpp
+        weapontint.h
+        coloringprism.cpp
 )
 
 target_precompile_headers(injector PRIVATE pch.h)

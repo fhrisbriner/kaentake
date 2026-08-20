@@ -4,14 +4,18 @@
 #include <windows.h>
 
 
+// Equip slots an AvatarLook carries. Named because code that walks a look needs to size its own
+// buffer to it; the two arrays below are both this long.
+#define AVATAR_EQUIP_SLOTS 60
+
 #pragma pack(push, 1)
 struct AvatarLook : public ZRefCounted {
     unsigned char nGender;
     int nSkin;
     int nFace;
     int nWeaponStickerID;
-    int anHairEquip[60];
-    int anUnseenEquip[60];
+    int anHairEquip[AVATAR_EQUIP_SLOTS];
+    int anUnseenEquip[AVATAR_EQUIP_SLOTS];
     int anPetID[3];
 };
 #pragma pack(pop)

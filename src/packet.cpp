@@ -81,6 +81,10 @@ static constexpr uint16_t kDeathCountFieldOpcode = 0x007D;   // SET_FIELD
 // that drop one item. Client-mod-only; the stock v83 client has no handler for it.
 static constexpr uint16_t kMonsterBookResultOpcode = 0x372C;
 
+// S2C WEAPON_TINT_SYNC. Coloring Prism tint snapshot / action result / per-map table. Same
+// custom block, same reason: the stock v83 client has no handler, so it must be swallowed.
+static constexpr uint16_t kWeaponTintSyncOpcode = 0x372F;
+
 typedef void(__thiscall* CClientSocket__ProcessPacket_t)(uintptr_t ecx, CInPacket* iPacket);
 auto _CClientSocket__ProcessPacket = reinterpret_cast<CClientSocket__ProcessPacket_t>(0x004965F1);
 
@@ -146,6 +150,12 @@ void __fastcall CClientSocket__ProcessPacket(uintptr_t ecx, uintptr_t edx, CInPa
             return;
         }
 #endif
+
+        // SWALLOWED for the same reason as the two above: no stock handler exists for it.
+        if (opcode == kWeaponTintSyncOpcode) {
+            try { WeaponTint_HandleSync(iPacket); } catch (...) {}
+            return;
+        }
 
         // Try calling original safely
         try {

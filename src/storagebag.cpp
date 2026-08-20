@@ -1104,13 +1104,24 @@ static auto CDraggableItem_OnDropped = reinterpret_cast<int(__thiscall*)(void*, 
 int __fastcall CDraggableItem_OnDropped_bag_hook(void* pThis, void* /*edx*/, void* pFrom, void* pTo, int rx, int ry) {
     s_bItemDragging = false;   // any drop ends a bag item-drag
     CUIBagWindow* w = CUIBagWindow::ms_pInstance;
-    if (pThis && w) {
+    if (pThis) {
         void* srcHandler = nullptr; int srcA = 0, srcB = 0;
         __try {
             srcHandler = *reinterpret_cast<void**>(reinterpret_cast<char*>(pThis) + 0x24);
             srcA = *reinterpret_cast<int*>(reinterpret_cast<char*>(pThis) + 0x18);
             srcB = *reinterpret_cast<int*>(reinterpret_cast<char*>(pThis) + 0x1C);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return CDraggableItem_OnDropped(pThis, pFrom, pTo, rx, ry);
+        }
+        // Coloring Prism drop well. Dispatched from here because a second Detour on 0x004EF140
+        // is the hazard that file's header documents. Deliberately OUTSIDE the bag-window guard
+        // below: the prism window is usable with the bag closed. It is a no-op unless the prism
+        // window is open, and when it takes the drop it consumes it -- the item must not also move.
+        if (ColorPrism_HandleItemDrop(pTo, srcA, srcB)) {
+            EndDragIcon();
+            return 1;
+        }
+        if (!w) {
             return CDraggableItem_OnDropped(pThis, pFrom, pTo, rx, ry);
         }
         void* ourHandler = reinterpret_cast<char*>(w) + 4;
