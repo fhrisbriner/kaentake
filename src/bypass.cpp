@@ -270,6 +270,8 @@ void CWvsApp::CallUpdate_hook(int tCurTime) {
     // Coloring Prism: applies a tint the server pushed while the packet was being handled on the
     // receive thread, so no WZ/graphics work ever runs off the main thread.
     try { WeaponTint_Tick(); } catch (...) {}
+    // Opens the prism window when an NPC asked the server to (S2C 0x372F subtype 4).
+    try { ColorPrism_OnClientTick(); } catch (...) {}
 }
 
 void CWvsApp::Run_hook(int* pbTerminate) {

@@ -138,6 +138,8 @@ void AttachColoringPrismMod();
 void WeaponTint_HandleSync(CInPacket* pPacket);   // S2C 0x372F, swallowed by packet.cpp
 void WeaponTint_Tick();                           // main-thread step
 bool ColorPrism_HandleItemDrop(void* pTo, int invType, int invPos);   // from the OnDropped hook
+void ColorPrism_OnServerOpen();                   // S2C 0x372F subtype 4, receive thread: records only
+void ColorPrism_OnClientTick();                   // main-thread step: opens the window if asked
 
 void MemStat_LogNow(const char* pszReason);
 SIZE_T MemStat_GetPrivateBytes();

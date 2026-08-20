@@ -84,6 +84,8 @@ static constexpr uint16_t kMonsterBookResultOpcode = 0x372C;
 // S2C WEAPON_TINT_SYNC. Coloring Prism tint snapshot / action result / per-map table. Same
 // custom block, same reason: the stock v83 client has no handler, so it must be swallowed.
 static constexpr uint16_t kWeaponTintSyncOpcode = 0x372F;
+// Subtype 4 of that packet: an NPC opened the prism window; there is no tint payload.
+static constexpr uint8_t  kWeaponTintOpenWindowSubtype = 4;
 
 typedef void(__thiscall* CClientSocket__ProcessPacket_t)(uintptr_t ecx, CInPacket* iPacket);
 auto _CClientSocket__ProcessPacket = reinterpret_cast<CClientSocket__ProcessPacket_t>(0x004965F1);
@@ -153,6 +155,14 @@ void __fastcall CClientSocket__ProcessPacket(uintptr_t ecx, uintptr_t edx, CInPa
 
         // SWALLOWED for the same reason as the two above: no stock handler exists for it.
         if (opcode == kWeaponTintSyncOpcode) {
+            // Subtype 4 is the NPC-opened window, which weapontint.cpp's reader knows nothing about;
+            // it is peeked here rather than parsed there so that file stays as shipped. The subtype
+            // byte sits right after the opcode, and ProcessPacket left the offset ON the opcode.
+            const uint8_t* body = iPacket->CurrentPublic();
+            if (body && iPacket->CanRead(2 + 1) && body[2] == kWeaponTintOpenWindowSubtype) {
+                try { ColorPrism_OnServerOpen(); } catch (...) {}
+                return;
+            }
             try { WeaponTint_HandleSync(iPacket); } catch (...) {}
             return;
         }

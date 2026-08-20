@@ -1631,6 +1631,33 @@ static int __fastcall CDraggableItem_OnDoubleClicked_prism_hook(void* pThis, voi
     return CDraggableItem_OnDoubleClicked(pThis);
 }
 
+// =====================================================
+// OPENED BY AN NPC
+// =====================================================
+// S2C WEAPON_TINT_SYNC subtype 4: the server says an NPC just opened the window for this player.
+// No prism is involved, so s_prismPos is left at 0 and every Confirm goes out with prismPos 0 --
+// the server recognises that as "the free session I granted" and neither looks for nor consumes an
+// item. It is the SERVER that decides a session is free; the 0 here only reports which slot the
+// window was opened from, and a client that lied about it would just be refused.
+//
+// Split in two on purpose, the same shape deathcount.cpp uses: the packet lands on the RECEIVE
+// thread, where building a CWnd is not safe, so OnServerOpen only records the request and the
+// main-thread tick is what actually opens it.
+static volatile bool s_bServerOpenPending = false;
+
+void ColorPrism_OnServerOpen() {
+    s_bServerOpenPending = true;
+}
+
+void ColorPrism_OnClientTick() {
+    if (!s_bServerOpenPending) {
+        return;
+    }
+    s_bServerOpenPending = false;
+    ColorPrism::s_prismPos = 0;   // no prism backing this session
+    try { ColorPrism::OpenWindow(); } catch (...) {}
+}
+
 void AttachColoringPrismMod() {
     ATTACH_HOOK(CDraggableItem_OnDoubleClicked, CDraggableItem_OnDoubleClicked_prism_hook);
     LogMessage("Coloring Prism: window ready (item %d)", ColorPrism::kItemColoringPrism);
