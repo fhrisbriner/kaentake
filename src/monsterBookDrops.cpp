@@ -355,6 +355,15 @@ constexpr int kLabelMinH = 6;
 constexpr int kFallbackPaneW = 220; // page canvas size, if get_width/get_height ever fails
 constexpr int kFallbackPaneH = 290;
 
+// ---- card-bonus banner -------------------------------------------------------------------------
+// One line at the FOOT of the Dropping page saying why the percentages above are larger than the
+// raw table. Placed relative to the measured pane height rather than at a fixed y: the icon grid
+// ends at 236 (kRowBase + 3*kRowStep + kCellH) and the last row's labels reach ~251, so anchoring
+// to the bottom keeps it clear of them on any pane this canvas reports.
+constexpr int kBonusGapY  = 3;             // px above the pane's bottom edge
+constexpr unsigned kBonusBg = 0xFF2B2B2B;  // dark plate, so white text reads over the page art
+constexpr unsigned kBonusFg = 0xFFFFFFFF;
+
 // ---- stale-slot look (F3.1) -------------------------------------------------------------------
 // The plate the stock Dropping pass puts under every icon. It is at the IMAGE ROOT -- there is no
 // IconBase under MonsterBook (spec §4b; monsterBookSearch.cpp resolves the identical UOL).
@@ -371,6 +380,10 @@ struct Chance {
 int g_mobId = 0;               // mob the book is currently showing (SetMobInfo)
 int g_chanceMob = 0;           // mob g_chances belongs to; 0 == nothing cached
 std::vector<Chance> g_chances; // sorted by itemId
+// Monster card bonus for (this player, g_chanceMob), as a whole percent -- 5 cards at 3% == 15.
+// Sent as a TRAILING field on the type 0 reply, so it is absent on an older server and simply
+// stays 0 there, which reads as "no bonus" and draws nothing.
+int g_cardBonusPct = 0;
 int g_rewardMob = 0;           // mob g_reward belongs to
 std::vector<int> g_reward;     // String/MonsterBook.img/<mob>/reward, in draw order
 bool g_droppingOnScreen = false;
@@ -603,6 +616,7 @@ void PrepareFrame(void* pThis, FrameActions* out) {
 void ResetForNewMob(int mobId) {
     g_mobId = mobId;
     g_chanceMob = 0;
+    g_cardBonusPct = 0;
     g_chances.clear();
     g_rewardMob = 0;
     g_reward.clear();
@@ -1002,6 +1016,35 @@ void PaintLabels(void* pThis) {
         Ztl_bstr_t sText(lab.text);
         pCanvas->raw_DrawText(lab.textX, lab.boxY, sText, pFont, vtEmpty, vtEmpty, &drawn);
     }
+
+    // The card bonus itself. Drawn LAST so it sits over the page rather than under a label, and
+    // only when there is one -- a mob whose card the player has never picked up gets no banner and
+    // the page looks exactly as it did before this feature.
+    if (g_cardBonusPct > 0) {
+        int paneW = kFallbackPaneW;
+        int paneH = kFallbackPaneH;
+        unsigned w = 0, h = 0;
+        if (SUCCEEDED(pCanvas->get_width(&w)) && w > 0 && w < 4096) {
+            paneW = static_cast<int>(w);
+        }
+        if (SUCCEEDED(pCanvas->get_height(&h)) && h > 0 && h < 4096) {
+            paneH = static_cast<int>(h);
+        }
+
+        wchar_t sBonus[64];
+        _snwprintf_s(sBonus, _countof(sBonus), _TRUNCATE,
+                L"Card Bonus  +%d%% EXP / Drop", g_cardBonusPct);
+
+        const int boxH = static_cast<int>(kFontHeight) + 2;
+        const int boxY = paneH - boxH - kBonusGapY;
+        if (boxY > 0) {
+            pCanvas->raw_DrawRectangle(0, boxY, static_cast<unsigned>(paneW),
+                    static_cast<unsigned>(boxH), kBonusBg);
+            unsigned drawn = 0;
+            Ztl_bstr_t sText(sBonus);
+            pCanvas->raw_DrawText(kLabelPadX, boxY + 1, sText, pFont, vtEmpty, vtEmpty, &drawn);
+        }
+    }
 }
 
 void PaintLabelsInner(void* pThis) {
@@ -1182,7 +1225,21 @@ void MonsterBookDrops_OnPacket(CInPacket* pPacket) {
                        [](const Chance& a, const Chance& b) { return a.itemId == b.itemId; }),
             rows.end());
 
+    // Trailing card-bonus percent, read only if the packet is actually long enough for it: an
+    // older server stops after the entries and must not be mis-read as a bonus of whatever byte
+    // happens to follow.
+    int cardBonusPct = 0;
+    const size_t bonusOff = kResultHeaderLen + static_cast<size_t>(count) * kResultEntryLen;
+    if (pPacket->CanRead(bonusOff + sizeof(short))) {
+        short raw = 0;
+        memcpy(&raw, p + bonusOff, sizeof(raw));
+        if (raw > 0 && raw <= 1000) {
+            cardBonusPct = raw;
+        }
+    }
+
     g_chances.swap(rows);
+    g_cardBonusPct = cardBonusPct;
     g_chanceMob = mobId; // an EMPTY table is still an answer: cache it so we stop asking
     InvalidateLabels();
     // THE fix for "labels only on the second visit": the page was painted and its dirty flag was
