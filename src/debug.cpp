@@ -23,6 +23,11 @@ void ErrorMessage(const char* pszFormat, ...) {
     va_list argList;
     va_start(argList, pszFormat);
     StringCbVPrintfA(pszDest, cbDest, pszFormat, argList);
+    // Log BEFORE the box. A modal dialog stops everything until the user clicks it, so without
+    // this an ErrorMessage is indistinguishable in the log from a hard crash: both leave a log
+    // that simply stops. Flushed too, because the process may never get another chance.
+    LogInfo("*** ErrorMessage *** %s", pszDest);
+    LogFlush();
     MessageBoxA(nullptr, pszDest, "Error", MB_ICONERROR);
     va_end(argList);
 }

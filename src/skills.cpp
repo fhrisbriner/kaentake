@@ -1213,6 +1213,21 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je summons
 
+            // Mist Explosion goes through magicAttack ON PURPOSE. Its rect would normally be the
+            // skill's lt/rb offset onto the player -- which is what made it hit in front of you --
+            // but during a Mist Explosion cast the target list is substituted at
+            // CMobPool::FindHitMobInRect (see mistexplosion.cpp), so the client attacks the mobs
+            // standing in the MIST footprints instead. Everything downstream of that call is the
+            // client's own: damage per mob, the ATTACKINFO array, and the packet the server takes.
+            // Mist Explosion routes to statChange, NOT magicAttack: the client's magic path builds
+            // its rect from the skill's lt/rb and offsets it onto the player, which is not where
+            // this skill's targets are. statChange casts, animates, consumes MP and starts the
+            // cooldown without attacking; the attack packet is built by hand in mistexplosion.cpp
+            // from the mobs standing in the mist footprints.
+            mov eax, 2121040
+            cmp esi, eax
+            je magic
+
             mov eax, 3601021
             cmp esi, eax
             je summons
@@ -1846,6 +1861,7 @@ bool isSkillIDMatched(int nSkillID) {
         2121026,
         2121027,
         2121016,
+        2121040,
 
         // ===== Priest =====
         2211011,
@@ -2763,18 +2779,79 @@ _declspec(naked) void SetColorToDoom() {
 }
 
 
+// TryDoingMagicAttack tests the skill id against a hardcoded set with a chain of 26
+// `cmp eax, <id>` / `jz loc_956372` pairs spanning 0x00955D0E..0x00955E2B (286 bytes). Editing it
+// meant one Patch4 per entry, capped at the 26 slots the client happens to have, and the actual
+// membership was spread across eleven addresses with no way to read it as a list.
+//
+// One jmp at the head of the chain now redirects into a cave that asks this vector instead. Adding
+// or removing a skill is a line here; the slot count stops being a limit.
+//
+// Starting contents are the chain's EXACT effective set: the client's 26 vanilla ids with the
+// eleven the old function overwrote already substituted, so behaviour is unchanged on day one.
+std::vector<int> g_magicAttackSkills = {
+    2201005,             // vanilla
+    2101008, 2101007,    // were 2301002, 2111002
+    2111010, 2111003,    // were 2211002, 2311004
+    2201010, 2211014,    // were 2121001, 2221001
+    2201013, 2511006,    // were 2321001, 4121004
+    4221004,             // vanilla
+    2411012, 2111013,    // were 2121007, 2221007
+    2411011,             // was 2321008
+    2121003, 2221003,    // vanilla from here down
+    12111003, 12101006, 12111006,
+    22101000, 22121000, 22141001, 22151001, 22161001, 22181002, 22171002, 22181001, 2121040, 2121006, 2121007, 2221007, 2421007
+};
+
+// Result handed back across popad, which would otherwise restore the register the answer is in.
+static int g_bMagicAttackMatch = 0;
+
+int __cdecl IsMagicAttackSkill(int nSkillID) {
+    for (int id : g_magicAttackSkills) {
+        if (id == nSkillID) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static constexpr DWORD kMagicAttackChainHead = 0x00955D0E;   // cmp eax, 2195ADh
+static constexpr DWORD kMagicAttackMatch     = 0x00956372;   // loc_956372, the chain's jz target
+static constexpr DWORD kMagicAttackFallThru  = 0x00955E2C;   // mov eax, [ebp+var_5C]
+
+// Indirect jump targets. A naked function cannot encode an absolute jmp to a literal, and MSVC
+// resolves inline-asm symbols as it parses, so these must be defined ABOVE the asm that uses them
+// -- declared after, they are silently taken for undefined labels rather than variables.
+static DWORD pMagicAttackMatch    = kMagicAttackMatch;
+static DWORD pMagicAttackFallThru = kMagicAttackFallThru;
+
+// eax holds the skill id on entry. ebx and esi are live across the chain (both are set up just
+// above it at 0x00955D0B), so everything is preserved -- but eax itself is free, because the
+// fall-through's first instruction overwrites it, and so are the flags, since `neg eax` there sets
+// its own.
+void __declspec(naked) MagicAttackChainCave() {
+    __asm {
+        pushad
+        push    dword ptr [esp + 28]        ; original EAX -- pushad stores it last, at +28
+        call    IsMagicAttackSkill
+        add     esp, 4
+        mov     [g_bMagicAttackMatch], eax
+        popad
+        cmp     [g_bMagicAttackMatch], 0
+        jnz     matched
+        jmp     [pMagicAttackFallThru]
+    matched:
+        jmp     [pMagicAttackMatch]
+    }
+}
+
+
 void changeMagicAttacks() {
-    Patch4(0x00955D19 + 1, 2101008);
-    Patch4(0x00955D24 + 1, 2101007);
-    Patch4(0x00955D2F + 1, 2111010);
-    Patch4(0x00955D3A + 1, 2111003); // Poison Mist?
-    Patch4(0x00955D45 + 1, 2201010);
-    Patch4(0x00955D50 + 1, 2211014);
-    Patch4(0x00955D5B + 1, 2201013);
-    Patch4(0x00955D66 + 1, 2511006);
-    Patch4(0x00955D7C + 1, 2411012);
-    Patch4(0x00955D87 + 1, 2111013);
-    Patch4(0x00955D92 + 1, 2411011);
+    // Replaces the 5-byte `cmp eax, imm32` at the head of the chain with a jmp. The remaining
+    // 281 bytes are simply never reached, so they are left as-is rather than NOPed.
+    CodeCave(reinterpret_cast<void*>(MagicAttackChainCave), kMagicAttackChainHead, 0);
+    LogInfo("changeMagicAttacks: chain at 0x%08X redirected, %d skill(s) in the list",
+            kMagicAttackChainHead, static_cast<int>(g_magicAttackSkills.size()));
 }
 
 bool isCopyCatSkill(int skillId) {
@@ -3028,6 +3105,14 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         activeTimer = chrono::steady_clock::now();
         timerRunning = true;
     }
+    // Mist Explosion detonates BEFORE the original runs: the original consumes MP and starts the
+    // cooldown, and doing the work first means a cast that the client then rejects has still done
+    // nothing lasting -- the mists are only removed on a cast that actually got this far.
+    // Mist Explosion brackets the ORIGINAL cast: snapshot the mists first so the target
+    // substitution has something to aim at, let the client run its whole magic-attack path
+    // (damage, packet, animation, MP, cooldown), then consume the clouds. Refused outright with no
+    // mists down, so it costs nothing when there is nothing to detonate.
+
     setMAD();
     if (isCopyCatSkill(nSkillID)) {
         if (nSkillID == 4101008) {
@@ -3226,7 +3311,39 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
         Patch1(0x0096792A + 3, 0x09);
         Patch1(0x0096792A + 4, 0x00);
     }
+    // Bracket a Mist Explosion cast that has clouds to consume. BeginCast blanks the client's own
+    // target search for the duration, so a mob standing both in a cloud and in the skill's own
+    // lt/rb around the player is hit once -- by that cloud -- instead of twice. EndCast lifts it
+    // unconditionally, including on a cast the consume checks reject, because a flag left set
+    // would blank the targeting of every attack after it.
+    const bool bMistCast = (nSkillID == mistExplosionSkillId);
+    if (bMistCast) {
+        MistExplosion_BeginCast();
+    }
     const int nResult = pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
+    if (bMistCast) {
+        MistExplosion_EndCast();
+    }
+
+    // Mist Explosion detonates AFTER the cast, and only on a successful one.
+    //
+    // Running it first meant the mists were torn down (CAffectedAreaPool::OnAffectedAreaRemoved
+    // fades their layers) before the client had drawn the skill's own effect -- which is why the
+    // effect went missing exactly when a mist WAS present, and showed normally when there was
+    // nothing to remove. Doing it here also means the try/catch cannot swallow the cast: an
+    // exception out of the detonation used to propagate through this hook and abort the whole
+    // skill, so no animation, no MP, nothing.
+    //
+    // nResult is the same "cast actually fired" signal the movement impulse below relies on, so a
+    // cast the consume checks rejected no longer eats the player's mists.
+    if (nSkillID == mistExplosionSkillId && nResult) {
+        try {
+            MistExplosion_Detonate();
+        } catch (...) {
+            LogInfo("[mistexplosion] detonation threw -- cast left intact");
+        }
+    }
+
     // Deferred movement impulse: only a successful cast (consume checks passed, skill
     // actually fired — see CMacroSysMan::Update, which treats this return the same way)
     // gets its velocity applied.
@@ -4037,6 +4154,35 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
     return result;
 }
 
+// Magic damage for ONE mob, using this server's own magic formula rather than a reimplementation.
+//
+// setMAD() produces topMAD exactly as the player's magic path does:
+//     effectiveMagic = (magic + bonusMagic) - INT   (falling back to magic+bonusMagic if <= 0)
+//     topMAD         = INT * int_multiplier * effectiveMagic / 100
+// and the player's damage cave (`please`, 0x00791C41) then computes
+//     damage = topMAD * rand(minMastery, 1.0) * skillDamage% / 100
+//
+// finishSummonDamage applies precisely that tail -- the mastery range roll and the skill percent --
+// and then the level and defence mitigation every other skill in this file uses, so routing through
+// it keeps a new skill consistent with the rest of the server instead of quietly on its own curve.
+// statTerm = topMAD with attack = 100 makes `statTerm * attack / 100` collapse back to topMAD.
+static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int attack, int skillDmgPct,
+        bool magicDefense);
+
+int MagicSkillDamageOnMob(void* pMobRaw, int nSkillDmgPct) {
+    Mob* pMob = static_cast<Mob*>(pMobRaw);
+    if (!pMob || IsBadReadPtr(pMob, sizeof(Mob)) || nSkillDmgPct <= 0) {
+        return 0;
+    }
+    setMAD();                      // refresh topMAD/masteryValue from current gear and buffs
+    if (topMAD <= 0) {
+        return 0;
+    }
+    BasicStat& bs = CWvsContext::GetInstance()->get_m_basicStat();
+    return finishSummonDamage(&pMob->m_stat, &bs, static_cast<double>(topMAD), 100,
+                              nSkillDmgPct, /*magicDefense=*/true);
+}
+
 void SummonPull_OnHit(MobStat* pStat); // summon pull, defined with the rest of that block below
 
 auto summonPDamage = (int(__thiscall*)(void*, int, MobStat*, int, BasicStat*, SecondaryStat*, int, int, int))0x0079216D;
@@ -4120,6 +4266,24 @@ auto summonGetLevelData = (int(__thiscall*)(void* skill, int level))0x00760F23;
 auto summonSecureFuseLong = (int(__cdecl*)(const int* at, unsigned int key))0x00416563;
 auto summonReleaseZRef = (void(__thiscall*)(void* zref, void* p))0x00428C44;
 
+// Player's learned level in this skill (clamped to master level -> always a valid level-data
+// index). GetCharacterData returns a ZRef<CharacterData>; CharacterData* is at zref[1], and the
+// ref has to be released whether or not the lookup succeeded.
+int GetLearnedSkillLevel(int skillId) {
+    SkillInfo* si = SkillInfo::GetInstance();
+    if (!si) {
+        return 0;
+    }
+    void* zref[2] = { nullptr, nullptr };
+    GetCharacterData(CWvsContext::GetInstance(), zref);
+    void* charData = zref[1];
+    int level = charData ? pGetSkillLevel(reinterpret_cast<int>(si), charData, skillId, 0) : 0;
+    if (zref[1]) {
+        summonReleaseZRef(zref, nullptr);
+    }
+    return level > 0 ? level : 0;
+}
+
 int GetSkillLevelDataLong(int skillId, int valueOff) {
     SkillInfo* si = SkillInfo::GetInstance();
     if (!si) {
@@ -4130,15 +4294,7 @@ int GetSkillLevelDataLong(int skillId, int valueOff) {
         return 0;
     }
 
-    // Player's learned level in this skill (clamped to master level -> always a valid level-data
-    // index). GetCharacterData returns a ZRef<CharacterData>; CharacterData* is at zref[1].
-    void* zref[2] = { nullptr, nullptr };
-    GetCharacterData(CWvsContext::GetInstance(), zref);
-    void* charData = zref[1];
-    int level = charData ? pGetSkillLevel(reinterpret_cast<int>(si), charData, skillId, 0) : 0;
-    if (zref[1]) {
-        summonReleaseZRef(zref, nullptr);
-    }
+    const int level = GetLearnedSkillLevel(skillId);
     if (level <= 0) {
         return 0;
     }

@@ -20,6 +20,147 @@ static SetUnhandledExceptionFilter_t SetUnhandledExceptionFilter_orig = reinterp
 // disappears), so a fault leaves nothing behind but a truncated log. This vectored handler runs
 // on the *second* chance only -- i.e. after every SEH frame declined to handle it, which is the
 // crash proper -- and writes the faulting address, the module it lands in, and the registers.
+static bool IsFatalExceptionCode(DWORD code) {
+    return code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION
+            || code == EXCEPTION_PRIV_INSTRUCTION || code == EXCEPTION_STACK_OVERFLOW
+            || code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_IN_PAGE_ERROR;
+}
+
+// Shared by both handlers. pszTag distinguishes which one produced the block.
+static void DumpFault(EXCEPTION_POINTERS* pEx, const char* pszTag) {
+    const DWORD code = pEx->ExceptionRecord->ExceptionCode;
+    void* addr = pEx->ExceptionRecord->ExceptionAddress;
+    char sModule[MAX_PATH] = "<unknown>";
+    uintptr_t offset = 0;
+    HMODULE hMod = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCSTR>(addr), &hMod) && hMod) {
+        char sPath[MAX_PATH]{};
+        if (GetModuleFileNameA(hMod, sPath, MAX_PATH)) {
+            const char* leaf = strrchr(sPath, '\\');
+            StringCchCopyA(sModule, MAX_PATH, leaf ? leaf + 1 : sPath);
+        }
+        offset = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(hMod);
+    }
+
+    LogInfo("%s code=0x%08lX at 0x%08X (%s+0x%X)",
+            pszTag, code, reinterpret_cast<uintptr_t>(addr), sModule, offset);
+    if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR) {
+        LogInfo("%s %s access to 0x%08X", pszTag,
+                pEx->ExceptionRecord->ExceptionInformation[0] == 1 ? "write" :
+                pEx->ExceptionRecord->ExceptionInformation[0] == 8 ? "execute" : "read",
+                pEx->ExceptionRecord->ExceptionInformation[1]);
+    }
+    const CONTEXT* c = pEx->ContextRecord;
+    LogInfo("%s EIP=%08X ESP=%08X EBP=%08X EAX=%08X EBX=%08X ECX=%08X EDX=%08X ESI=%08X EDI=%08X",
+            pszTag, c->Eip, c->Esp, c->Ebp, c->Eax, c->Ebx, c->Ecx, c->Edx, c->Esi, c->Edi);
+    const uintptr_t* stack = reinterpret_cast<const uintptr_t*>(c->Esp);
+    if (stack && !IsBadReadPtr(stack, 64 * sizeof(uintptr_t))) {
+        char sLine[512];
+        StringCchPrintfA(sLine, sizeof(sLine), "%s stack:", pszTag);
+        int found = 0;
+        for (int i = 0; i < 64 && found < 12; ++i) {
+            const uintptr_t v = stack[i];
+            if (v >= 0x00400000 && v < 0x00C00000) {
+                char sVal[16];
+                StringCchPrintfA(sVal, sizeof(sVal), " %08X", v);
+                StringCchCatA(sLine, sizeof(sLine), sVal);
+                ++found;
+            }
+        }
+        LogInfo("%s", sLine);
+    }
+    LogFlush();
+}
+
+// FIRST-CHANCE handler. This is the one README-linux.md documents as "*** FAULT(1st) ***" -- and
+// which did not exist: only a CONTINUE handler was registered, and continue handlers do not
+// reliably run for a fatal fault, so a crashing client left a log that simply stopped. Under Wine
+// that reads as "a Wine error box and no explanation".
+//
+// Runs before any SEH frame gets a look, so it sees everything -- which is exactly why it filters
+// hard and NEVER handles: the client throws C++ exceptions and uses SEH constantly during normal
+// play. Always returns EXCEPTION_CONTINUE_SEARCH; this only ever observes.
+// Bytes of stack still available to this thread. Two TEB reads, no API call, no stack of its own
+// worth speaking of -- which matters, because the whole point is to be callable when there is
+// almost none left.
+static ptrdiff_t StackHeadroom() {
+    NT_TIB* pTib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    if (!pTib) {
+        return 0x7FFFFFFF;   // unknown: do not let a failed probe suppress logging
+    }
+    char cHere;
+    return &cHere - static_cast<const char*>(pTib->StackLimit);
+}
+
+// Logging needs roughly 3KB (LogInfo's 1KB buffer, then vsprintf's 1140-byte frame, then the
+// stdio machinery). Refuse well above that.
+static constexpr ptrdiff_t kMinLogHeadroom = 16 * 1024;
+
+static LONG CALLBACK FirstChanceLogHandler(EXCEPTION_POINTERS* pEx) {
+    if (!pEx || !pEx->ExceptionRecord || !pEx->ContextRecord) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    const DWORD code = pEx->ExceptionRecord->ExceptionCode;
+
+    // A handler that logs is a handler that can fault, and this one runs on EVERY exception in the
+    // process. Both guards below exist because it turned a survivable stack overflow into a silent
+    // kill: Windows raises STACK_OVERFLOW on the guard page, this handler then tried to format a
+    // message on the stack that just ran out, ran off the end of the guard into unmapped memory,
+    // and the process died with 0xC0000005 and no log at all. Diagnosed 2026-08-21 -- every crash
+    // resolved to `push ebx` at +0x1F of common_vsprintf, right after its `sub esp, 474h`.
+    //
+    // Re-entrancy first: without it the fault inside the logging re-enters this handler, which
+    // logs, which faults, until nothing is left.
+    static thread_local bool s_bInHandler = false;
+    if (s_bInHandler) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // Then headroom. A stack overflow reported honestly is worth far more than a message that
+    // cannot be written, and staying out of the way lets the client's own handler have a chance.
+    if (code == EXCEPTION_STACK_OVERFLOW || StackHeadroom() < kMinLogHeadroom) {
+        static long s_nOverflowLogged = 0;
+        if (code == EXCEPTION_STACK_OVERFLOW && InterlockedIncrement(&s_nOverflowLogged) == 1) {
+            // One line, on the FIRST overflow only. LogInfo is deliberately not used -- this is
+            // the one situation where it cannot be trusted.
+            OutputDebugStringA("*** FAULT(1st) *** STACK OVERFLOW -- logging suppressed");
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    struct HandlerGuard {
+        bool& b;
+        explicit HandlerGuard(bool& r) : b(r) { b = true; }
+        ~HandlerGuard() { b = false; }
+    } guard(s_bInHandler);
+
+    // 0xE06D7363 is a C++ throw. The client uses these for control flow (CTerminateException is
+    // how it shuts itself down cleanly), so they must not flood -- but the FIRST few are the
+    // single most useful line in a "client vanished with a dialog" report, because a graceful
+    // terminate never reaches any crash handler at all.
+    if (code == 0xE06D7363) {
+        static long s_nCppLogged = 0;
+        if (InterlockedIncrement(&s_nCppLogged) <= 20) {
+            LogInfo("*** FAULT(1st) *** C++ exception (0xE06D7363) at 0x%08X",
+                    reinterpret_cast<uintptr_t>(pEx->ExceptionRecord->ExceptionAddress));
+            LogFlush();
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    if (!IsFatalExceptionCode(code)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    // Capped: a fault inside a loop would otherwise fill the disk before the process dies.
+    static long s_nFatalLogged = 0;
+    if (InterlockedIncrement(&s_nFatalLogged) <= 8) {
+        DumpFault(pEx, "*** FAULT(1st) ***");
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static LONG CALLBACK CrashLogHandler(EXCEPTION_POINTERS* pEx) {
     if (!pEx || !pEx->ExceptionRecord || !pEx->ContextRecord) {
         return EXCEPTION_CONTINUE_SEARCH;
@@ -86,8 +227,10 @@ LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter_hook(LPTOP_LEVEL
     if (reinterpret_cast<uintptr_t>(_ReturnAddress()) == 0x00796FDD) {
         // Second-chance vectored handler (last arg 0 = called after SEH), so we log the crash
         // no matter what the client's own filter does with it.
+        // First argument 1 = call this BEFORE any previously registered vectored handler.
+        AddVectoredExceptionHandler(1, &FirstChanceLogHandler);
         AddVectoredContinueHandler(0, &CrashLogHandler);
-        LogInfo("AttachClientHooks: crash logger installed");
+        LogInfo("AttachClientHooks: crash logger installed (first-chance + continue)");
         AttachClientHooks();
     }
     return SetUnhandledExceptionFilter_orig(lpTopLevelExceptionFilter);
@@ -405,19 +548,38 @@ int WSPAPI WSPStartup_hook(WORD wVersionRequested, LPWSPDATA lpWSPData, LPWSAPRO
 typedef decltype(&connect) connect_t;
 static connect_t connect_orig = reinterpret_cast<connect_t>(GetAddress("WS2_32", "connect"));
 
+// Every connect is logged. On Wine this is the ONLY window into the redirect: the WSP layer is
+// skipped there, so this hook IS the server redirect, and a Linux "cannot connect" report is
+// otherwise indistinguishable from "the client never tried". Connects are a handful per session,
+// so logging all of them costs nothing.
 int WINAPI connect_hook(SOCKET s, const struct sockaddr* name, int namelen) {
     if (name && name->sa_family == AF_INET) {
         char sName[INET_ADDRSTRLEN];
         InetNtopA(AF_INET, &((sockaddr_in*)name)->sin_addr, sName, INET_ADDRSTRLEN);
+        const unsigned short uPort = ntohs(((sockaddr_in*)name)->sin_port);
         if (strstr(sName, CONFIG_NEXON_SEARCH)) {
             sockaddr_in redir = *(sockaddr_in*)name;
             g_uNexonAddress = redir.sin_addr.S_un.S_addr;
-            InetPtonA(AF_INET, g_sServerHost ? g_sServerHost : CONSTANTS_DEFAULT_HOST, &redir.sin_addr.S_un.S_addr);
+            const char* sTarget = g_sServerHost ? g_sServerHost : CONSTANTS_DEFAULT_HOST;
+            InetPtonA(AF_INET, sTarget, &redir.sin_addr.S_un.S_addr);
             if (g_nServerPort) {
                 redir.sin_port = htons(static_cast<u_short>(g_nServerPort));
             }
-            return connect_orig(s, (sockaddr*)&redir, sizeof(redir));
+            const int rc = connect_orig(s, (sockaddr*)&redir, sizeof(redir));
+            // WSAEWOULDBLOCK is the NORMAL answer here -- the client uses a non-blocking socket
+            // and completes via WSAAsyncSelect, so rc=-1/err=10035 means the connect STARTED, not
+            // that it failed. A real failure is 10061 (refused), 10060 (timed out) or 10013.
+            const int err = (rc == 0) ? 0 : WSAGetLastError();
+            LogInfo("connect: %s:%u -> %s:%u (redirected) rc=%d err=%d",
+                    sName, uPort, sTarget, ntohs(redir.sin_port), rc, err);
+            return rc;
         }
+        // Not a Nexon address: passed through untouched. Logged because a client that connects
+        // STRAIGHT to some other host means the redirect never saw the address it expected.
+        const int rc = connect_orig(s, name, namelen);
+        LogInfo("connect: %s:%u (passthrough, no '%s' match) rc=%d err=%d",
+                sName, uPort, CONFIG_NEXON_SEARCH, rc, (rc == 0) ? 0 : WSAGetLastError());
+        return rc;
     }
     return connect_orig(s, name, namelen);
 }
@@ -435,9 +597,34 @@ int WINAPI getpeername_hook(SOCKET s, struct sockaddr* name, int* namelen) {
 }
 
 
+// ---- process exit ------------------------------------------------------------------------
+// A client that dies WITHOUT a fatal exception leaves no trace at all: DumpFault flushes, so a
+// real fault always reaches disk, but a graceful terminate never reaches a crash handler in the
+// first place. Observed 2026-08-21 -- the log simply stopped mid-line, no FAULT, no crash log,
+// and the last second of buffered output died with the process.
+//
+// The client shuts itself down this way on purpose (CTerminateException), and a server-forced
+// disconnect looks identical. Logging the exit and flushing turns "it vanished" into a timestamp
+// and an exit code, which is the difference between a diagnosable report and a guess.
+typedef void(WINAPI* ExitProcess_t)(UINT);
+static ExitProcess_t ExitProcess_orig =
+        reinterpret_cast<ExitProcess_t>(GetAddress("KERNEL32", "ExitProcess"));
+
+void WINAPI ExitProcess_hook(UINT uExitCode) {
+    LogInfo("*** EXITPROCESS *** code=%u (0x%08X) -- graceful exit, NOT a fault", uExitCode, uExitCode);
+    LogFlush();
+    ExitProcess_orig(uExitCode);
+}
+
+// TerminateProcess is deliberately NOT hooked. The case worth catching is a user killing the
+// client from Task Manager, and that calls TerminateProcess in the KILLER's process, not ours --
+// so the hook would never fire for the one thing it was wanted for, while still instrumenting a
+// core teardown API. No benefit, real risk.
+
 void AttachSystemHooks() {
     LogInfo("AttachSystemHooks: attaching registry + window + WSP hooks");
     ATTACH_HOOK(SetUnhandledExceptionFilter_orig, SetUnhandledExceptionFilter_hook);
+    ATTACH_HOOK(ExitProcess_orig, ExitProcess_hook);
     ATTACH_HOOK(CreateMutexA_orig, CreateMutexA_hook);
     ATTACH_HOOK(CreateWindowExA_orig, CreateWindowExA_hook);
     ATTACH_HOOK(RegCreateKeyExA_orig, RegCreateKeyExA_hook);
@@ -452,10 +639,25 @@ void AttachSystemHooks() {
     // proc table it hands back kills the client the moment it opens the channel-server socket
     // -- i.e. on double-clicking a character. The ws2_32 connect hook below performs the same
     // host redirect, so nothing is lost by leaving the provider alone.
-    const bool bWine = IsRunningUnderWine();
-    if (bWine) {
+    const DebugFlags& dbg = GetDebugFlags();
+
+    // Wine skips the WSP layer by default (see the comment above). DisableWSP/ForceWSP override
+    // that decision in both directions, which is what makes the switch useful: ForceWSP tests
+    // whether the Wine skip is hiding the real problem, DisableWSP tests whether the WSP hooks
+    // are causing one on a prefix where they DO load.
+    bool bSkipWSP = IsRunningUnderWine();
+    if (bSkipWSP) {
         LogInfo("AttachSystemHooks: Wine detected - skipping MSWSOCK WSP hooks (connect hook covers redirect)");
     }
+    if (dbg.bForceWSP && bSkipWSP) {
+        bSkipWSP = false;
+        LogInfo("AttachSystemHooks: ForceWSP=1 - installing MSWSOCK WSP hooks despite Wine");
+    }
+    if (dbg.bDisableWSP && !bSkipWSP) {
+        bSkipWSP = true;
+        LogInfo("AttachSystemHooks: DisableWSP=1 - skipping MSWSOCK WSP hooks");
+    }
+    const bool bWine = bSkipWSP;
 
     // GetAddress returns null when an export is missing (Wine's mswsock does not necessarily
     // provide WSPStartup). ATTACH_HOOK on a null target rebases the null and hands Detours a
@@ -465,14 +667,30 @@ void AttachSystemHooks() {
     } else if (!bWine) {
         LogInfo("AttachSystemHooks: MSWSOCK!WSPStartup not found - relying on ws2_32 connect hook");
     }
+    // Report the redirect configuration up front. Under Wine the connect hook IS the redirect
+    // (the WSP path is skipped above), so if it fails to attach the client silently talks to the
+    // dead Nexon addresses -- which looks exactly like "Linux cannot connect".
+    LogInfo("AttachSystemHooks: redirect target %s:%ld, matching '%s'",
+            g_sServerHost ? g_sServerHost : CONSTANTS_DEFAULT_HOST,
+            g_nServerPort, CONFIG_NEXON_SEARCH);
     if (connect_orig) {
-        ATTACH_HOOK(connect_orig, connect_hook);
+        const bool bOk = ATTACH_HOOK(connect_orig, connect_hook);
+        LogInfo("AttachSystemHooks: WS2_32!connect hook %s", bOk ? "attached" : "FAILED TO ATTACH");
     } else {
         LogInfo("AttachSystemHooks: WS2_32!connect not found - server redirect will NOT work");
     }
-    if (getpeername_orig) {
-        ATTACH_HOOK(getpeername_orig, getpeername_hook);
-    } else {
+    // The getpeername spoof reports the ORIGINAL Nexon address back to the client, which some
+    // client-side checks compare against. DisablePeerName takes it out of the picture; ForcePeerName
+    // is here for symmetry with the WSP pair, since both are part of the same redirect story.
+    bool bPeerName = getpeername_orig != nullptr;
+    if (dbg.bDisablePeerName && !dbg.bForcePeerName) {
+        bPeerName = false;
+        LogInfo("AttachSystemHooks: DisablePeerName=1 - skipping the getpeername spoof");
+    }
+    if (bPeerName) {
+        const bool bOk = ATTACH_HOOK(getpeername_orig, getpeername_hook);
+        LogInfo("AttachSystemHooks: WS2_32!getpeername hook %s", bOk ? "attached" : "FAILED TO ATTACH");
+    } else if (!getpeername_orig) {
         LogInfo("AttachSystemHooks: WS2_32!getpeername not found - skipping");
     }
 }

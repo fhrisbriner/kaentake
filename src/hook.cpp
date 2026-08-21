@@ -115,34 +115,45 @@ void* VMTHook(void* pInstance, void* pDetour, size_t uIndex) {
     return pTarget;
 }
 
+// NOTE: almost every caller is a namespace-scope static, so this runs during DLL load -- inside
+// the loader lock, before DllMain returns. It therefore must NOT show a modal dialog:
+// MessageBoxA there pumps messages under the loader lock (deadlock risk), and under Wine the box
+// can land behind the client or off-screen, which looks exactly like "the game will not start".
+//
+// A missing export is also an EXPECTED outcome on Wine, not an error: MSWSOCK!WSPStartup in
+// particular is documented right above WSPStartup_orig as something Wine may not provide. Every
+// call site already null-checks and degrades. So log it and return null.
 void* GetAddress(const char* sModuleName, const char* sProcName) {
     HMODULE hModule = GetModuleHandleA(sModuleName);
     if (!hModule) {
         hModule = LoadLibraryA(sModuleName);
         if (!hModule) {
-            ErrorMessage("Could not load library %s with error %d", sModuleName, GetLastError());
+            LogInfo("GetAddress: could not load library %s (error %lu)", sModuleName, GetLastError());
             return nullptr;
         }
     }
     FARPROC result = GetProcAddress(hModule, sProcName);
     if (!result) {
-        ErrorMessage("Could not resolve address for %s in module %s", sProcName, sModuleName);
+        LogInfo("GetAddress: %s!%s not found", sModuleName, sProcName);
     }
     return reinterpret_cast<void*>(result);
 }
 
+// Same reasoning as GetAddress: no modal dialogs on a path that can run during DLL load, and a
+// pattern that does not match is an ordinary outcome under Wine (see the GR2D note in
+// resolution.cpp, where the scan comes back empty).
 void* GetAddressByPattern(const char* sModuleName, const char* sPattern) {
     HMODULE hModule = GetModuleHandleA(sModuleName);
     if (!hModule) {
         hModule = LoadLibraryA(sModuleName);
         if (!hModule) {
-            ErrorMessage("Could not load library %s with error %d", sModuleName, GetLastError());
+            LogInfo("GetAddressByPattern: could not load library %s (error %lu)", sModuleName, GetLastError());
             return nullptr;
         }
     }
     MODULEINFO mi;
     if (!GetModuleInformation(GetCurrentProcess(), hModule, &mi, sizeof(mi))) {
-        ErrorMessage("Could not get module information for : %s", sModuleName);
+        LogInfo("GetAddressByPattern: no module information for %s", sModuleName);
         return nullptr;
     }
     unsigned char* pModuleBase = static_cast<unsigned char*>(mi.lpBaseOfDll);
@@ -152,13 +163,13 @@ void* GetAddressByPattern(const char* sModuleName, const char* sPattern) {
     unsigned char abMask[1024];
     size_t uPatternSize = ParsePattern(sPattern, abPattern, abMask);
     if (uPatternSize == 0) {
-        ErrorMessage("Could not parse pattern : %s", sPattern);
+        LogInfo("GetAddressByPattern: could not parse pattern \"%s\"", sPattern);
         return nullptr;
     }
 
     void* pAddress = FindPattern(pModuleBase, uModuleSize, abPattern, abMask, uPatternSize);
     if (!pAddress) {
-        ErrorMessage("Could not resolve address for pattern \"%s\" in module %s", sPattern, sModuleName);
+        LogInfo("GetAddressByPattern: pattern \"%s\" not found in %s", sPattern, sModuleName);
     }
     return pAddress;
 }
@@ -176,7 +187,7 @@ void PatchAllByPattern(void* pStart, void* pEnd, const char* sPattern, void* pVa
     unsigned char abMask[1024];
     size_t uPatternSize = ParsePattern(sPattern, abPattern, abMask);
     if (uPatternSize == 0) {
-        ErrorMessage("Could not parse pattern : %s", sPattern);
+        LogInfo("PatchAllByPattern: could not parse pattern \"%s\"", sPattern);
         return;
     }
 

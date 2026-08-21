@@ -63,7 +63,20 @@ public:
     MEMBER_AT(ZSocketBase, 0x8, m_sock)
     MEMBER_AT(CONNECTCONTEXT, 0xC, m_ctxConnect)
     MEMBER_HOOK(void, 0x00494CA3, Connect, const CONNECTCONTEXT& ctx)
+    // Connect COMPLETION. connect() on this client is non-blocking, so the connect_hook in
+    // system.cpp only ever reports WSAEWOULDBLOCK -- "started", never "worked". This is where the
+    // answer actually lands, via WSAAsyncSelect/FD_CONNECT, and it is the difference between
+    // "the client reached the channel server" and "the channel server never answered".
+    MEMBER_HOOK(void, 0x00494ED1, OnConnect, int bSuccess)
 };
+
+void CClientSocket::OnConnect_hook(int bSuccess) {
+    // Reported for BOTH outcomes. A silent success is just as load-bearing here as a failure:
+    // it tells us the socket is up and the problem is further along (handshake, packet, login
+    // state) rather than in the connection itself.
+    LogInfo("CClientSocket::OnConnect: bSuccess=%d (lastError=%d)", bSuccess, WSAGetLastError());
+    OnConnect(this, bSuccess);
+}
 
 void CClientSocket::Connect_hook(const CONNECTCONTEXT& ctx) {
     DEBUG_MESSAGE("CClientSocket::Connect");
@@ -187,8 +200,15 @@ void CWvsApp::SetUp_hook() {
     }
     // CInputSystem::Init(CInputSystem::GetInstance(), m_hWnd, m_ahInput);
     reinterpret_cast<void(__thiscall*)(CInputSystem*, HWND, void**)>(0x00599EBF)(pInputSystem, m_hWnd, m_ahInput);
-    // CWvsApp::InitializeSound(this);
-    reinterpret_cast<void(__thiscall*)(CWvsApp*)>(0x009F82BC)(this);
+    // DisableSound skips audio init entirely -- a harder version of DisableSoundGuard, for when
+    // the suspicion is the audio stack rather than our workaround. The client tolerates this: it
+    // is the same outcome as a prefix with no audio device.
+    if (GetDebugFlags().bDisableSound) {
+        LogInfo("CWvsApp::SetUp: DisableSound=1 - skipping InitializeSound");
+    } else {
+        // CWvsApp::InitializeSound(this);
+        reinterpret_cast<void(__thiscall*)(CWvsApp*)>(0x009F82BC)(this);
+    }
     // CWvsApp::InitializeGameData(this);
     reinterpret_cast<void(__thiscall*)(CWvsApp*)>(0x009F8B61)(this);
     // CWvsApp::CreateWndManager(this);
@@ -231,7 +251,24 @@ void CWvsApp::SetUp_hook() {
     reinterpret_cast<void(__cdecl*)(CStage*, void*)>(0x00777347)(pStage, nullptr);
 }
 
+// Verbose=1 traces the login -> in-game path. Stage transitions are the useful signal: they say
+// how far a stuck client actually got, which is exactly the question a "cannot connect" report
+// leaves open.
+static void VerboseTraceStage() {
+    if (!GetDebugFlags().bVerbose) {
+        return;
+    }
+    static void* s_pLastStage = nullptr;
+    void* pStage = nullptr;
+    try { pStage = get_stage(); } catch (...) { pStage = nullptr; }
+    if (pStage != s_pLastStage) {
+        s_pLastStage = pStage;
+        LogInfo("[verbose] stage -> %p", pStage);
+    }
+}
+
 void CWvsApp::CallUpdate_hook(int tCurTime) {
+    VerboseTraceStage();
     if (m_bFirstUpdate) {
         m_tUpdateTime = tCurTime;
         m_bFirstUpdate = 0;
@@ -259,6 +296,10 @@ void CWvsApp::CallUpdate_hook(int tCurTime) {
     ResMan_FlushTick();
     MemStat_Tick();
     DeathCount_OnClientTick();
+    // Mist Explosion's damage lines are staged rather than drawn all at once; this releases the
+    // ones that have come due. Returns immediately when nothing is queued, which is every frame
+    // outside a cast.
+    MistExplosion_OnClientTick();
     // Monster Book follow-ups. Both are no-ops with the book closed; they send their queued query
     // and rebuild their view here so nothing engine-side ever runs on the packet or draw paths.
 #if USE_MONSTER_BOOK_DROPS
@@ -501,13 +542,21 @@ int CWndMan::TranslateMessage_hook(UINT& msg, WPARAM& wParam, LPARAM& lParam, LR
 
 void AttachClientBypass() {
     ATTACH_HOOK(CClientSocket::Connect, CClientSocket::Connect_hook);
+    ATTACH_HOOK(CClientSocket::OnConnect, CClientSocket::OnConnect_hook);
     ATTACH_HOOK(CWvsApp::Constructor, CWvsApp::Constructor_hook);
     ATTACH_HOOK(CWvsApp::SetUp, CWvsApp::SetUp_hook);
     ATTACH_HOOK(CWvsApp::Run, CWvsApp::Run_hook);
     ATTACH_HOOK(CLogin::SendCheckPasswordPacket, CLogin::SendCheckPasswordPacket_hook);
     ATTACH_HOOK(CWndMan::TranslateMessage, CWndMan::TranslateMessage_hook);
-    ATTACH_HOOK(CSoundMan_Init, CSoundMan_Init_hook); // Wine DirectSound primary-buffer crash guard (belt)
-    InstallDSoundCoopLevelGuard();                    // Wine: force DSSCL_NORMAL (root-cause stage-1 fix)
+    // Both halves of the Wine audio workaround share one switch: DisableSoundGuard leaves the
+    // client's own DirectSound path completely untouched, which is the point when you are trying
+    // to find out whether the workaround is itself the problem.
+    if (!GetDebugFlags().bDisableSoundGuard) {
+        ATTACH_HOOK(CSoundMan_Init, CSoundMan_Init_hook); // Wine primary-buffer crash guard (belt)
+        InstallDSoundCoopLevelGuard();                    // Wine: force DSSCL_NORMAL (root cause)
+    } else {
+        LogInfo("AttachClientBypass: DisableSoundGuard=1 - Wine DirectSound workaround NOT installed");
+    }
     PatchNop(0x00460AED, 2);
     PatchNop(0x004F350C, 6); // Apply 6 NOPs at address 0x004F351E
     PatchNop(0x004F351E, 6); //Apply 6 NOPs at address 0x004F350C

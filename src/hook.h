@@ -1,5 +1,6 @@
 #pragma once
 #include "debug.h"
+#include "debugflags.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -103,6 +104,35 @@ void ResMan_FlushTick();         // resman.cpp  — periodic IWzResMan::FlushCac
 void MemStat_Tick();             // memstat.cpp — periodic memory sample
 class CInPacket;
 
+// mistexplosion.cpp — Mist Explosion (2121040). Detonates the local player's Poison Mist clouds:
+// damage to every mob inside each cloud's own LTRB, then the cloud is consumed. Returns how many
+// mists went off; 0 is an ordinary outcome (none down, or none of them ours).
+int MistExplosion_BeginCast();   // before the cast: >0 if clouds exist, and suppresses the
+                                 // cast's own targeting so only the clouds deal damage
+void MistExplosion_EndCast();    // after the cast, whatever its outcome: lifts the suppression
+int MistExplosion_Detonate();
+void MistExplosion_OnClientTick();   // releases staggered damage lines as they come due
+void AttachMistExplosionMod();
+extern int mistExplosionSkillId;
+
+// skills.cpp — one secured long out of SKILLLEVELDATA at the player's LEARNED level.
+// Offsets (verified in CSummoned::Init @0x007A342C..0x007A346A and the summon work):
+//   +0x1C  damage        +0x34  mad
+//   +0x100 attackCount   +0x130 mobCount
+int GetSkillLevelDataLong(int skillId, int valueOff);
+
+// skills.cpp — the player's LEARNED level in a skill, clamped by the client to a valid
+// level-data index. 0 means the skill is not learned.
+int GetLearnedSkillLevel(int skillId);
+
+// skills.cpp — overwrite the instruction at dwOriginAddress with `jmp ptrCodeCave` (E9 rel32),
+// NOPing nNOPCount bytes first when the replaced instruction is longer than the five the jump
+// needs. Silently skips the patch if the target is out of rel32 range.
+
+// skills.cpp — magic damage for one mob using the server's own formula (setMAD/topMAD + the
+// mastery range roll + level/MDDamage mitigation). nSkillDmgPct is the skill's WZ `damage`/`mad`.
+int MagicSkillDamageOnMob(void* pMob, int nSkillDmgPct);
+
 // CUIMonsterBook::SetTabEnable (monsterBook.cpp); USE_MONSTER_BOOK_OPEN.
 // PAIRED with a server-side data fix: String.wz/MonsterBook.img must carry an entry for every
 // card mob, else CMonsterBookMan has no record and Basic Info prints "HP : (null)".
@@ -165,26 +195,55 @@ inline void AttachClientHooks() {
     freopen_s(&fDummy, "CONIN$", "r", stdin);
     setvbuf(stdout, nullptr, _IONBF, 0);
     LogInfo("AttachClientHooks: begin, image delta=0x%08X", GetImageDelta());
+
+    const DebugFlags& dbg = GetDebugFlags();
+    if (dbg.bDisableAllClientHooks) {
+        // Stock client. This is the baseline README-linux.md asks users to establish: if the
+        // problem survives THIS, it is not MapleNight. Nothing below installs.
+        LogInfo("AttachClientHooks: DisableAllClientHooks=1 - attaching NOTHING (stock client)");
+        return;
+    }
+
     (AttachClientBypass());
     //AttachClientInlink();
+    if (dbg.bMinimalHooks) {
+        // Only what the client needs to run: the bypass above (window, mutex, socket redirect)
+        // plus the resource manager, which the client cannot start without. Everything cosmetic
+        // and every gameplay edit is skipped.
+        (AttachResManMod());
+        LogInfo("AttachClientHooks: MinimalHooks=1 - bypass + resman only");
+        return;
+    }
+
     (AttachStringPoolMod());
     (AttachResManMod());
     (AttachAvatarDataMod());
     (AttachItemEffectMod());
     (AttachCashWeaponMod());
-    (AttachResolutionMod());
+    if (!dbg.bDisableResolution) {
+        (AttachResolutionMod());
+    } else {
+        LogInfo("AttachClientHooks: DisableResolution=1 - skipping resolution + bag window");
+    }
     (AttachMobHpTagMod());
     (AttachToolTipMod());
     (AttachIconIconMod());
     (AttachTempStatMod());
-    (AttachSkillEdits());
+    if (!dbg.bDisableSkills) {
+        (AttachSkillEdits());
+    } else {
+        LogInfo("AttachClientHooks: DisableSkills=1 - skipping skill edits");
+    }
     (AttachOtherHooks());
     (InitExpOverride());
     (PacketHooks());
     (AttachMapObjectFade());
     (BGMOverride());
-    (AttachBagWindowMod());
+    if (!dbg.bDisableResolution) {
+        (AttachBagWindowMod());   // README: DisableResolution also disables the bag window
+    }
     (AttachMemStat());
+    (AttachMistExplosionMod());
     // Monster Book. DROPS installs the Dropping paging patch that SEARCH later reads, so the
     // order of these two matters; the other two are independent.
     (AttachMonsterBookMod());        // open the book up: colour icons, 0-counters, art/HP/MP, tabs
@@ -215,6 +274,8 @@ void* GetAddress(const char* sModuleName, const char* sProcName);
 void* GetAddressByPattern(const char* sModuleName, const char* sPattern);
 
 void PatchMemory(void* pAddress, void* pValue, size_t uSize);
+
+void CodeCave(void* ptrCodeCave, const DWORD dwOriginAddress, const int nNOPCount);
 
 void PatchAllByPattern(void* pStart, void* pEnd, const char* sPattern, void* pValue, size_t uSize);
 

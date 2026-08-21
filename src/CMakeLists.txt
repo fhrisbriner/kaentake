@@ -14,8 +14,10 @@ add_library(injector SHARED
         itemicon.cpp
         tempstat.cpp
         stringpool.cpp
+        debugflags.cpp
         memstat.cpp
         deathcount.cpp
+        mistexplosion.cpp
         getmobinfobyid.cpp
         monsterBook.cpp
         monsterBookFoundIn.cpp
@@ -50,7 +52,9 @@ target_link_libraries(injector PRIVATE
 # holds, because nothing can live above 0x80000000. If MapleStory.exe is ever made LAA, a DLL
 # relocated into the upper 2GB would make every one of those jumps wrap to a wild address --
 # intermittently, per-machine, depending on the base ASLR picked. Pinning removes the variable.
-target_link_options(injector PRIVATE "/DYNAMICBASE:NO")
+# /MAP: a crash reported by Windows Error Reporting gives only a module-relative fault
+# offset, and without a symbol table that number cannot be turned into a function name.
+target_link_options(injector PRIVATE "/DYNAMICBASE:NO" "/MAP")
 
 set_target_properties(injector PROPERTIES
         OUTPUT_NAME ${PROJECT_NAME}
