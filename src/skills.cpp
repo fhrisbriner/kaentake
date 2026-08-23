@@ -1228,6 +1228,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+            mov eax, 2121041
+            cmp esi, eax
+            je magic
+
+            mov eax, 3601018
+            cmp esi, eax
+            je summons
+
             mov eax, 3601021
             cmp esi, eax
             je summons
@@ -1862,6 +1870,7 @@ bool isSkillIDMatched(int nSkillID) {
         2121027,
         2121016,
         2121040,
+        2121041,
 
         // ===== Priest =====
         2211011,
@@ -1958,7 +1967,7 @@ bool isSkillIDMatched(int nSkillID) {
         3601014,
         3601015,
         3601017,
-
+        3601018,
 
 
         3601021,
@@ -2800,7 +2809,7 @@ std::vector<int> g_magicAttackSkills = {
     2411011,             // was 2321008
     2121003, 2221003,    // vanilla from here down
     12111003, 12101006, 12111006,
-    22101000, 22121000, 22141001, 22151001, 22161001, 22181002, 22171002, 22181001, 2121040, 2121006, 2121007, 2221007, 2421007
+    22101000, 22121000, 22141001, 22151001, 22161001, 22181002, 22171002, 22181001, 2121040, 2121006, 2121007, 2221007, 2421007, 2121041
 };
 
 // Result handed back across popad, which would otherwise restore the register the answer is in.
