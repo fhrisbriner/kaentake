@@ -333,7 +333,7 @@ int mistExplosionAreaGate = 1;
 static constexpr int kEffectAreaIdBase = 0x40000000;
 static int g_nEffectAreaSeq = 0;
 
-// OnAffectedAreaCreated only draws for a hardcoded set of skill ids: 130 and 131 (item areas),
+// OnAffecteremAreaCreated only draws for a hardcoded set of skill ids: 130 and 131 (item areas),
 // then 2111003 Poison Mist, 4221006 Smokescreen, 12111005 Flame Gear, 14111006 Smokescreen(NW),
 // 22161003. The test is a CUMULATIVE `sub ecx, imm / jz` chain at 0x00431D27, which is why it
 // cannot be edited one entry at a time -- changing any immediate shifts every entry after it.
@@ -341,7 +341,7 @@ static int g_nEffectAreaSeq = 0;
 // So this does not edit the chain. It prepends to it: a cave at the 5-byte `mov eax, 82h` that
 // opens the chain answers from the list below and, on a miss, performs the instruction it
 // replaced and drops into the original chain untouched. Every stock id keeps working.
-std::vector<int> g_areaEffectSkills = { 2121040 };
+
 
 static int g_bAreaSkillMatch = 0;
 
@@ -392,7 +392,15 @@ static constexpr double kStockTileArcFactor = 0.5;
 
 // Live values, read by the client mid-layout. Seeded to stock so anything that runs before the
 // first area creation still behaves exactly as the unmodified client.
-static int    g_bTileCentre    = 0;   // 0 keeps the stock top-left origin exactly
+// Independent axes: the two origins are set by two different caves at two different points in
+// the layout, and a skill can want one centred and the other not.
+static int    g_bTileCentreX   = 0;   // 0 keeps the stock left origin exactly
+static int    g_bTileCentreY   = 0;   // 0 keeps the stock top origin exactly
+static int    g_bTileNoRandom  = 0;   // 0 keeps every stock randomisation exactly
+// Mirror control. Override 0 leaves the stock coin toss alone; otherwise the cave uses the value
+// verbatim -- 0 for "never mirrored", or the caster's facing for "mirror with me".
+static int    g_bTileFlipOverride = 0;
+static int    g_nTileFlipValue    = 0;
 static int    g_nTileOriginX   = 0;
 static int    g_nTileOriginY   = 0;
 static int    g_nTileStepBase  = kStockTileStepBase;
@@ -400,43 +408,121 @@ static int    g_nTileStepRange = kStockTileStepRange;
 static double g_dTileYFactor   = kStockTileYFactor;
 static double g_dTileArcFactor = kStockTileArcFactor;
 
-// Tunables for OUR skills only. Wider columns and a flatter arc read as one blast rather than a
-// field of repeated sprites, which is what a large explosion frame wants.
-int    mistTileStepBase  = 600;    // px between columns, before jitter
-int    mistTileStepRange = 0;    // extra 0..N-1 px of jitter per column (0 = perfectly even)
-double mistTileYFactor   = 1.0;   // vertical step as a fraction of frame height
-double mistTileArcFactor = 0.1;  // 0 = flat band, 0.5 = the stock dome
+// Per-skill layout. One shared set of numbers was fine while this list held a single entry and is
+// wrong the moment it holds two: a blast wants ONE big frame in the middle of the cloud, a
+// smokescreen wants its footprint filled the way a stock mist is. The values live with the skill
+// they belong to.
+//
+// stepBase/stepRange are the horizontal column pitch (stepRange 1 = perfectly even, never 0 --
+// the client divides by it). yFactor is the vertical step as a fraction of frame height. arc is
+// the dome: 0 flat, 0.5 stock. bCentreX/bCentreY begin each walk at the rect's middle on that
+// axis instead of its left/top edge, and are independent -- left-and-vertically-centred is {0,1}.
+// nOriginX/nOriginY are pixel nudges applied after the axis choice.
+//
+// faceFlip MIRRORS the sprite with the caster rather than moving it, by feeding the caster's
+// facing into the same flip flag the stock layout randomises. Position is left alone -- nOriginX
+// stays put whichever way you turn. Mirroring also swaps which side of the anchor the artwork
+// sits on, so a sprite whose origin is off-centre visibly reaches the other way.
+//
+// The rect cannot carry this: lt/rb are symmetric (+-170), so the server's calculateBoundingBox
+// produces an identical box facing either way and the direction has to come from the client.
+// See IsLocalUserFacingLeft -- the field is a move action, not a flag.
+//
+// noRandom suppresses every randomisation the layout performs, all of which exist to stop a
+// REPEATED sprite reading as a row of identical stamps and all of which are wrong for a single
+// frame:
+//   0x004328C0  sub_432D45(2,0)   coin-toss horizontal mirror
+//   0x0043288A  sub_432D45(10,0)  0..9 jitter folded into the layer's depth/start field
+// The column-pitch jitter is covered separately by stepRange (1 = none).
+struct AreaSkillTiling {
+    int    nSkillId;
+    int    nStepBase;
+    int    nStepRange;
+    double dYFactor;
+    double dArcFactor;
+    int    bCentreX;
+    int    bCentreY;
+    int    nOriginX;
+    int    nOriginY;
+    int    bNoRandom;
+    int    bFaceFlip;
+};
 
-// Where the walk BEGINS. The layout starts at the rect's top-left corner and marches right and
-// down -- correct for a cloud filling its footprint, wrong for a single blast meant to sit in the
-// middle of one. The frames are anchored near their own centres (2121040's are origin (212,262)
-// on 411x419), so the first one lands centred ON the top-left corner with half of it outside the
-// cloud. With a step wider than the rect only one column is ever placed, so that first frame IS
-// the explosion and where it starts is where the explosion appears.
-int mistTileCentre  = 1;   // begin at the rect's centre instead of its top-left corner
-int mistTileOriginX = 0;   // extra px applied to the first column, after centring
-int mistTileOriginY = 0;   // extra px applied to the first row, after centring
+std::vector<AreaSkillTiling> g_areaSkillTiling = {
+    // 2121040 Mist Explosion -- a step wider than any cloud places exactly one column, and
+    // centring puts that single 411x419 frame over the middle of the footprint it replaces.
+    { 2121040, 600, 1, 1.0, 0.1, 1, 1, 0, 0, 1, 0 },
+
+    // 1111015 Stand Behind Me -- one centred puff rather than a tiled fill. Same treatment as
+    // the blast above and for the same reason: a step wider than the footprint places exactly one
+    // column, and the centre origin puts it over the middle instead of the top-left corner.
+    //
+    // Its tile node has a SINGLE child holding 7 canvases (96x129..177x201), so that one
+    // placement is the whole 7-frame animation rather than a still -- the per-tile random frame
+    // pick only chooses between top-level children, and there is only one to choose.
+    // Offset by nOriginX/nOriginY and mirrored to match the caster, with the offset changing sign
+    // to match: +nOriginX facing right, -nOriginX facing left. Nothing in the layout is left to
+    // chance.
+    { 1111015, 600, 1, 1.0, 0.1, 1, 1, -50, 30, 1, 1 },
+};
+
+// CUserLocal+0x570 is the avatar's m_nMoveAction, NOT a boolean -- see wvs/CUserLocal.h. It holds
+// action codes (4, 9, ...) whose bit 0 is the direction, which is why testing it for non-zero
+// reports "left" essentially always. Facing left is the EVEN case, the same test skills.cpp:2606
+// has been using all along.
+//
+// Read defensively: this runs on every area creation, including ones that arrive before the local
+// user exists.
+static bool IsLocalUserFacingLeft() {
+    void* pUser = *kppUserLocal;
+    if (!pUser || IsBadReadPtr(pUser, 0x574)) {
+        return false;
+    }
+    const int nMoveAction = *reinterpret_cast<const int*>(static_cast<const char*>(pUser) + 0x570);
+    return (nMoveAction % 2) == 0;
+}
 
 // Refusing here is the whole safety story: on a no, the cave performs the instruction it replaced
 // and the stock chain runs, which is exactly the unmodified client.
 int __cdecl IsAreaEffectSkill(int nSkillId) {
-    bool bMine = false;
-    for (int id : g_areaEffectSkills) {
-        if (id == nSkillId) {
-            bMine = true;
+    const AreaSkillTiling* pMine = nullptr;
+    for (const AreaSkillTiling& t : g_areaSkillTiling) {
+        if (t.nSkillId == nSkillId) {
+            pMine = &t;
             break;
         }
     }
+    const bool bMine = (pMine != nullptr);
 
     // Selected here because this is the one place that sees the skill id before the layout runs.
     // Every other area skill is handed the stock numbers, so nothing else changes appearance.
-    g_bTileCentre    = bMine ? mistTileCentre    : 0;
-    g_nTileOriginX   = bMine ? mistTileOriginX   : 0;
-    g_nTileOriginY   = bMine ? mistTileOriginY   : 0;
-    g_nTileStepBase  = bMine ? mistTileStepBase  : kStockTileStepBase;
-    g_nTileStepRange = bMine ? mistTileStepRange : kStockTileStepRange;
-    g_dTileYFactor   = bMine ? mistTileYFactor   : kStockTileYFactor;
-    g_dTileArcFactor = bMine ? mistTileArcFactor : kStockTileArcFactor;
+    g_bTileCentreX   = bMine ? pMine->bCentreX   : 0;
+    g_bTileCentreY   = bMine ? pMine->bCentreY   : 0;
+    g_bTileNoRandom  = bMine ? pMine->bNoRandom  : 0;
+    // Facing is read ONCE. It is a call into the client's user object and both the offset and
+    // the mirror below depend on it; reading it twice invites the two disagreeing if the player
+    // turns between them.
+    const bool bFaceFlip   = bMine && pMine->bFaceFlip != 0;
+    const bool bFacingLeft = bFaceFlip && IsLocalUserFacingLeft();
+
+    // The whole effect mirrors about the caster, offset included: facing right puts it at
+    // +nOriginX, facing left at -nOriginX. Mirroring the sprite without mirroring its offset
+    // would leave it reaching backwards from a point that never moved.
+    int nOriginX = bMine ? pMine->nOriginX : 0;
+    if (bFacingLeft) {
+        nOriginX = -nOriginX;
+    }
+    g_nTileOriginX   = nOriginX;
+
+    // Resolved here rather than in the cave: this already runs once per area creation with the
+    // skill in hand, so the asm stays a single load.
+    g_bTileFlipOverride = (bMine && (pMine->bFaceFlip || pMine->bNoRandom)) ? 1 : 0;
+    g_nTileFlipValue    = bFacingLeft ? 1 : 0;
+    g_nTileOriginY   = bMine ? pMine->nOriginY   : 0;
+    g_nTileStepBase  = bMine ? pMine->nStepBase  : kStockTileStepBase;
+    g_nTileStepRange = bMine ? pMine->nStepRange : kStockTileStepRange;
+    g_dTileYFactor   = bMine ? pMine->dYFactor   : kStockTileYFactor;
+    g_dTileArcFactor = bMine ? pMine->dArcFactor : kStockTileArcFactor;
 
     // A zero range would be a divide-by-zero inside the client's own layout loop.
     if (g_nTileStepRange < 1) {
@@ -448,7 +534,36 @@ int __cdecl IsAreaEffectSkill(int nSkillId) {
         g_nTileStepBase = 1;
     }
 
-    return bMine ? (GetAreaEffectUol(nSkillId) ? 1 : 0) : 0;
+    const int nAccept = bMine ? (GetAreaEffectUol(nSkillId) ? 1 : 0) : 0;
+
+    // Every affected area the client creates passes through here, whoever sent it -- so this is
+    // the one place that can say whether a server-spawned blast ever ARRIVED. Without it, "no
+    // effect" is ambiguous between the server never spawning one, the gate refusing it, and the
+    // tiling drawing it somewhere invisible. Rate-limited: areas are created constantly in a busy
+    // map and this must not become a per-frame log.
+    // GetTickCount rather than the client's get_update_time: this runs above that declaration,
+    // and a rate limiter has no need of the game clock.
+    static int   s_nAreaLogged = 0;
+    static DWORD s_tLastAreaLog = 0;
+    const DWORD tNow = GetTickCount();
+    if (bMine || (tNow - s_tLastAreaLog) > 1000 || s_nAreaLogged < 20) {
+        ++s_nAreaLogged;
+        s_tLastAreaLog = tNow;
+        // facing/flip included because "it does not mirror" has two very different causes: the
+        // facing read being wrong and the flip argument not being the flip at all. The raw move
+        // action is printed alongside the derived values so the two can be told apart without
+        // another build -- it was reading 4 and 9, which is what exposed it as an action code.
+        void* pUserDbg = *kppUserLocal;
+        const int nRawIsLeft = (pUserDbg && !IsBadReadPtr(pUserDbg, 0x574))
+                ? *reinterpret_cast<const int*>(static_cast<const char*>(pUserDbg) + 0x570) : -1;
+        LogInfo("[mistexplosion] area created: skill=%d mine=%d accepted=%d uol=%p"
+                " moveAction=%d faceLeft=%d originX=%d flipValue=%d",
+                nSkillId, bMine ? 1 : 0, nAccept, GetAreaEffectUol(nSkillId),
+                nRawIsLeft, (nRawIsLeft >= 0 && (nRawIsLeft % 2) == 0) ? 1 : 0,
+                g_nTileOriginX, g_nTileFlipValue);
+        LogFlush();
+    }
+    return nAccept;
 }
 
 // The column-advance at the tail of sub_432776's outer loop:
@@ -489,6 +604,55 @@ static constexpr DWORD kTileYPatch  = 0x0043280C;
 static constexpr int   kTileYLen    = 9;
 static constexpr DWORD kTileYResume = 0x00432815;
 
+// The per-tile mirror coin toss:
+//   004328B9  53              push ebx        ; 0
+//   004328BA  6A 02           push 2
+//   004328C0  E8 80040000     call sub_432D45 ; eax = random 0 or 1
+//   004328C5  59 59           pop ecx / pop ecx  ; resume: cdecl cleanup
+//   004328C7  50              push eax        ; the flip flag, into the layer creation
+// The call is __cdecl and the CALLER pops, so skipping it is safe -- the two pops at the resume
+// point clean the arguments whether or not the call happened.
+static constexpr DWORD kTileFlipPatch  = 0x004328C0;
+static constexpr DWORD kTileFlipResume = 0x004328C5;
+
+// The other coin toss, a 0..9 jitter folded into the layer's depth/start field:
+//   00432885  6A 0A           push 0Ah
+//   0043288A  E8 B6040000     call sub_432D45   ; eax = random 0..9
+//   0043288F  59 59           pop ecx / pop ecx ; resume: cdecl cleanup
+//   00432891  2D 5CEBF93F     sub eax, 3FF9EB5Ch
+// Same shape as the mirror toss, and safe for the same reason: __cdecl, caller pops.
+static constexpr DWORD kTileJitterPatch  = 0x0043288A;
+static constexpr DWORD kTileJitterResume = 0x0043288F;
+
+static DWORD pTileRand         = 0x00432D45;
+static DWORD pTileFlipResume   = kTileFlipResume;
+static DWORD pTileJitterResume = kTileJitterResume;
+
+void __declspec(naked) TileJitterCave() {
+    __asm {
+        cmp     [g_bTileNoRandom], 0
+        jnz     mn_tile_nojitter
+        call    [pTileRand]
+        jmp     [pTileJitterResume]
+    mn_tile_nojitter:
+        xor     eax, eax                ; always the low end, never jittered
+        jmp     [pTileJitterResume]
+    }
+}
+
+// eax is the only register that matters here -- it carries the result into the push that follows.
+void __declspec(naked) TileFlipCave() {
+    __asm {
+        cmp     [g_bTileFlipOverride], 0
+        jnz     mn_tile_setflip
+        call    [pTileRand]
+        jmp     [pTileFlipResume]
+    mn_tile_setflip:
+        mov     eax, [g_nTileFlipValue] ; 0 = never mirrored, else the caster's facing
+        jmp     [pTileFlipResume]
+    }
+}
+
 static DWORD pTileStepResume = kTileStepResume;
 static DWORD pTileInitResume = kTileInitResume;
 static DWORD pTileYResume    = kTileYResume;
@@ -498,7 +662,7 @@ static DWORD pTileYResume    = kTileYResume;
 void __declspec(naked) TileInitCave() {
     __asm {
         mov     edx, esi
-        cmp     [g_bTileCentre], 0
+        cmp     [g_bTileCentreX], 0
         je      mn_tile_x_keep
         add     edx, ecx                ; left + right
         sar     edx, 1                  ; centre
@@ -515,7 +679,7 @@ void __declspec(naked) TileInitCave() {
 // rows depend on, so the stack must be left exactly as it was found.
 void __declspec(naked) TileYCave() {
     __asm {
-        cmp     [g_bTileCentre], 0
+        cmp     [g_bTileCentreY], 0
         je      mn_tile_y_keep
         mov     eax, [edi + 4]          ; rect.top
         add     eax, [edi + 0x0C]       ; + rect.bottom
@@ -1061,6 +1225,23 @@ void __declspec(naked) CastTargetsCave() {
 static bool s_bCastInFlight = false;
 static std::vector<AffectedArea> s_castMists;
 
+// Safety net. The suppression flag is only ever legitimately raised for the duration of ONE Mist
+// Explosion cast, so seeing it set as any other skill begins means something leaked it -- and a
+// leaked flag blanks the target search of every magic attack for the rest of the session, which
+// presents as unrelated skills silently hitting nothing rather than as an error.
+//
+// The RAII scope in the DoActiveSkill hook is what prevents the leak; this exists because the
+// consequence of being wrong about that is invisible and permanent.
+void MistExplosion_CheckSuppressionLeak(int nSkillID) {
+    if (!s_bSuppressCastTargets || nSkillID == mistExplosionSkillId) {
+        return;
+    }
+    LogInfo("[mistexplosion] WARNING: cast-target suppression still set entering skill %d"
+            " -- leaked, clearing. Magic attacks would have hit nothing.", nSkillID);
+    LogFlush();
+    s_bSuppressCastTargets = 0;
+}
+
 // Called immediately BEFORE the client's cast. Decides whether this cast has clouds to consume,
 // and if so suppresses the cast's own targeting for its duration.
 int MistExplosion_BeginCast() {
@@ -1274,6 +1455,7 @@ struct PendingHit {
     int  nDamage;
     int  nIndex;
     int  bLeft;
+    int  bCrit;
     int  nPosX;
     int  nPosY;
     long tDue;
@@ -1325,7 +1507,7 @@ void MistExplosion_OnClientTick() {
         }
         try {
             CMob_OnHit(pMob, nLocalCharId, mistExplosionSkillId, kMobHitAction,
-                       h.bLeft, h.nDamage, 0, h.nIndex, 0, 0, 0, h.nPosX, h.nPosY, 0);
+                       h.bLeft, h.nDamage, h.bCrit, h.nIndex, 0, 0, 0, h.nPosX, h.nPosY, 0);
         } catch (...) {
             // one bad mob must not strand the rest of the queue
         }
@@ -1419,10 +1601,17 @@ static void SendMistAttack(const std::vector<void*>& mobs, int nDamagePct, int n
 
         // Roll each line once, then use the SAME values for both the packet and the local hit --
         // rolling twice would mean the number on screen and the number the server is told differ.
+        // nOrder is this mob's index in the hit list, which is what the order drop-off inside
+        // CalcSkillDamageMultiplier scales by -- the same value the client passes on its own melee
+        // and shoot paths, so a second target is discounted here exactly as it would be there.
         int aDamage[15]{};
+        int aCrit[15]{};
+        int nCrits = 0;
         long long llTotal = 0;
         for (int nLine = 0; nLine < nAttackCount; ++nLine) {
-            aDamage[nLine] = MagicSkillDamageOnMob(pMob, nDamagePct);
+            aDamage[nLine] = MagicSkillDamageOnMob(pMob, nDamagePct, mistExplosionSkillId, i,
+                                                   &aCrit[nLine]);
+            nCrits += aCrit[nLine];
             llTotal += aDamage[nLine];
         }
         if (llTotal > 0x7FFFFFFFll) {
@@ -1450,6 +1639,9 @@ static void SendMistAttack(const std::vector<void*>& mobs, int nDamagePct, int n
             }
             for (int nLine = 0; nLine < nLocalLines; ++nLine) {
                 const int nShow = mistExplosionCombineDamage ? nCombined : aDamage[nLine];
+                // Combined shows as a crit if ANY line critted: there is one number to mark, and
+                // the total genuinely carries the bonus.
+                const int bCrit = mistExplosionCombineDamage ? (nCrits > 0 ? 1 : 0) : aCrit[nLine];
 
                 // The first line lands now. Deferring it too would put a frame of nothing between
                 // the cast and any feedback, and the point of the delay is the cascade after the
@@ -1457,7 +1649,7 @@ static void SendMistAttack(const std::vector<void*>& mobs, int nDamagePct, int n
                 if (nLine == 0 || mistExplosionHitDelayMs <= 0) {
                     try {
                         CMob_OnHit(pMob, nLocalCharId, mistExplosionSkillId, kMobHitAction,
-                                   bLeft ? 1 : 0, nShow, 0, nLine, 0, 0, 0, x, y, 0);
+                                   bLeft ? 1 : 0, nShow, bCrit, nLine, 0, 0, 0, x, y, 0);
                     } catch (...) {
                         break;   // one bad mob must not take the rest of the cast with it
                     }
@@ -1471,6 +1663,7 @@ static void SendMistAttack(const std::vector<void*>& mobs, int nDamagePct, int n
                 h.nDamage = nShow;
                 h.nIndex  = nLine;
                 h.bLeft   = bLeft ? 1 : 0;
+                h.bCrit   = bCrit;
                 h.nPosX   = x;
                 h.nPosY   = y;
                 h.tDue    = tBase + nLine * mistExplosionHitDelayMs;
@@ -1478,8 +1671,8 @@ static void SendMistAttack(const std::vector<void*>& mobs, int nDamagePct, int n
             }
         }
 
-        LogInfo("[mistexplosion] mob=%p %d line(s) -> %d total%s",
-                pMob, nAttackCount, nCombined,
+        LogInfo("[mistexplosion] mob=%p %d line(s) -> %d total, %d crit(s)%s",
+                pMob, nAttackCount, nCombined, nCrits,
                 mistExplosionCombineDamage ? " (combined into 1)" : " (sent as separate lines)");
         uint32_t uHash = 0;
         try { uHash = MobPacketHash(pMob); } catch (...) {}
@@ -1604,18 +1797,25 @@ void AttachMistExplosionMod() {
     if (mistExplosionAreaGate) {
         CodeCave(reinterpret_cast<void*>(AreaSkillGateCave), kAreaChainPatch, 0);
         LogInfo("[mistexplosion] area gate ON: %d extra skill(s) accepted for area rendering",
-                static_cast<int>(g_areaEffectSkills.size()));
+                static_cast<int>(g_areaSkillTiling.size()));
 
         // Tiling last: it is only reachable through an area the gate accepted.
         CodeCave(reinterpret_cast<void*>(TileStepCave), kTileStepPatch, kTileStepLen);
         CodeCave(reinterpret_cast<void*>(TileInitCave), kTileInitPatch, kTileInitLen);
         CodeCave(reinterpret_cast<void*>(TileYCave),    kTileYPatch,    kTileYLen);
+        CodeCave(reinterpret_cast<void*>(TileFlipCave),   kTileFlipPatch,   0);
+        CodeCave(reinterpret_cast<void*>(TileJitterCave), kTileJitterPatch, 0);
         Patch4(kTileYFactorOperand,   reinterpret_cast<unsigned int>(&g_dTileYFactor));
         Patch4(kTileArcFactorOperand, reinterpret_cast<unsigned int>(&g_dTileArcFactor));
-        LogInfo("[mistexplosion] tiling: step=%d+0..%d yFactor=%.2f arc=%.2f origin=%s%+d%+d"
-                " (stock %d+0..%d/%.2f/%.2f/top-left kept for every other area skill)",
-                mistTileStepBase, mistTileStepRange - 1, mistTileYFactor, mistTileArcFactor,
-                mistTileCentre ? "centre" : "top-left", mistTileOriginX, mistTileOriginY,
+        for (const AreaSkillTiling& t : g_areaSkillTiling) {
+            LogInfo("[mistexplosion] tiling %d: step=%d+0..%d yFactor=%.2f arc=%.2f origin=%s/%s%+d%+d%s%s",
+                    t.nSkillId, t.nStepBase, t.nStepRange - 1, t.dYFactor, t.dArcFactor,
+                    t.bCentreX ? "centreX" : "left", t.bCentreY ? "centreY" : "top",
+                    t.nOriginX, t.nOriginY, t.bNoRandom ? " norandom" : "",
+                    t.bFaceFlip ? " faceflip(+/-originX)" : "");
+        }
+        LogInfo("[mistexplosion] tiling: stock %d+0..%d/%.2f/%.2f/top-left kept for every"
+                " other area skill",
                 kStockTileStepBase, kStockTileStepRange - 1, kStockTileYFactor, kStockTileArcFactor);
     }
     if (mistExplosionDrawEffect) {

@@ -273,6 +273,22 @@ static const std::vector<int> g_noChargeSkills = {
     2221021, // Big Bang (Bishop)
 };
 
+// CUser::ShowSkillSpecialEffect -- plays a skill's `special` WZ node at the caster.
+//
+// THREE stack args, from `retn 0Ch` at 0x00936775, not the six IDA's mangled name claims (the
+// same stale-symbol trap as ShowSkillEffect, CMob::OnHit and FindHitMobInRect). Argument shape is
+// taken from the client's own call in TryDoingMeleeAttack @0x009519E8:
+//     push [ebp+20h]      ; scratch -- the callee only ever writes to it
+//     push 320h           ; 800, how long the effect lives
+//     push esi            ; the SKILLENTRY
+//     mov  ecx, ebx       ; the CUser
+// The entry is void* rather than SKILLENTRY* only because that type is declared further down;
+// the callee wants a SKILLENTRY and the call site passes one.
+using t_ShowSkillSpecialEffect = void(__thiscall*)(void*, void*, int, int);
+static auto ShowSkillSpecialEffect =
+        reinterpret_cast<t_ShowSkillSpecialEffect>(0x00936528);
+static constexpr int kSpecialEffectDurationMs = 800;   // the value the melee path passes
+
 int __cdecl IsNoChargeSkill(int nSkillID) {
     return std::find(g_noChargeSkills.begin(), g_noChargeSkills.end(), nSkillID)
             != g_noChargeSkills.end();

@@ -112,6 +112,7 @@ int MistExplosion_BeginCast();   // before the cast: >0 if clouds exist, and sup
 void MistExplosion_EndCast();    // after the cast, whatever its outcome: lifts the suppression
 int MistExplosion_Detonate();
 void MistExplosion_OnClientTick();   // releases staggered damage lines as they come due
+void MistExplosion_CheckSuppressionLeak(int nSkillID);  // self-heals a leaked target suppression
 void AttachMistExplosionMod();
 extern int mistExplosionSkillId;
 
@@ -131,7 +132,11 @@ int GetLearnedSkillLevel(int skillId);
 
 // skills.cpp — magic damage for one mob using the server's own formula (setMAD/topMAD + the
 // mastery range roll + level/MDDamage mitigation). nSkillDmgPct is the skill's WZ `damage`/`mad`.
-int MagicSkillDamageOnMob(void* pMob, int nSkillDmgPct);
+// nSkillID != 0 additionally applies CalcSkillDamageMultiplier (level, mob defence, poison,
+// airborne, boss, order drop-off) and rolls a critical, writing 1 to pbCritOut on a crit.
+// nSkillID == 0 is the original summon behaviour.
+int MagicSkillDamageOnMob(void* pMob, int nSkillDmgPct, int nSkillID = 0, int nOrder = 0,
+                          int* pbCritOut = nullptr);
 
 // CUIMonsterBook::SetTabEnable (monsterBook.cpp); USE_MONSTER_BOOK_OPEN.
 // PAIRED with a server-side data fix: String.wz/MonsterBook.img must carry an entry for every
