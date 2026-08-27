@@ -591,9 +591,15 @@ void __declspec(naked) doActiveSkills() {
 
             // IL ARCHMAGE
 
-            mov eax, 2421005
+            mov eax, 2421011
             cmp esi, eax
             je summons
+
+            // Magic: it has to run on the MDamage formula. The mob-pull is not Snatch's (that one
+            // is melee-only) -- see g_magicPullSkills.
+            mov eax, 2421003
+            cmp esi, eax
+            je magic
 
             mov eax, 2421006
             cmp esi, eax
@@ -1146,7 +1152,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
-            mov eax, 2421005
+            mov eax, 2421011
             cmp esi, eax
             je summons
 
@@ -1624,6 +1630,26 @@ static double  applyMobDefenseStat(const MobStat* stat, double templateDef, bool
     return adjusted < 0.0 ? 0.0 : adjusted;
 }
 
+// Level difference vs the attacking mob: every level the player is ABOVE it takes 0.2% off the
+// damage received, every level below adds 0.2%. Applied to the damage AFTER defense mitigation, so
+// it is a straight percentage of the hit.
+//
+// This replaces the older term, which multiplied the PDD/MDD mitigation by
+// `1 + (level - mobLevel) * 0.005`. That made the level bonus worth whatever the player's defense
+// happened to be worth -- nothing at all at 0 PDD, and up in the double digits with high PDD --
+// rather than a predictable percentage. Both damage-taken hooks below use this, so they stay in
+// step.
+constexpr double kLevelDiffDamageStep = 0.002;   // per level
+
+static double LevelDiffDamageFactor(int nPlayerLevel, int nMobLevel) {
+    double factor = 1.0 - (nPlayerLevel - nMobLevel) * kLevelDiffDamageStep;
+    // 200 levels of difference is 40%, so the clamp is only a guard against absurd mob levels.
+    if (factor < 0.0) {
+        factor = 0.0;
+    }
+    return factor;
+}
+
 auto MobACC = (int(__stdcall*)(MobStat*, void*, BasicStat*, SecondaryStat*, unsigned int))0x0079286E;
 auto GetPDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E067;
 auto GetMDD = (int(__thiscall*)(SecondaryStat*, void*))0x0077E141;
@@ -1661,8 +1687,8 @@ int __fastcall MobPDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     double stonedef = stone * 0.015;
     double PDD = GetPDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (500 + PDD));
-    double leveldiff = 1 + (level - mobLevel) * 0.005;
-    int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    int preSkillMitigationDamage =
+            (int)((baseDamage - (baseDamage * reduciton)) * LevelDiffDamageFactor(level, mobLevel));
     if (stone > 0.0) {
         preSkillMitigationDamage -= preSkillMitigationDamage * stonedef;
     }
@@ -1699,8 +1725,8 @@ int __fastcall MobMDamage_Hook(void* calc, void* edx, MobStat* ms, void* cd, Bas
     double stonedef = stone * 0.015;
     double PDD = GetMDD(ss, cd) + str + dex + luk + _int;
     double reduciton = (PDD / (500 + PDD));
-    double leveldiff = 1 + (level - mobLevel) * 0.005;
-    int preSkillMitigationDamage = (baseDamage - ((baseDamage * reduciton) * leveldiff));
+    int preSkillMitigationDamage =
+            (int)((baseDamage - (baseDamage * reduciton)) * LevelDiffDamageFactor(level, mobLevel));
     if (stonedef > 0.0) {
         preSkillMitigationDamage -= preSkillMitigationDamage * stonedef;
     }
@@ -1773,9 +1799,73 @@ int(__cdecl sparkThingHook)(int skillId) {
     return sparkThing(skillId);
 }
 
+// Snatch's pull, as a list instead of one id.
+//
+// TryDoingMeleeAttack dispatches on the skill id with a chain of `cmp eax, <id>` tests. The first
+// of them, at 0x00952360, is vanilla Snatch (5121005): its branch (0x00952367) reads the CASTER's
+// own position out of its vec ctrl and hands that back as the attack's target point, so every mob
+// the swing catches is dragged onto the player instead of staying put. Everything else falls
+// through to 0x0095238F and keeps its own position.
+//
+// That id used to be overwritten with a Patch4, which moved the pull to exactly one skill and cost
+// Snatch its own. The compare is 5 bytes -- precisely a jmp -- so it is now a cave that asks this
+// list, and a skill gets the pull by being named here.
+//
+// Only this site is redirected. The client's other five Snatch references (0x007661BF, 0x0094901D,
+// 0x00950BB6, 0x00950CD9, 0x009682F2, 0x00969562) still name 5121005 and cover the animation and
+// dispatch side, so a listed skill pulls with its own attack animation rather than Snatch's.
+std::vector<int> g_pullSkills = {
+    1101016,
+    // 5121005,   // vanilla Snatch -- the old Patch4 took its pull away; add it back if wanted
+    // 2421003 is NOT here: it is a magic skill and never reaches TryDoingMeleeAttack. Its pull is
+    // g_magicPullSkills, further down.
+};
+
+// Result handed back across popad, same as the magic-attack cave above.
+static int g_bPullSkillMatch = 0;
+
+int __cdecl IsPullSkill(int nSkillID) {
+    for (int id : g_pullSkills) {
+        if (id == nSkillID) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static constexpr DWORD kPullChainHead = 0x00952360;   // cmp eax, 4E23EDh (5121005)
+static constexpr DWORD kPullMatch     = 0x00952367;   // the drag-to-caster branch
+static constexpr DWORD kPullNoMatch   = 0x0095238F;   // rest of the id chain
+
+// Defined above the asm that jumps through them -- see the note on the magic-attack cave.
+static DWORD pPullMatch   = kPullMatch;
+static DWORD pPullNoMatch = kPullNoMatch;
+
+// eax holds the skill id on entry and the no-match path compares it again at 0x0095238F, so it has
+// to survive: pushad/popad restores it. Both exits set their own flags.
+void __declspec(naked) PullChainCave() {
+    __asm {
+        pushad
+        push    dword ptr [esp + 28]        ; original EAX -- pushad stores it last, at +28
+        call    IsPullSkill
+        add     esp, 4
+        mov     [g_bPullSkillMatch], eax
+        popad
+        cmp     [g_bPullSkillMatch], 0
+        jnz     matched
+        jmp     [pPullNoMatch]
+    matched:
+        jmp     [pPullMatch]
+    }
+}
+
 void skillHacks() {
 
-    Patch4(0x00952360 + 1, 1101016); // il amplification
+    // Replaces `cmp eax, 5121005` + its `jnz` (7 bytes) with the jmp; the 2 bytes past the jmp are
+    // NOPed and never reached, since the cave jumps straight to one branch or the other.
+    CodeCave(reinterpret_cast<void*>(PullChainCave), kPullChainHead, 7);
+    LogInfo("skillHacks: Snatch pull chain at 0x%08X redirected, %d skill(s) in the list",
+            kPullChainHead, static_cast<int>(g_pullSkills.size()));
     Patch4(0x0094B4EC + 1, 1411003); // switch addy
     Patch4(0x00765A61 + 1, 121);     // skill root check
     Patch1(0x008C4077 + 2, 0x0);
@@ -1924,7 +2014,8 @@ bool isSkillIDMatched(int nSkillID) {
         2411012,
         2411013,
         2411023,
-        2421005,
+        2421003,
+        2421011,
         2421007,
         2421014,
         2421006,
@@ -2156,6 +2247,118 @@ int GetRawSkillLevel(void* charData, int skillID) {
 }
 bool hitonce = false;
 int shadowSL = 0;
+
+// ---------------------------------------------------------------------------------------------
+// Custom Energy Charge: make the client's energy-charge skill 2420000 instead of 5110001
+// ---------------------------------------------------------------------------------------------
+//
+// The client stores no "energy charge skill" anywhere. It recomputes it inline, at nine sites, as
+// `job / 1000 == 1 ? 15100004 : 5110001` -- Thunder Breaker's id or Marauder's. The non-Cygnus
+// half is never right for us: this server's charge skill is 2420000 (ILArchMage.STATIC_CHARGE),
+// and 5110001 does not even exist in Data/Skill/511.img, so asking for it made the lazy level-data
+// loader (sub_76118B) throw ZException and the client fault while unwinding.
+//
+// Seven sites compute it as `and <reg>, 0FF67908Dh` + `add <reg>, 0E66864h`, i.e. 15100004 plus a
+// mask that is either 0 (Cygnus) or -9990003 (everyone else). Retargeting is therefore one imm32
+// per site: 2420000 - 15100004 = -12680004 = 0xFF3EF0FC. Two more sites name 5110001 literally.
+//
+// This DOES take energy charge away from Marauder/Buccaneer, who share the non-Cygnus branch --
+// intended: this server uses 2420000 only, no pirate charge.
+//
+// Encodings differ, so each offset below is to the imm32, not the instruction:
+//   25 <imm32>          and eax, imm32     -> +1
+//   81 E6 <imm32>       and esi, imm32     -> +2
+//   C7 45 F0 <imm32>    mov [ebp-10h], imm -> +3
+//   81 FE <imm32>       cmp esi, imm32     -> +2
+constexpr int kCustomEnergyCharge = 2420000;
+constexpr unsigned int kEnergyChargeMask = 0xFF3EF0FC;   // + 15100004 == 2420000
+
+void PatchCustomEnergyCharge() {
+    // SecondaryStat::GetIncPAD and its two siblings -- the stat bonus a full bar grants.
+    Patch4(0x0077DDE2 + 1, kEnergyChargeMask);
+    Patch4(0x0077DE78 + 1, kEnergyChargeMask);
+    Patch4(0x0077DF0E + 1, kEnergyChargeMask);
+    // The aura sites take the SKILLENTRY only to pull an effect path out of it (GetSkill ->
+    // SKILLENTRY::GetEffectUOL -> a layer under the face); no level lookup, no gate on owning the
+    // skill. All they need is a skill whose WZ carries the art, and 2420000 now does:
+    // Data/Skill/242.img gives it effect (0, 1), affected and hit alongside its level and special
+    // nodes. They briefly pointed at 15100004 while 2420000 had no `effect` node -- that is what
+    // made the bar appear with nothing drawn around the character -- and are back on our own skill.
+    //
+    // CUser::Update -- aura upkeep.
+    Patch4(0x00931515 + 1, kEnergyChargeMask);
+    // CUser::OnTemporaryStatChanged -- aura start/stop. This is the site that was faulting before
+    // any of this: it resolves the skill every time the ENERGY_CHARGE stat changes, and the
+    // vanilla 5110001 it used to name does not exist in this client.
+    Patch4(0x0093E138 + 1, kEnergyChargeMask);
+    Patch4(0x0093E23F + 1, kEnergyChargeMask);
+    // CUserLocal::Update -- gauge upkeep. Gated on GetSkillLevel(<id>) > 0, which is precisely why
+    // the bar never appeared: the player has 2420000, never 5110001.
+    Patch4(0x0094B45D + 1, kEnergyChargeMask);
+    // CUserLocal::SetDamaged -- charge gained on being hit. `and esi` here, not eax.
+    Patch4(0x00958BFE + 2, kEnergyChargeMask);
+    // The two literal 5110001 references: the ctor watch-list entry and SetDamaged's follow-up
+    // compare against the id it just computed. Left at 5110001 the compare would never match.
+    Patch4(0x00948F6F + 3, kCustomEnergyCharge);
+    Patch4(0x00958C6D + 2, kCustomEnergyCharge);
+    // Read the imm32 back out of the two sites that matter for the aura. If these do not say
+    // FF3EF0FC the patch never landed, and no amount of WZ art will help.
+    LogInfo("PatchCustomEnergyCharge: skill -> %d | aura mask @0x0093E138=%08X @0x00931515=%08X"
+            " | gauge mask @0x0094B45D=%08X",
+            kCustomEnergyCharge,
+            *reinterpret_cast<unsigned int*>(REBASE(0x0093E138 + 1)),
+            *reinterpret_cast<unsigned int*>(REBASE(0x00931515 + 1)),
+            *reinterpret_cast<unsigned int*>(REBASE(0x0094B45D + 1)));
+}
+
+
+// CSkillInfo::GetSkill, used by the guard below to resolve a replacement entry.
+auto pEnergyGetSkill = (void*(__thiscall*)(void*, int))0x0075C755;
+
+// SKILLENTRY::GetEffectUOL with a NULL `this` is the whole family of full-bar crashes: it reads
+// +0x64 off the entry (sub_761332), giving `read access to 0x00000064` at 0x00761345.
+//
+// Nine call sites reach it -- CUser::Update 0x00931537, OnTemporaryStatChanged 0x0093E18B,
+// CUserRemote::Update 0x00980174 (the aura on OTHER players), the two Init paths, and more -- and
+// several of them hand over an entry slot that their own branch never filled. Guarding each caller
+// in turn is whack-a-mole; guarding the callee covers all nine at once.
+//
+// __thiscall, `retn 8`: (retbuf, index), NRV -- returns the retbuf. On a NULL entry with no
+// substitute available it writes an empty result and returns, which is exactly what the original
+// does for a skill with no effect node (`*a2 = 0; return a2;`), so callers stay on a path the
+// client already handles.
+auto pGetEffectUOL = (void*(__thiscall*)(void*, void*, unsigned char))0x00932D40;
+
+void* __fastcall GetEffectUOL_hook(void* pThis, void* edx, void* pRetBuf, unsigned char nIdx) {
+    if (!pThis) {
+        void* pInfo = *reinterpret_cast<void**>(0x00BE78DC);
+        void* pFixed = pInfo ? pEnergyGetSkill(pInfo, kCustomEnergyCharge) : nullptr;
+        if (!pFixed && pInfo) {
+            pFixed = pEnergyGetSkill(pInfo, 15100004);
+        }
+        static DWORD tLast = 0;
+        const DWORD tNow = GetTickCount();
+        if (tNow - tLast > 1000) {
+            tLast = tNow;
+            LogInfo("[energy] GetEffectUOL(this=NULL) from 0x%08X -> %s",
+                    reinterpret_cast<unsigned int>(_ReturnAddress()),
+                    pFixed ? "substituted 2420000" : "no substitute, empty UOL");
+            LogFlush();
+        }
+        if (!pFixed) {
+            if (pRetBuf && !IsBadWritePtr(pRetBuf, sizeof(void*))) {
+                *reinterpret_cast<void**>(pRetBuf) = nullptr;
+            }
+            return pRetBuf;
+        }
+        pThis = pFixed;
+    }
+    return pGetEffectUOL(pThis, pRetBuf, nIdx);
+}
+
+
+
+
 
 // Records which mastery skill the level came from, so the Skill.wz `mastery` for it can be read.
 static int trackMastery(int nLevel, int nSkillID) {
@@ -2847,7 +3050,8 @@ std::vector<int> g_magicAttackSkills = {
     2411011,             // was 2321008
     2121003, 2221003,    // vanilla from here down
     12111003, 12101006, 12111006,
-    22101000, 22121000, 22141001, 22151001, 22161001, 22181002, 22171002, 22181001, 2121040, 2121006, 2121007, 2221007, 2421007, 2121041
+    22101000, 22121000, 22141001, 22151001, 22161001, 22181002, 22171002, 22181001, 2121040, 2121006, 2121007, 2221007, 2421007, 2121041,
+    2421003   // chain pull: needs its own lt/rb (-450,-150 .. 0,100), not the default box
 };
 
 // Result handed back across popad, which would otherwise restore the register the answer is in.
@@ -4615,6 +4819,18 @@ static bool mobIsBoss(Mob* mob) {
 // CWvsPhysicalSpace2D::GetFoothold on the singleton at 0x00BEBFA0.
 auto space2dGetFoothold = (void*(__thiscall*)(void*, unsigned long))0x0050D811;
 
+// CMob::GenerateMovePath. NINE stack args (`retn 24h` at 0x0066BE0A).
+//
+// Called with a negative action it skips its entire action/chase block (`if (a2 >= 0)`) and drops
+// straight to the tail, which flushes the mob's CMovePath into an opcode-188 packet and sends it:
+//     CMovePath::Flush(...) -> CClientSocket::SendPacket(...)      0x0066BD9C..0x0066BDAB
+// The client makes exactly that call itself at 0x006685AC, so it is a supported way to say "report
+// where this mob is now". Reseating CVecCtrl only moves the mob locally -- without this the mob's
+// path still describes the old route, the next flush reports the OLD position, and the server
+// corrects us: the rubber-band.
+typedef void(__thiscall* MobGenerateMovePath_t)(void*, int, int, int, int, int, int, int, int, int);
+auto mobGenerateMovePath = reinterpret_cast<MobGenerateMovePath_t>(0x0066B6FC);
+
 // CVecCtrl::SetActive(bActive, x, y, a4, a5, a6, pFoothold) -- vtable slot 1.
 typedef void(__thiscall* VecCtrlSetActive_t)(void*, int, int, int, int, int, int, void*);
 
@@ -4697,15 +4913,23 @@ void SummonPull_OnHit(MobStat* pStat) {
     }
 }
 
-static void applySummonPull(void* pSummon) {
-    const POINT* summonPos = gobjPos(pSummon);
+// Set to 0 once the pull is behaving. Separate from debugCombatLog because that one is off by
+// default and turning it on floods the log from the damage hooks; this fires only on a cast that
+// actually pulls, a few lines a time.
+int pullDebugLog = 0;
+#define PULL_LOG(...) do { if (pullDebugLog) { LogInfo(__VA_ARGS__); } } while (0)
+
+// Drags every mob collected in g_pullTargets toward `summonPos`. Named for its first caller, but
+// the point is just a destination -- the magic-skill pull below hands it the caster's position.
+static void applyPullToPos(const POINT* summonPos) {
     if (!summonPos) {
-        COMBAT_LOG("SummonPull: no summon pos, targets=%d", (int)g_pullTargets.size());
+        PULL_LOG("[pull] no target pos, targets=%d", (int)g_pullTargets.size());
         return;
     }
+    PULL_LOG("[pull] dst=(%d,%d) targets=%d", summonPos->x, summonPos->y, (int)g_pullTargets.size());
     for (Mob* mob : g_pullTargets) {
         if (IsBadReadPtr(mob, sizeof(Mob)) || !CMob_IsActive(mob)) {
-            COMBAT_LOG("SummonPull: mob=%p skipped (bad ptr or not controlled by us)", mob);
+            PULL_LOG("[pull] mob=%p skipped (bad ptr or not controlled by us)", mob);
             continue; // someone else controls it - moving it here would just desync
         }
         MobTemplate* tmpl = mob->m_pTemplate;
@@ -4718,16 +4942,23 @@ static void applySummonPull(void* pSummon) {
         }
         const double x = *reinterpret_cast<short*>(path + 0x1F2);
         const double y = *reinterpret_cast<short*>(path + 0x1F4);
-        // Self-check: the path position must agree with the mob's cached render POINT. If it
-        // doesn't, the block we resolved isn't this mob's -- skip rather than corrupt it.
+        // Self-check: does the block we resolved actually belong to this mob? The check used to
+        // demand the path position match the cached render POINT within 64px on BOTH axes, which
+        // threw away every mob that was walking: the physics x and the render x are updated on
+        // different cadences, so a moving mob legitimately shows 100-150px of drift on x while y
+        // stays identical. Log evidence: "skipped (path/cached mismatch 673,452 vs 808,452)" --
+        // 135px apart on x, exactly equal on y, and it was the right mob.
+        //
+        // So y carries the identity check (it is stable even mid-walk) and x only has to be in the
+        // same postcode, which is still enough to reject a block that is not a mob at all.
         const POINT* cached = mobCachedPos(mob);
-        if (fabs(x - cached->x) > 64.0 || fabs(y - cached->y) > 64.0) {
-            COMBAT_LOG("SummonPull: mob=%p skipped (path/cached mismatch %.0f,%.0f vs %d,%d)",
+        if (fabs(y - cached->y) > 64.0 || fabs(x - cached->x) > 800.0) {
+            PULL_LOG("[pull] mob=%p skipped (path/cached mismatch %.0f,%.0f vs %d,%d)",
                     mob, x, y, cached->x, cached->y);
             continue;
         }
         if (fabs(y - summonPos->y) > summonPullMaxDy) {
-            COMBAT_LOG("SummonPull: mob=%p skipped (dy=%.0f > %d)", mob, fabs(y - summonPos->y), summonPullMaxDy);
+            PULL_LOG("[pull] mob=%p skipped (dy=%.0f > %d)", mob, fabs(y - summonPos->y), summonPullMaxDy);
             continue; // different platform
         }
         const double dx = summonPos->x - x;
@@ -4744,10 +4975,20 @@ static void applySummonPull(void* pSummon) {
         }
         const double newX = x + step;
         if (!mobSetPosX(mob, static_cast<int>(newX))) {
-            COMBAT_LOG("SummonPull: mob=%p reseat failed", mob);
+            PULL_LOG("[pull] mob=%p reseat failed", mob);
             continue;
         }
         mobCachedPos(mob)->x = static_cast<LONG>(newX);
+        // Kill the horizontal velocity the mob was carrying. Without this it keeps the walk it was
+        // already doing and slides straight back out of the pile, which reads in game as the pull
+        // not having worked -- the reseat itself always took (read-backs below agree with newX).
+        vecCtrlSetSecure(reinterpret_cast<CVecCtrl*>(path), kVecVx, 0.0);
+        if (mobVecCtrlObj(mob) && mobVecCtrlObj(mob) != path) {
+            vecCtrlSetSecure(reinterpret_cast<CVecCtrl*>(mobVecCtrlObj(mob)), kVecVx, 0.0);
+        }
+        // Tell the server. Everything above is local state; this is what puts the new position on
+        // the wire, and without it the mob springs back the moment the server's view wins.
+        mobGenerateMovePath(mob, -1, 0, 0, 0, 0, 0, 0, 0, 0);
         // Read straight back: tells us whether CVecCtrl::SetActive took at all, versus taking
         // and then being reverted before the next attack (server mob-move for a mob we don't
         // actually control). ctrl = CMob+0x130 secure long: >0 ours, <0 someone else's.
@@ -4757,7 +4998,7 @@ static void applySummonPull(void* pSummon) {
         const int ctrl = summonSecureFuseLong(
                 reinterpret_cast<const int*>(reinterpret_cast<char*>(mob) + 0x130),
                 *reinterpret_cast<unsigned int*>(reinterpret_cast<char*>(mob) + 0x138));
-        COMBAT_LOG("SummonPull: mob=%p %.0f -> %.0f path=%p obj=%p short=%d dbl=%.0f ctrl=%d",
+        PULL_LOG("[pull] mob=%p %.0f -> %.0f path=%p obj=%p short=%d dbl=%.0f ctrl=%d",
                 mob, x, newX, path, mobVecCtrlObj(mob), readBack, dblX, ctrl);
     }
 }
@@ -4783,8 +5024,91 @@ void __fastcall summonTryDoingAttackManual_hook(void* pSummon, void* edx, int tC
     g_pPullSummon = pSummon;
     summonTryDoingAttackManual(pSummon, tCur);
     g_pPullSummon = nullptr;
-    applySummonPull(pSummon);
+    applyPullToPos(gobjPos(pSummon));
     g_pullTargets.clear();
+}
+
+// ===== Chain pull for magic skills ===========================================================
+// The Snatch branch in TryDoingMeleeAttack (g_pullSkills) is melee-only, so a skill that has to
+// run on the magic damage formula cannot use it. This does the same job on the magic path, with
+// the vacuum already written for summons: collect the mobs the cast hit, then drag them onto the
+// caster with applyPullToPos, which keeps all of its safety checks (only mobs this client
+// controls, no bosses, same platform, deadzone).
+//
+// The hit set comes from CMobPool::FindHitMobInRect -- the client's own gather, called by
+// TryDoingMagicAttack once it has the skill's rect. Collecting there rather than from a damage
+// hook matters: on the magic path CalcDamage::MDamage is invoked with no usable per-target mob
+// (see the note in drop_off_damage_skills), so the damage hooks cannot name the targets.
+// EMPTY, and it should stay that way unless something changes. 2421003's pull lives on the server
+// now (AbstractDealDamageHandler.pullStandoffFor -> Monster.shove -> resetMobPosition).
+//
+// Why the client cannot do it: reseating CVecCtrl moves the mob locally but leaves its CMovePath
+// describing the old route, so the move packet that follows carries no movement entries. The
+// server's MoveLifeHandler wraps updatePosition in `catch (EmptyMovementException)` and silently
+// drops it, keeps its own position, and wins the next time anything refreshes -- the mob springs
+// back. Flushing the path by hand (CMob::GenerateMovePath with a negative action) does not help
+// for the same reason: there are no entries to flush.
+static const std::vector<int> g_magicPullSkills = {
+};
+
+static bool g_bMagicPullActive = false;   // true only inside a pulling cast's TryDoingMagicAttack
+
+// EIGHT stack args, from `retn 20h` at 0x00678603 -- NOT the nine the mangled name claims. Same
+// stale-symbol trap as ShowSkillEffect and CMob::OnHit (see the note above doActiveSkills): the
+// exported name is left over from a build whose signature no longer matches. A ninth arg here
+// leaks 4 bytes of stack per call, and every attack in the game calls this.
+//
+// The return value is packed, not a plain count: `eax = (secondCount << 16) | nFound`
+// (0x006785F6..0x006785FD). Only the low half is the number of mobs written to apMob.
+// Arg count verified two ways, because the symbol cannot be trusted: `retn 20h` at 0x00678603 pops
+// 32 bytes, and the call site in TryDoingMagicAttack (0x009565A9..0x009565BE) pushes exactly 8 --
+// rect, mob array, a count, then five zeros. EIGHT stack args.
+auto pFindHitMobInRect = (int(__thiscall*)(void*, const RECT*, void**, int, void*, int, int,
+        unsigned int, int))0x00678476;
+
+int __fastcall FindHitMobInRect_hook(void* pPool, void* edx, const RECT* pRect, void** apMob,
+        int nMax, void* pExclude, int a6, int a7, unsigned int a8, int a9) {
+    const int nRet = pFindHitMobInRect(pPool, pRect, apMob, nMax, pExclude, a6, a7, a8, a9);
+    const int nCount = nRet & 0xFFFF;
+    if (!g_bMagicPullActive || !apMob || nCount <= 0) {
+        return nRet;
+    }
+    for (int i = 0; i < nCount && i < nMax; ++i) {
+        Mob* mob = reinterpret_cast<Mob*>(apMob[i]);
+        if (!mob || IsBadReadPtr(mob, sizeof(Mob))) {
+            continue;
+        }
+        if (std::find(g_pullTargets.begin(), g_pullTargets.end(), mob) == g_pullTargets.end()) {
+            g_pullTargets.push_back(mob);
+        }
+    }
+    return nRet;   // packed -- hand the caller back exactly what the client returned
+}
+
+// 0x0095571F is the FUNCTION ENTRY (mov eax, imm32 / call __EH_prolog). 0x009557BD, which is where
+// its body happens to be readable from, is mid-function -- hooking that address writes the detour
+// jmp over live instructions and every magic cast dies on a corrupt stack.
+auto pTryDoingMagicAttack = (int(__thiscall*)(void*, SKILLENTRY*, int, int, int))0x0095571F;
+
+int __fastcall TryDoingMagicAttack_hook(void* pUser, void* edx, SKILLENTRY* pSkill, int a2, int a3,
+        int a4) {
+    const int nSkillID = (pSkill && !IsBadReadPtr(pSkill, sizeof(SKILLENTRY))) ? pSkill->skillId : 0;
+    const bool bPull = std::find(g_magicPullSkills.begin(), g_magicPullSkills.end(), nSkillID)
+            != g_magicPullSkills.end();
+    if (!bPull) {
+        return pTryDoingMagicAttack(pUser, pSkill, a2, a3, a4);
+    }
+
+    g_pullTargets.clear();
+    g_bMagicPullActive = true;
+    const int nRet = pTryDoingMagicAttack(pUser, pSkill, a2, a3, a4);
+    g_bMagicPullActive = false;
+    const POINT* casterPos = gobjPos(pUser);
+    PULL_LOG("[pull] magic skill=%d gathered=%d casterPos=%s ret=%d", nSkillID,
+            (int)g_pullTargets.size(), casterPos ? "ok" : "NULL", nRet);
+    applyPullToPos(casterPos);
+    g_pullTargets.clear();
+    return nRet;
 }
 
 // ===== Rising Toss for other skills ========================================================
@@ -5028,6 +5352,8 @@ static const std::vector<int> g_magicSummonSkills = {
     3601021,
     3601022,
     3601023,
+    3601026,
+    2421011,
 };
 
 static bool IsMagicSummonSkill(int nSkillID) {
@@ -5884,6 +6210,10 @@ void AttachSkillEdits() {
     // Summon pull: brackets the attack so the damage hooks can collect the mobs that got hit,
     // then drags the ones we control toward the summon. Dormant while g_summonPullSkills is empty.
     ATTACH_HOOK(summonTryDoingAttackManual, summonTryDoingAttackManual_hook);
+    // Same vacuum on the magic path, for g_magicPullSkills. The FindHitMobInRect hook only
+    // collects while a pulling cast is in flight, so every other caller is untouched.
+    ATTACH_HOOK(pTryDoingMagicAttack, TryDoingMagicAttack_hook);
+    ATTACH_HOOK(pFindHitMobInRect, FindHitMobInRect_hook);
 
     // Rising Toss for arbitrary skills, two caves in CMob::OnHit:
     //   0x00668D72 - open the Aran-only gate so listed skills reach GenerateMovePath at all
@@ -5977,6 +6307,8 @@ void AttachSkillEdits() {
     skillHacks();
     changeMagicAttacks();
     AttachSkillOffsetMod();
+    PatchCustomEnergyCharge();
+    ATTACH_HOOK(pGetEffectUOL, GetEffectUOL_hook);
     // Passive-upgrades-another-skill registry (skillupgrade.cpp). Hooks SKILLENTRY::GetLevelData,
     // so it has to sit after the level-data-reading patches above rather than before them.
     AttachSkillUpgrades();

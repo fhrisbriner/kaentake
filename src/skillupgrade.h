@@ -23,6 +23,11 @@ constexpr int kBulletCount = 0x100;
 constexpr int kMobCount = 0x130;
 }   // namespace SkillField
 
+// The local character's learned level in a skill, clamped to its master level, or 0 when the
+// character has no points in it. Safe to call at any time: it answers 0 while CSkillInfo or
+// CWvsContext are still null, which they are for much of startup.
+int GetLearnedSkillLevelSafe(int nSkillID);
+
 // Bonus this character's learned skills currently add to `nTargetSkillID`'s `nFieldOff`.
 // 0 when nothing applies. Exposed so other modules (tooltips, damage preview) can agree with
 // what combat does.

@@ -2,7 +2,10 @@
 #include "debug.h"
 #include <windows.h>
 #include <strsafe.h>
+#include <algorithm>
 #include <ctime>
+#include <string>
+#include <vector>
 
 
 void DebugMessage(const char* pszFormat, ...) {
@@ -83,6 +86,53 @@ namespace {
 
 constexpr DWORD kLogFlushIntervalMs = 1000;
 
+// One log per run, in a logs\ folder beside the executable -- the same folder the launcher already
+// uses for launcher.log and updater.log. A single appended MapleNight.log grew past 60MB across
+// sessions, which made "what happened in THIS run" an archaeology exercise and locked the whole
+// history behind one handle while the client held it.
+//
+// Name: MapleNight_<YYYYMMDD-HHMMSS>_<pid>.log. The pid matters as well as the timestamp: the
+// launcher and the injected client are separate processes that can start inside the same second
+// and both link this file.
+constexpr int kLogsToKeep = 20;
+
+// Deletes the oldest MapleNight_*.log files, keeping the newest kLogsToKeep (this run's included,
+// since it is created first). Scoped to our own name pattern inside our own logs folder -- it will
+// not touch launcher.log, updater.log, or anything else living there.
+void PruneOldLogs(const std::string& sDir) {
+    WIN32_FIND_DATAA fd{};
+    const std::string sPattern = sDir + "MapleNight_*.log";
+    HANDLE hFind = FindFirstFileA(sPattern.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    struct Entry {
+        std::string sName;
+        ULONGLONG uWritten;
+    };
+    std::vector<Entry> files;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            continue;
+        }
+        ULARGE_INTEGER t;
+        t.LowPart = fd.ftLastWriteTime.dwLowDateTime;
+        t.HighPart = fd.ftLastWriteTime.dwHighDateTime;
+        files.push_back({ fd.cFileName, t.QuadPart });
+    } while (FindNextFileA(hFind, &fd));
+    FindClose(hFind);
+
+    if (files.size() <= static_cast<size_t>(kLogsToKeep)) {
+        return;
+    }
+    std::sort(files.begin(), files.end(),
+            [](const Entry& a, const Entry& b) { return a.uWritten > b.uWritten; });
+    for (size_t i = kLogsToKeep; i < files.size(); ++i) {
+        DeleteFileA((sDir + files[i].sName).c_str());
+    }
+}
+
 struct LogState {
     CRITICAL_SECTION cs{};
     FILE* f = nullptr;
@@ -102,9 +152,25 @@ struct LogState {
         if (pLastSlash) {
             *(pLastSlash + 1) = '\0';
         }
-        StringCbCatA(szPath, sizeof(szPath), "MapleNight.log");
 
-        fopen_s(&f, szPath, "a");
+        SYSTEMTIME st{};
+        GetLocalTime(&st);
+        char szFile[64];
+        StringCbPrintfA(szFile, sizeof(szFile), "MapleNight_%04u%02u%02u-%02u%02u%02u_%lu.log",
+                st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+                GetCurrentProcessId());
+
+        // logs\ beside the exe. If it cannot be made (read-only install, odd permissions) fall
+        // back to the old single file rather than losing logging altogether.
+        std::string sDir = std::string(szPath) + "logs\\";
+        const bool bHaveDir = CreateDirectoryA(sDir.c_str(), nullptr)
+                || GetLastError() == ERROR_ALREADY_EXISTS;
+        std::string sLog = bHaveDir ? (sDir + szFile) : (std::string(szPath) + "MapleNight.log");
+
+        fopen_s(&f, sLog.c_str(), "a");
+        if (f && bHaveDir) {
+            PruneOldLogs(sDir);
+        }
         if (f) {
             setvbuf(f, nullptr, _IOFBF, 64 * 1024);
         }

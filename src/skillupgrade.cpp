@@ -55,7 +55,7 @@ static void** const kppWvsContext = reinterpret_cast<void**>(0x00BE7918);
 // when they changed.
 static auto pGetLevelData = reinterpret_cast<void*(__thiscall*)(void*, int)>(0x00760F23);
 
-static int GetLearnedSkillLevel(int nSkillID) {
+int GetLearnedSkillLevelSafe(int nSkillID) {
     void* pInfo = *kppSkillInfo;
     void* pContext = *kppWvsContext;
     if (!pInfo || !pContext) {
@@ -108,7 +108,7 @@ int GetSkillUpgradeBonus(int nTargetSkillID, int nFieldOff) {
         if (up.nTargetSkillID != nTargetSkillID || up.nFieldOff != nFieldOff) {
             continue;
         }
-        const int nSourceLevel = GetLearnedSkillLevel(up.nSourceSkillID);
+        const int nSourceLevel = GetLearnedSkillLevelSafe(up.nSourceSkillID);
         if (nSourceLevel <= 0) {
             continue;
         }
