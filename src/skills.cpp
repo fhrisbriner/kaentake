@@ -6236,6 +6236,15 @@ __declspec(naked) void FireArrow() {
 DWORD dwFireBulletAdd = 0x00956445;
 DWORD dwFireBulletSucc = 0x0095645B;
 DWORD dwFireBulletRet = 0x0095644E;
+// The ball gate in TryDoingMagicAttack. At 0x00956445 the client tests the skill id against
+// {2121003, 2221003, 2321003} and, on a match, loads the skill's `ball` WZ node as a Gr2D layer
+// and gives it a velocity (0x0095645B) -- the projectile that flies out at the target. Everything
+// else skips to 0x00956500 and the magic hit is instant, with no ball drawn.
+//
+// This cave replaces the first two compares of that chain, so the list here IS the set of ball
+// magic skills; a miss falls back to 0x0095644E, which is the client's own surviving 2321003
+// compare. A skill listed here needs a `ball` node in its WZ or the branch finds an empty path
+// and falls through to the instant hit anyway.
 __declspec(naked) void FireArrowBullet() {
     __asm {
         cmp dword ptr[ebp - 0x14], 2221003
@@ -6245,6 +6254,8 @@ __declspec(naked) void FireArrowBullet() {
         cmp dword ptr[ebp - 0x14], 2301005
         je success
         cmp dword ptr[ebp - 0x14], 2321007
+        je success
+        cmp dword ptr[ebp - 0x14], 2121041   // ball: sub[16] in Data/Skill/212.img
         je success
         jmp dwFireBulletRet
         success :
