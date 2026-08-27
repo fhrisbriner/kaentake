@@ -8,6 +8,7 @@
 #include "wvs/exception.h"
 #include "wvs/util.h"
 #include "ztl/ztl.h"
+#include "weather.h"
 
 #include <windows.h>
 #include <comdef.h>
@@ -267,8 +268,41 @@ static void VerboseTraceStage() {
     }
 }
 
+// Weather per-frame drivers (weather*.cpp). They live HERE and not in the field pipeline because
+// CMapLoadable::LoadMap has exactly one call site, in CField's stage-entry path, so it runs on
+// field ENTRY and never on exit; the frame tick is the only place a per-field module can watch
+// its own field disappear.
+extern void Weather_Tick();          // drops the captured field layers when the field goes away
+extern void WeatherPuddle_Frame();   // standing water
+extern void WeatherAccum_Frame();    // settled snow / leaves / petals
+extern void WeatherSplash_Frame();   // per RENDERED frame: at the 30 ms logic rate the spawn rate
+                                     // beats against the frame rate and splashes arrive in bursts
+extern void WeatherMove_Frame();     // what the sky does to walking
+extern void WeatherMove_Restore();   // ...and putting the client's constants back
+extern void WeatherSway_Frame();     // foliage that bends
+
 void CWvsApp::CallUpdate_hook(int tCurTime) {
     VerboseTraceStage();
+
+    Weather_Tick();
+
+    // The five per-frame effects, here rather than in the 30 ms logic tick, which is too coarse
+    // to spawn against. The inner gate splits them by what they need: four need a SKY for things
+    // to fall out of, while foliage sway needs only air and light and so also runs underwater.
+    if (Weather::IsFieldActive()) {
+        if (Weather::HasFallingSky()) {
+            WeatherSplash_Frame();
+            WeatherPuddle_Frame();
+            WeatherAccum_Frame();
+            WeatherMove_Frame();   // must follow WeatherAccum_Frame: the footing reads its level
+        } else {
+            // Underwater. A backstop, not a repair: LoadMap_hook's first statement is
+            // ReleaseField, which reaches WeatherMove_Restore before this field draws a frame.
+            WeatherMove_Restore();
+        }
+        WeatherSway_Frame();
+    }
+
     if (m_bFirstUpdate) {
         m_tUpdateTime = tCurTime;
         m_bFirstUpdate = 0;

@@ -98,6 +98,23 @@ void AttachBagWindowMod();
 void BagWindow_OnLeaveField();   // storagebag.cpp — close the bag window on logout/stage exit
 void AttachMemStat();            // memstat.cpp — samples memory around CField::Init (map change)
 
+// weather.cpp + weatherfx.cpp + lamps.cpp. One entry point for the whole render half: lamps.cpp's
+// own attach is called from inside it, because MakeObj is one more member of the same
+// CMapLoadable pipeline. Owns seven addresses -- LoadMap (0x00639B3D), Update (0x006399EF),
+// RestoreTile (0x0063A100), RestoreObj (0x0063AA7E), RestoreBack (0x0063CBBA), MakeBack
+// (0x0063CD4E), CNpcPool::OnNpcEnterField (0x006D9993) -- plus IWzGr2D::CreateLayer (0x00426C7E)
+// as its layer-capture point and MakeObj (0x0063AD16) for lamps. Disjoint from resolution.cpp,
+// which owns RestoreViewRange, the MakeGrid cave and the native weather WrapClip PatchCall.
+//
+// MUST install after PacketHooks() (the world clock arrives through that dispatcher as 0x373D)
+// and after AttachResolutionMod() (weatherwind reads back a fall-distance immediate that
+// resolution.cpp rewrites).
+void AttachWeatherMod();
+// weatherwind.cpp: one code cave at 0x006406F3 replacing branch 0's per-particle horizontal
+// spread with a server-seeded prevailing gust. Independent of AttachWeatherMod -- it patches
+// inside the weather BUILDER, which that module does not touch.
+void AttachWeatherWindMod();
+
 // Per-frame ticks, driven from CWvsApp::CallUpdate_hook. Both self-throttle on GetTickCount, so
 // calling them every frame is cheap; the intervals live next to their implementations.
 void ResMan_FlushTick();         // resman.cpp  — periodic IWzResMan::FlushCachedObjects
@@ -259,6 +276,11 @@ inline void AttachClientHooks() {
     // the window reads, and the window's own detour dispatches into it.
     (AttachWeaponTintMod());
     (AttachColoringPrismMod());
+    // Weather. AFTER PacketHooks() (0x373D arrives through that dispatcher) and AFTER
+    // AttachResolutionMod() (weatherwind reads an immediate resolution.cpp rewrites), and before
+    // the first stage is constructed -- LoadMap fires on the very first map.
+    (AttachWeatherMod());
+    (AttachWeatherWindMod());
 }
 template <typename T>
 constexpr auto CastHook(T fn) -> void* {

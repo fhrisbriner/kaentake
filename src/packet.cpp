@@ -5,6 +5,8 @@
 
 #include "constants.h"
 #include "hook.h"
+#include "weather.h"
+#include "lamps.h"
 //
 // Created by Gwen on 4/8/2026.
 //
@@ -87,6 +89,12 @@ static constexpr uint16_t kWeaponTintSyncOpcode = 0x372F;
 // Subtype 4 of that packet: an NPC opened the prism window; there is no tint payload.
 static constexpr uint8_t  kWeaponTintOpenWindowSubtype = 4;
 
+// S2C LP_WeatherSync / LP_LampPreview (weather.cpp, lamps.cpp). Same custom block again: the
+// stock v83 client has no handler for either, so both are swallowed here. The wire format is
+// owned by server/weather/WeatherPackets.java and server/lamp/LampPackets.java.
+static constexpr uint16_t kWeatherSyncOpcode  = 0x373D;
+static constexpr uint16_t kLampPreviewOpcode  = 0x373F;
+
 typedef void(__thiscall* CClientSocket__ProcessPacket_t)(uintptr_t ecx, CInPacket* iPacket);
 auto _CClientSocket__ProcessPacket = reinterpret_cast<CClientSocket__ProcessPacket_t>(0x004965F1);
 
@@ -164,6 +172,23 @@ void __fastcall CClientSocket__ProcessPacket(uintptr_t ecx, uintptr_t edx, CInPa
                 return;
             }
             try { WeaponTint_HandleSync(iPacket); } catch (...) {}
+            return;
+        }
+
+        // ---- Weather / world clock (weather.cpp) ---------------------------------------
+        // SWALLOWED like the three above: the v83 client has no handler for 0x373D. The handler
+        // runs on the RECEIVE THREAD and writes atomics only -- no UI, no COM -- which is what
+        // makes that safe. It skips the opcode relative to the current offset, so it is handed
+        // the packet with the cursor still on the opcode, exactly as ProcessPacket left it.
+        if (opcode == kWeatherSyncOpcode) {
+            try { Weather_HandleWorldState(iPacket); } catch (...) {}
+            return;
+        }
+        // Lamp placement preview (lamps.cpp). The lamp LAYER is switched off in lamps.cpp, but
+        // the route costs nothing and keeps the !lamp survey tool usable if it is ever turned
+        // back on. Swallowed for the same reason.
+        if (opcode == kLampPreviewOpcode) {
+            try { Lamp_HandlePreviewPacket(iPacket); } catch (...) {}
             return;
         }
 

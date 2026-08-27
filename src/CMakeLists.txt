@@ -26,6 +26,8 @@ add_library(injector SHARED
         debug.cpp
         hook.cpp
         skills.cpp
+        skillupgrade.cpp
+        skillupgrade.h
         packet.cpp
         mapfadeobject.cpp
         mapfadeobject.h
@@ -37,6 +39,30 @@ add_library(injector SHARED
         weapontint.cpp
         weapontint.h
         coloringprism.cpp
+
+        # Weather and world clock. weather.cpp owns the six shared CMapLoadable hooks and the
+        # CreateLayer capture chain every other module here files its layers through, so the
+        # first five are one unit: none of them links without the others. Our own day/night
+        # (server-side background swap) stays the night look -- weather.cpp's tint and
+        # weatherfx.cpp's injected sky/moon are held off at their kWeatherNightVisuals switch.
+        weather.cpp
+        weatherfx.cpp
+        weathercanvas.cpp
+        weathersound.cpp
+        weathersplash.cpp
+        weatherwind.cpp
+        weatheraccum.cpp
+        weatherpuddle.cpp
+        weathermove.cpp
+        weathersway.cpp
+        # Compiled but dark: weather.cpp calls into lamps.cpp unguarded, so the file ships and
+        # the layer is switched off inside it (kLampsEnabled).
+        lamps.cpp
+        weather.h
+        weatherfx.h
+        weathercanvas.h
+        lamps.h
+        patch_common.h
 )
 
 target_precompile_headers(injector PRIVATE pch.h)

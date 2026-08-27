@@ -1,4 +1,5 @@
 #include "hook.h"
+#include "skillupgrade.h"
 #include "WzLib/IWzArchive.h"
 #include "wvs/CUserLocal.h"
 #include "wvs/CWvsContext.h"
@@ -742,6 +743,14 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 3421009
+            cmp esi, eax
+            je prepare
+
+            mov eax, 3421002
+            cmp esi, eax
+            je prepare
+
             mov eax, 3411010
             cmp esi, eax
             je summons
@@ -1172,6 +1181,15 @@ void __declspec(naked) doActiveSkills() {
             mov eax, 3221018
             cmp esi, eax
             je shoot
+
+            mov eax, 3211031
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3211012
+            cmp esi, eax
+            je summons
+
 
             mov eax, 3421005
             cmp esi, eax
@@ -1951,6 +1969,8 @@ bool isSkillIDMatched(int nSkillID) {
         3411010,
         3421005,
         3421008,
+        3421002,
+        3421009,
 
         // ===== Sniper =====
         3511003,
@@ -1963,9 +1983,11 @@ bool isSkillIDMatched(int nSkillID) {
         3521012,
         3521052,
 
+        3211012,
         3211014,
         3211016,
         3211015,
+        3211031,
         3221007,
         3221018,
 
@@ -3178,14 +3200,6 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
     //     return pDoActiveSkill(_This, nSkillID, nScanCode, pnConsumeCheck);
     // }
 
-    unsigned char arrayRemoveArrowRain[] = { 0x0F, 0x84, 0x5F, 0x00, 0x00, 0x00 };
-    if (nSkillID == 3411006) {
-        unsigned char arrayApply[] = { 0xE9, 0xF6, 0x00, 0x00, 0x00, 0x90 };
-        Patch1Array(0x0095497e, arrayApply, sizeof(arrayApply));
-    } else {
-        Patch1Array(0x0095497e, arrayRemoveArrowRain, sizeof(arrayRemoveArrowRain));
-    }
-
     if (siegeMode && nSkillID == 3211016) {
         return CUserLocal__DoActiveSkill_Hook(_This, edx, 3601000, nScanCode, pnConsumeCheck);
     }
@@ -3458,7 +3472,7 @@ int(__cdecl hitMobInRect_hook)(int skillId) {
 auto remove_bullet_skill_hook = (int(__cdecl*)(int))0x007667EE;
 
 int(__cdecl remove_bullets)(int nSkillID) {
-    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
+    if (nSkillID == 3001004 || nSkillID == 5111017 || nSkillID == 3421009 || nSkillID == 3211016 || nSkillID == 3601000 || nSkillID == 3601007 || nSkillID == 3411006 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
         return 1;
     }
     return (remove_bullet_skill_hook(nSkillID));
@@ -3604,6 +3618,12 @@ int(__cdecl summondelay)(int nSkillID) {
     if (nSkillID == 5511015) {
         return 300;
     }
+    if (nSkillID == 3211012 && !siegeMode) {
+        return 60000;
+    }
+    if (siegeMode) {
+        return 0;
+    }
     int delay = 2500 - 50 * lvl;
     return delay < 0 ? 0 : delay;
 }
@@ -3676,20 +3696,32 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
 
 auto octHook = (int(__cdecl*)(int))0x00766612;
 int(__cdecl ltrbOcto)(int nSKillID) {
-    return nSKillID == 3211002 || nSKillID == 3411010 || nSKillID == 4111017 || nSKillID == 5511015|| nSKillID == 5511014;
+    return nSKillID == 3211012 || nSKillID == 3411010 || nSKillID == 4111017 || nSKillID == 5511015|| nSKillID == 5511014;
 }
 
 int(__cdecl octopus)(int nSkillID) {
-    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010) {
+    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010 || nSkillID == 3211012) {
         return 1;
     }
     return octHook(nSkillID);
 }
 
+// Puppet aggro instrumentation. CMobPool::SetChaseTargetAll(bSet, pTarget) is the routine the
+// summon-spawn path calls to point controlled mobs at a puppet; logging it says whether the spawn
+// packet reached the retarget at all, which separates "patch did not take" from "retarget ran but
+// the target got wiped again".
+auto pSetChaseTargetAll = (void(__thiscall*)(void*, int, void*))0x00679847;
+void __fastcall SetChaseTargetAll_hook(void* pMobPool, void* edx, int bSet, void* pTarget) {
+    LogInfo("[puppetaggro] SetChaseTargetAll bSet=%d target=%p", bSet, pTarget);
+    pSetChaseTargetAll(pMobPool, bSet, pTarget);
+}
+
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
 int(__cdecl ltrb)(int nSkillID) {
-    if (nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
+    // 3211031 Driving Bolt is in this list because 3221003 is (natively, at 0x0076672F): the
+    // knockback special-cases in TryDoingShootAttack are only reached on the rect-attack path.
+    if (nSkillID == 3211031 || nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -4138,7 +4170,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
 // (WATK for physical, MAD for magic) and the skill damage node %, then applies the mastery range
 // roll plus level + defense mitigation. magicDefense picks MDDamage over PDDamage for the mob.
 static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int attack, int skillDmgPct,
-        bool magicDefense) {
+        bool magicDefense, bool bApplyMitigation) {
     double base = statTerm * attack / 100.0;
     double dmg = base * (skillDmgPct / 100.0);
 
@@ -4154,7 +4186,16 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
     MobTemplate* tmpl = (a3 && !IsBadReadPtr(mob, sizeof(Mob))) ? mob->m_pTemplate : nullptr;
     (int)statTerm, attack, skillDmgPct, magicDefense, a3, mob, tmpl;
 
-    // Same level + defense mitigation as non-summon skills.
+    // Same level + defense mitigation as non-summon skills. Callers that go on to apply
+    // CalcSkillDamageMultiplier pass bApplyMitigation=false, because that covers the same ground on
+    // a different curve and running both mitigates twice.
+    if (!bApplyMitigation) {
+        int early = (int)dmg;
+        if (early <= 0 && base > 0.0) {
+            early = 1;
+        }
+        return early;
+    }
     int playerLevel = a5->nLevel.Fuse();
     int mobLevel = a3->nLevel;
     if (playerLevel + 5 < mobLevel) {
@@ -4192,9 +4233,130 @@ static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int a
 // it keeps a new skill consistent with the rest of the server instead of quietly on its own curve.
 // statTerm = topMAD with attack = 100 makes `statTerm * attack / 100` collapse back to topMAD.
 static int finishSummonDamage(MobStat* a3, BasicStat* a5, double statTerm, int attack, int skillDmgPct,
-        bool magicDefense);
+        bool magicDefense, bool bApplyMitigation = true);
 
-int MagicSkillDamageOnMob(void* pMobRaw, int nSkillDmgPct) {
+// Per-target damage multiplier for a hand-built attack, mirroring drop_off_damage_skills.
+//
+// drop_off_damage_skills is the client's own hook and cannot be reused directly: it recovers its
+// Mob* from `aDamage - 0x18`, which is only a Mob* on the melee/shoot paths, and it writes back
+// into a fixed 15-slot damage array. A skill that builds its own attack has the Mob* in hand and
+// one line at a time, so the same math is expressed here against those inputs instead.
+//
+// Everything below is deliberately the SAME curve as that hook -- level penalty, mob defence,
+// poison bonus, Master Skies airborne bonus, boss modifier, order drop-off -- so a skill that goes
+// through this path is not quietly on a formula of its own.
+static double CalcSkillDamageMultiplier(Mob* pMob, int nSkillID, int nOrder) {
+    double dMultiplier = 1.0;
+    double incRate = 0.0;
+    double levelMult = 1.0;
+    double defMult = 1.0;
+    double poisonMult = 1.0;
+    double air = 1.0;
+    double bossMult = 1.0;
+
+    if (nSkillID == 3601007 || nSkillID == 3211015) {
+        incRate = 0.1;
+    }
+    if (nSkillID == 3001004 || nSkillID == 3201005 || nSkillID == 321015) {
+        incRate = -0.2;
+    }
+    if (sharpenlevel > 0) {
+        incRate += sharpenlevel * 0.01;
+    }
+
+    // Same sanity gate as the hook: a mob level outside 1..400 means the pointer is not a mob we
+    // can trust, and a garbage level drives levelMult negative -> a floored 0 -> false immunity.
+    int mobLevel = (pMob && !IsBadReadPtr(pMob, sizeof(Mob))) ? pMob->m_stat.nLevel : 0;
+    if (pMob && mobLevel >= 1 && mobLevel <= 400) {
+        int playerLevel = CWvsContext::GetInstance()->get_m_basicStat().nLevel.Fuse();
+        if (playerLevel + 10 < mobLevel) {
+            levelMult = 1.0 - 0.01 * (mobLevel - playerLevel);
+            if (playerLevel + 20 < mobLevel) {
+                levelMult = .8 + (mobLevel - playerLevel - 20) * -0.02;
+            }
+            if (levelMult < 0.00) {
+                levelMult = 0.00;
+            }
+        }
+        if (pMob->m_pTemplate && !IsBadReadPtr(pMob->m_pTemplate, sizeof(MobTemplate))) {
+            if (pMob->m_pTemplate->bIsBoss.Fuse() != 0) {
+                bossMult = 1.0 + (0.015 * hermitBoss);
+            }
+            int wt = get_weapon_type();
+            bool magic = (wt == 32 || wt == 37 || wt == 38);
+            double mobDef = magic ? pMob->m_pTemplate->nMDDamage.Fuse()
+                                  : pMob->m_pTemplate->nPDDamage.Fuse();
+            mobDef = applyMobDefenseStat(&pMob->m_stat, mobDef, magic);
+            if (mobDef > 0.0) {
+                defMult = 1000.0 / (1000.0 + mobDef);
+            }
+        }
+        int poisonReason = *reinterpret_cast<int*>(reinterpret_cast<char*>(&pMob->m_stat) + 0xB0);
+        if (poisonBonusLevel > 0 && poisonReason != 0) {
+            poisonMult = 1.0 + 0.02 * poisonBonusLevel;
+        }
+    }
+
+    if (masterSkies > 0) {
+        CUserLocal* localUser = *reinterpret_cast<CUserLocal**>(0x00BEBF98);
+        if (localUser) {
+            CVecCtrl* pCv = CVecCtrl::FromInterface(localUser->m_pvc);
+            if (pCv && (IsFalling(pCv) || IsFreeFalling(pCv))) {
+                air = 1.0 + 0.02 * masterSkies;
+            }
+        }
+    }
+
+    // Order drop-off is per TARGET, so nOrder is this mob's index in the hit list.
+    if (incRate != 0.0) {
+        dMultiplier += nOrder * incRate;
+    }
+    if (dMultiplier <= 0) {
+        dMultiplier = 0;
+    }
+    return dMultiplier * levelMult * defMult * poisonMult * air * bossMult;
+}
+
+// The player's critical rate and damage, read from whichever crit skill their job uses.
+//
+// Both come out of that skill's SKILLLEVELDATA, at the offsets the client's own reader uses
+// (sub_765095 @0x00765095, whose two out-params land in CalcDamage::PDamage's var_40 and var_34 --
+// and var_34 is the field the CritMul patch at 0x00790190 multiplies by, which is what identifies
+// it as the damage rather than the rate):
+//     +0xF4  prop    -- crit chance, percent
+//     +0xD0  damage  -- crit damage, percent (200 = double)
+//
+// Returns false with nothing written when the job has no crit skill or it is unlearned.
+static bool RollCritical(int& nCritDamagePct) {
+    if (critSkillID == 0) {
+        return false;
+    }
+    const int nRate = GetSkillLevelDataLong(critSkillID, 0xF4);
+    if (nRate <= 0) {
+        return false;
+    }
+    std::uniform_int_distribution<int> roll(1, 100);
+    if (roll(rng) > nRate) {
+        return false;
+    }
+    int nDmg = GetSkillLevelDataLong(critSkillID, 0xD0);
+    if (nDmg <= 100) {
+        nDmg = 100;   // a crit is never a penalty, whatever the WZ says
+    }
+    nCritDamagePct = nDmg;
+    return true;
+}
+
+// nSkillID != 0 opts into the full per-target treatment every other skill gets:
+// CalcSkillDamageMultiplier (level penalty, mob defence, poison, airborne, boss, order drop-off)
+// plus a critical roll. finishSummonDamage's own level/defence pass is skipped in that mode --
+// applying both would mitigate twice, on two different curves.
+//
+// nSkillID == 0 keeps the original behaviour exactly, which is what the magic summons rely on.
+int MagicSkillDamageOnMob(void* pMobRaw, int nSkillDmgPct, int nSkillID, int nOrder, int* pbCritOut) {
+    if (pbCritOut) {
+        *pbCritOut = 0;
+    }
     Mob* pMob = static_cast<Mob*>(pMobRaw);
     if (!pMob || IsBadReadPtr(pMob, sizeof(Mob)) || nSkillDmgPct <= 0) {
         return 0;
@@ -4204,8 +4366,30 @@ int MagicSkillDamageOnMob(void* pMobRaw, int nSkillDmgPct) {
         return 0;
     }
     BasicStat& bs = CWvsContext::GetInstance()->get_m_basicStat();
-    return finishSummonDamage(&pMob->m_stat, &bs, static_cast<double>(topMAD), 100,
-                              nSkillDmgPct, /*magicDefense=*/true);
+
+    if (nSkillID == 0) {
+        return finishSummonDamage(&pMob->m_stat, &bs, static_cast<double>(topMAD), 100,
+                                  nSkillDmgPct, /*magicDefense=*/true);
+    }
+
+    double dmg = finishSummonDamage(&pMob->m_stat, &bs, static_cast<double>(topMAD), 100,
+                                    nSkillDmgPct, /*magicDefense=*/true,
+                                    /*bApplyMitigation=*/false);
+    dmg *= CalcSkillDamageMultiplier(pMob, nSkillID, nOrder);
+
+    int nCritPct = 100;
+    if (RollCritical(nCritPct)) {
+        dmg *= nCritPct / 100.0;
+        if (pbCritOut) {
+            *pbCritOut = 1;
+        }
+    }
+
+    int result = static_cast<int>(dmg);
+    if (result <= 0) {
+        result = 1;   // never collapse a real hit into a 0 -- the engine reads that as a miss
+    }
+    return result;
 }
 
 void SummonPull_OnHit(MobStat* pStat); // summon pull, defined with the rest of that block below
@@ -4980,7 +5164,7 @@ int(__fastcall DoActiveSkill_Prepare_t)(void* _this, void* edx, int* pskill, int
 auto is_keydown_skill = (int(__cdecl*)(int))0x004FB08F;
 
 int(__cdecl is_keydown_skill_t)(int nSkillID) {
-    if (nSkillID == 3121004 || nSkillID == 5221004 || nSkillID == 3111009) {
+    if (nSkillID == 3421002 || nSkillID == 5221004 || nSkillID == 3421009) {
         return 1;
     }
     if (nSkillID == 1201013 || nSkillID == 1201016 || nSkillID == 2411011) {
@@ -5157,17 +5341,29 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
 auto isMoveableSkill = (int(__cdecl*)(int))0x0095F96F;
 
 int(__cdecl isMoveableSkillt)(int nSkillID) {
-    if (nSkillID == 3111009 || nSkillID == 3121004 || nSkillID == 5221004) {
+    if (nSkillID == 3421009 || nSkillID == 3421002 || nSkillID == 5221004) {
         return 1;
     }
-        return isMoveableSkill(nSkillID);
+    return isMoveableSkill(nSkillID);
 }
+
+// Wind Archer Hurricane is installed as a skill-id alias further down, next to the Ice Demon one.
+// See InstallWindArcherHurricaneAlias.
 
 
 auto _is_attack_area_set_by_data = (int(__cdecl*)(int))0x7666CB;
 
 int(__cdecl is_attack_area_set_by_data)(int nSkillID) {
-    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3111009 || nSkillID == 3411006 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
+    if (nSkillID == 4101008 || nSkillID == 4111012 || nSkillID == 5101012 || nSkillID == 5111017 || nSkillID == 3421009 || nSkillID == 3411006 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
+        return 1;
+    }
+    // 3221018 Cluster Bomb. The native list at 0x007666CB is the AREA shoot skills -- Arrow
+    // Rain, Arrow Eruption, 5211002..4, 5221008 and the Cygnus equivalents -- whose hit box is
+    // read from the skill's own lt/rb rather than the single-target default. Cluster Bomb's WZ
+    // is authored exactly that way (lt -160,-160 / rb 160,160, mobCount 6), and being a custom
+    // id the client has never heard of, it reaches none of those cases on its own: without this
+    // it fires as a shoot attack but only ever gathers one mob.
+    if (nSkillID == 3221018) {
         return 1;
     }
     return _is_attack_area_set_by_data(nSkillID);
@@ -5327,6 +5523,48 @@ static void InstallSkillIdAlias(DWORD cmpAddr, int cmpLen, const std::vector<int
     WriteProcessMemory(GetCurrentProcess(), (void*)cmpAddr, patch, cmpLen, nullptr);
 }
 
+// The same idea for a site that MATERIALISES the id in a register instead of comparing against an
+// immediate -- `mov esi, 3121004` followed by `cmp eax, esi`. InstallSkillIdAlias cannot serve
+// these: it would emit `mov reg, alias` and then a `je` reading flags the mov never set.
+//
+// Rather than force ZF here, the cave points the REGISTER at the alias when the id in eax is the
+// alias, and leaves it at the original id otherwise. The site's own `cmp eax, reg` then sets ZF by
+// itself. That is the better answer at 0x0095416B specifically, because esi outlives the compare:
+// the branch it feeds lands on `cmp [ebp+var_10], esi` @0x009541DA, a SECOND test that this
+// approach fixes at the same time and that no immediate search would ever have turned up.
+//
+// The original mov is copied verbatim, so the register it targets does not have to be known: the
+// `mov reg, eax` this emits is derived from the opcode's own register number (B8+r -> 89 /r).
+//
+// Exit flags differ from vanilla, which left them alone. Both call sites follow the mov immediately
+// with `cmp eax, reg`, which overwrites them, so nothing observes the difference.
+static void InstallSkillIdAliasMovReg(DWORD movAddr, int aliasSkill) {
+    BYTE orig[5] = {};
+    memcpy(orig, (void*)movAddr, sizeof(orig));
+    if ((orig[0] & 0xF8) != 0xB8) // not `mov r32, imm32` -- refuse rather than emit nonsense
+        return;
+    const BYTE reg = orig[0] & 0x07;
+
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!cave)
+        return;
+
+    BYTE* p = cave;
+    memcpy(p, orig, sizeof(orig)); p += sizeof(orig); // mov reg, <original id>
+    *p++ = 0x3D; memcpy(p, &aliasSkill, 4); p += 4;   // cmp eax, alias
+    *p++ = 0x75; *p++ = 0x02;                         // jne +2 (over the mov below)
+    *p++ = 0x89; *p++ = 0xC0 | reg;                   // mov reg, eax
+    *p++ = 0xE9;                                      // jmp back, to the instruction after the mov
+    DWORD rel = (movAddr + sizeof(orig)) - ((DWORD)p + 4);
+    memcpy(p, &rel, 4);
+
+    BYTE patch[5];
+    patch[0] = 0xE9;
+    DWORD relToCave = (DWORD)cave - movAddr - 5;
+    memcpy(patch + 1, &relToCave, 4);
+    WriteProcessMemory(GetCurrentProcess(), (void*)movAddr, patch, sizeof(patch), nullptr);
+}
+
 // 2421006 behaves as 2221006 (Ice Demon) does, while still being 2421006 everywhere -- the id the
 // server sees, the id the consume/cooldown checks use, the id its own WZ data is read from.
 // These are every hardcoded 2221006 test in the client except the DoActiveSkill routing compare
@@ -5340,6 +5578,43 @@ void InstallIceDemonAlias() {
     InstallSkillIdAlias(0x0098272F, 5, alias); // CUserRemote::OnMagicAttack
     InstallSkillIdAlias(0x00982966, 5, alias); // CUserRemote::OnMagicAttack
     InstallSkillIdAlias(0x00982F9F, 7, alias); // CUserRemote::OnMagicAttack
+}
+
+// 3421002 (Wind Archer Hurricane) behaves as 3121004 (Bowmaster Hurricane) does, on the same terms
+// as the Ice Demon alias above: 3421002 stays 3421002 on the wire, in its own WZ data and in every
+// consume/cooldown check, and 3121004 keeps working -- an alias, not the id swap this used to be.
+//
+// Hurricane is spread far wider through the client than Ice Demon is, because it is a keydown skill
+// and so has to be recognised at every stage of the channel rather than at one attack. These are
+// every hardcoded 3121004 test in the binary except is_keydown_skill @0x004FB08F, which
+// is_keydown_skill_t already answers for 3421002, and which must NOT be aliased as well -- the two
+// mechanisms would both claim the same compare.
+//
+// Miss any one of these and the skill half-works in a way that is genuinely hard to read: it clears
+// whichever gate you did patch and then behaves like a generic attack from there on.
+void InstallWindArcherHurricaneAlias() {
+    const std::vector<int> alias = { 3421002 };
+
+    // --- the local cast path: what the caster's own client does ---
+    InstallSkillIdAlias(0x0094BA70, 5, alias); // CUserLocal::Update -- the keydown repeat itself
+    InstallSkillIdAlias(0x009510CA, 5, alias); // CUserLocal::TryDoingMeleeAttack
+    InstallSkillIdAliasMovReg(0x0095416B, 3421002); // TryDoingShootAttack -- `mov esi, id`; also
+                                                    // covers `cmp [ebp+var_10], esi` @0x009541DA
+    InstallSkillIdAlias(0x009545C4, 5, alias); // CUserLocal::TryDoingShootAttack
+    InstallSkillIdAliasMovReg(0x0095BFB2, 3421002); // OnKeyDownSkillEnd -- `mov ebx, id`
+    InstallSkillIdAlias(0x009692DC, 6, alias); // CUserLocal::DoActiveSkill
+    InstallSkillIdAlias(0x0096AA54, 5, alias); // DoActiveSkill_Prepare -- the ranged-family gate
+    InstallSkillIdAlias(0x0096AE26, 7, alias); // DoActiveSkill_Prepare -- the melee retry
+    InstallSkillIdAlias(0x0096AEF4, 5, alias); // DoActiveSkill_Prepare -- arms the keydown state
+    InstallSkillIdAlias(0x0096D919, 6, alias); // CUserLocal::SendSkillCancelRequest
+
+    // --- the remote render path: what everyone ELSE sees the caster doing ---
+    InstallSkillIdAlias(0x00980452, 5, alias); // CUserRemote::OnAttack
+    InstallSkillIdAlias(0x0098072B, 5, alias); // CUserRemote::OnAttack
+    InstallSkillIdAlias(0x00980773, 5, alias); // CUserRemote::OnAttack
+    InstallSkillIdAlias(0x00980C34, 6, alias); // sub_980BF5, off OnAttack
+    InstallSkillIdAlias(0x00981A74, 6, alias); // CUserRemote::OnShootAttack
+    InstallSkillIdAlias(0x009820AC, 7, alias); // CUserRemote::OnShootAttack
 }
 
 
@@ -5565,6 +5840,25 @@ void _declspec(naked)removeHP() {
     }
 }
 
+int arrowRainJmpBack = 0x00954B3B;
+int arrowRainRJmpBack = 0x00954A79;
+int arJBack = 0x0000954989;
+void _declspec(naked)fixAR() {
+    _asm {
+        cmp eax, 3111003
+        je arrowr
+        cmp eax, 3411006
+        je rarrowr
+        sub eax, 300002
+        jmp arJBack
+
+        arrowr : jmp arrowRainJmpBack
+        rarrowr : jmp arrowRainRJmpBack
+
+
+    }
+}
+
 
 void AttachSkillEdits() {
     // Skip bullet-sprite render for summons whose attack has no bullet-effect WZ node (null path),
@@ -5635,15 +5929,57 @@ void AttachSkillEdits() {
     ATTACH_HOOK(thingyWindArcher, windarcherhook);
     ATTACH_HOOK(SetDamaged_Hook, SetDamaged);
     ATTACH_HOOK(elementCharge, elementChargeHook);
-    ATTACH_HOOK(isKeydownSkill, isKeydownSkillHook);
+   // ATTACH_HOOK(isKeydownSkill, isKeydownSkillHook);
     CodeCave((void*)please, 0x00791C41, 4);
     CodeCave((void*)FlashJumpAll, 0x0096BF0B, 0);
     PatchNop(0x0096C073, 6);
     Patch4(0x00765CFC + 1, 341);
     Patch4(0x00765D19 + 1, 3410000);
+    // 3211031 Driving Bolt == 3221003. The client hardcodes 3221003 in four places; the dispatcher
+    // entry (0x0096804F -> DoActiveSkill_ShootAttack) and the rect-attack classifier
+    // (is_rect_attack_shoot_skill, handled in ltrb() above) are already covered, leaving the three
+    // CUserLocal::TryDoingShootAttack special cases that give the skill its behaviour:
+    //     0x009539A4  field-restriction bail-out (get_field()+0x144 bit 1)
+    //     0x00954E04  gate into the knockback branch
+    //     0x00954E87  knockback branch itself: rolls level-data `prop`, then writes the pushed-to
+    //                 x into the attack entry (type 4) at 0x00954F22
+    // Each site is a three-way `cmp [ebp-10h], imm32` chain over {3121003, 3221003, 13101005} --
+    // the Bowmaster / Marksman / Wind Archer versions of the same skill. 3121003 has no WZ data in
+    // this client (Data/Skill/312.img), so its compare is dead: retarget the imm32 (at +3) instead
+    // of trying to grow the chain. 3221003's own compares stay intact.
+    Patch4(0x009539A4 + 3, 3211031);
+    Patch4(0x00954E04 + 3, 3211031);
+    Patch4(0x00954E87 + 3, 3211031);
+    // Puppet aggro. When the LOCAL player's summon spawns, CSummonedPool::CreateSummoned
+    // (0x0095ADEC) compares the summon's skill id against three hardcoded puppet ids and, on a
+    // match, calls CMobPool::SetChaseTargetAll (0x00679847) which points every active mob's
+    // CVecCtrlMob chase target (+0x250) at the puppet instead of the user. GenerateMovePath reads
+    // that field, so this is the whole of client-side puppet aggro:
+    //     0x0095AEB5  cmp [ebp-10h], 2F785Ah   ; 3111002 Ranger
+    //     0x0095AEBE  cmp [ebp-10h], 30FEFAh   ; 3211002 Sniper  <- moved to 3211012
+    //     0x0095AEC7  cmp [ebp-10h], 0C80EDCh  ; 13111004 Wind Archer
+    // Retarget the Sniper compare (imm32 at +3) at the new id. Independent of the attack gate
+    // (sub_766612 / octopus() below), so the puppet keeps shooting AND pulls aggro.
+    Patch4(0x0095AEBE + 3, 3211012);
+    // SetChaseTargetAll only re-points a mob that ALREADY has a chase target:
+    //     0x006798B1  cmp dword ptr [esi+250h], 0
+    //     0x006798B8  jz  0x006798C3            ; null target -> skip this mob entirely
+    // The server's puppet refresh (Monster.aggroRefreshPuppetVisibility) stops and re-grants
+    // control of every mob around the puppet before it re-sends the summon spawn, and
+    // CMobPool::SetLocalMob -> CVecCtrlMob::SetActive zeroes +0x250 on every re-grant. So by the
+    // time the spawn packet arrives the targets are null and every mob is skipped. NOP the jz so
+    // the retarget applies to all controlled mobs regardless of their current target. Only the
+    // bSet=1 path reaches here; the clear path branches earlier at 0x006798AB.
+    PatchNop(0x006798B8, 2);
+    ATTACH_HOOK(pSetChaseTargetAll, SetChaseTargetAll_hook);
+    CodeCave((void*)shipTorpedoGate, 0x00954972 , 7);
+    CodeCave((void*)fixAR, 0x00954972, 0);
     skillHacks();
     changeMagicAttacks();
     AttachSkillOffsetMod();
+    // Passive-upgrades-another-skill registry (skillupgrade.cpp). Hooks SKILLENTRY::GetLevelData,
+    // so it has to sit after the level-data-reading patches above rather than before them.
+    AttachSkillUpgrades();
     // // Instant FA
     Patch1(0x0095795E, 0x83);
     Patch1(0x0095795E + 1, 0xC0);
@@ -5696,6 +6032,7 @@ void AttachSkillEdits() {
     // cave is still required for them; the DoActiveSkill_Prepare patch below only covers cast skills.
     InstallMeleeCooltimeGate();
     InstallIceDemonAlias();
+    InstallWindArcherHurricaneAlias();
     // Generalize the DoActiveSkill_Prepare cooldown map to ALL prepared/cast skills. Vanilla only
     // ran the cooldown check (@0x96A9CC) and the `map[skill] = now + get_cool_time(skill)` store
     // (@0x96B09C) for 5 hardcoded ids (1121001/1221001/1321001 + 2 others). NOP both `jnz` skips so
