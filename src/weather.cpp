@@ -8,6 +8,7 @@
 #include "weather.h"
 #include "weatherfx.h"
 #include "lamps.h"
+#include <algorithm>
 #include <atomic>
 #include <climits>
 #include <cmath>
@@ -861,17 +862,54 @@ static const int kNoSkyMaps[] = {
 #include "weather_nosky_maps.inc"
 };
 
+// The scratch half of the same idea, and the only one of the two that also silences SWAY.
+// See weather_indoor_maps.inc for which list to put an id in.
+static const int kIndoorMaps[] = {
+#include "weather_indoor_maps.inc"
+};
+
+// Both lists, merged and sorted ONCE, so neither file has to be kept in order by hand.
+//
+// kNoSkyMaps used to be binary searched in place, which made its ascending order load
+// bearing -- an id appended in the wrong place did not fail to build, or fail loudly at
+// runtime; it silently made some arbitrary other map searchable and some other one not.
+// That is a bad property for a list that exists to be added to, and it is the reason the
+// merge sorts rather than requiring sortedness. Both .inc files may now be edited in any
+// order.
+static const std::vector<int>& ExcludedMapIndex() {
+    static std::vector<int> s_v;
+    static bool s_bReady = false;
+    if (!s_bReady) {
+        s_bReady = true;
+        s_v.reserve(_countof(kNoSkyMaps) + _countof(kIndoorMaps));
+        for (int id : kNoSkyMaps)  { if (id >= 0) s_v.push_back(id); }
+        for (int id : kIndoorMaps) { if (id >= 0) s_v.push_back(id); }
+        std::sort(s_v.begin(), s_v.end());
+        s_v.erase(std::unique(s_v.begin(), s_v.end()), s_v.end());
+    }
+    return s_v;
+}
+
 static bool IsExcludedMap(int nFieldId) {
-    int lo = 0, hi = (int)_countof(kNoSkyMaps) - 1;
-    while (lo <= hi) {
-        const int mid = lo + (hi - lo) / 2;
-        if (kNoSkyMaps[mid] == nFieldId) {
+    const std::vector<int>& v = ExcludedMapIndex();
+    return std::binary_search(v.begin(), v.end(), nFieldId);
+}
+
+// The narrower question: is this field one of the hand-named INDOOR maps? True only for
+// weather_indoor_maps.inc, not for the much longer kNoSkyMaps.
+//
+// Separate from IsExcludedMap because the two answers gate different things. Everything on
+// kNoSkyMaps loses its sky, and most of those maps -- tree dungeons, shop fronts under a
+// town's own sky bank -- still have plants and ropes that SHOULD bend; killing sway there
+// would be a regression, not a fix. A map on the indoor list is asserting something
+// stronger: there is a roof, so there is no wind either.
+//
+// Linear, and that is fine: the list is meant to stay short, and this runs once per object
+// during LoadMap rather than per frame. Give it its own sorted index if it ever grows.
+static bool IsIndoorMap(int nFieldId) {
+    for (int id : kIndoorMaps) {
+        if (id >= 0 && id == nFieldId) {
             return true;
-        }
-        if (kNoSkyMaps[mid] < nFieldId) {
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
         }
     }
     return false;
@@ -908,6 +946,12 @@ static bool IsUnderwaterMap(int nFieldId) {
 // structural -- fixed ladders and rails on a building that happens to be in the sky -- and a
 // town suspended in the clouds looks least stable when the parts bolted to it move.
 //
+// Ludibrium, 220xxxxxx, the same case as Orbis: the whole region is built out of toy blocks, and
+// its climbables are moulded rungs and girders set into that construction rather than anything
+// hanging free. Covers the Eos and Helios tower interiors too, which are all inside 220. NOT 221
+// or 222 -- those are Omega Sector and Korean Folk Town, different places that merely sit next to
+// Ludibrium in the numbering.
+//
 // Ranges, for the reason IsUnderwaterMap is one: every map in a block is the same place, and a
 // range cannot drift the way a hand written list would. Add another line here if a region turns
 // out to have rigid climbables; it is deliberately not a per-object test, because the art is
@@ -915,7 +959,9 @@ static bool IsUnderwaterMap(int nFieldId) {
 static bool IsNoRopeSwayField(int nFieldId) {
     const int nArea = nFieldId / 1000000;
     return nArea == 211      // El Nath
-        || nArea == 200;     // Orbis
+        || nArea == 200      // Orbis
+        || nArea == 220     // Ludibrium
+        || nArea == 221;
 }
 
 // Back banks whose backmost base is not only the SKY. Most maps put a sky up there and
@@ -1614,6 +1660,28 @@ void Weather_NoteObjProp(IWzProperty* pObjProp) {
             h = HashPathPart(h, sL1);
             h = HashPathPart(h, sL2);
             g_uObjPathHash = h;
+        }
+        // THE TWO VETOES, BOTH BEFORE ANY CLASSIFIER RUNS.
+        //
+        // Order matters and it is this way round on purpose: everything below promotes an
+        // object, several of the promotions are explicit whitelists, and a whitelist that
+        // could outrank the blacklist would make the blacklist a suggestion. Leaving
+        // g_uObjSwayKind at SWAY_NONE here is the whole mechanism -- the planner never sees
+        // an object it was not told about, so nothing further down has to know these exist.
+        //
+        // g_uObjPathHash is still stamped above, deliberately. A vetoed object is not
+        // invisible to the rest of the file: lamps and the clump tables key off that hash
+        // and have nothing to do with whether the thing bends.
+        //
+        // Indoors: a roof means no wind, so nothing in the room moves. This is the sway half
+        // of what weather_indoor_maps.inc buys; the sky, tint and lamp half is IsExcludedMap
+        // over in FieldHasSky.
+        if (IsIndoorMap(CurrentFieldID())) {
+            return;
+        }
+        // Per-sprite veto, for art the name-driven classifiers below are wrong about.
+        if (WeatherSway_IsBlacklisted(sOS, sL0, sL1, sL2)) {
+            return;
         }
         // Props that are not filed as foliage but move like it, named by weathersway.cpp.
         // Checked before the category match so a hay bundle filed under `market` still

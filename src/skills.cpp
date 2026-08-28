@@ -1354,7 +1354,7 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
-            mov eax, 3601027
+            mov eax, 3601024
             cmp esi, eax
             je shoot
 
@@ -2425,15 +2425,33 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
             mastery = trackMastery(pGetSkillLevel(_this, charData, 3100000, skillEntry), 3100000);
             critSkillID = 3000001;
         }
-        if (jobID == 3120005) {
-            mastery = trackMastery(pGetSkillLevel(_this, charData, 3120005, skillEntry), 3120005);
+        // JOB id, not the skill id. Both archer 4th-job overrides were written as
+        // `jobID == <the mastery skill>` -- 3120005 and 3220004 -- which no job id can ever
+        // equal, so neither block had run since it was written. Bowmaster and Marksman were
+        // left on the 3rd-job mastery set two lines above: 3100000 / 3200000 cap at 50, while
+        // Bow Expert and Marksman Boost reach 90 at level 20, so both classes were rolling
+        // their damage range off a 40-point deficit.
+        //
+        // Gated on the 4th-job skill being LEARNED, which the equivalent blocks for the other
+        // classes are not. Overriding unconditionally would set mastery to 0 for a freshly
+        // advanced Bowmaster who has not put a point in Bow Expert yet -- and 0 does not mean
+        // "no bonus", it means masteryValue stays 0 and they LOSE the 50 they already had from
+        // Bow Mastery. Once a point is in, this behaves exactly like the others.
+        if (jobID == 312) {
+            const int nBowExpert = pGetSkillLevel(_this, charData, 3120005, skillEntry);
+            if (nBowExpert > 0) {
+                mastery = trackMastery(nBowExpert, 3120005);
+            }
         }
         if (jobID == 320 || jobID == 321 || jobID == 322 || jobID == 351 || jobID == 352) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 3200000, skillEntry), 3200000);
             critSkillID = 3000001;
         }
-        if (jobID == 3220004) {
-            mastery  = trackMastery(pGetSkillLevel(_this, charData, 3220004, skillEntry), 3220004);
+        if (jobID == 322) {
+            const int nMarksmanBoost = pGetSkillLevel(_this, charData, 3220004, skillEntry);
+            if (nMarksmanBoost > 0) {
+                mastery = trackMastery(nMarksmanBoost, 3220004);
+            }
         }
         if (jobID == 410 || jobID == 411 || jobID == 412 || jobID == 441 || jobID == 442) {
             mastery = trackMastery(pGetSkillLevel(_this, charData, 4100000, skillEntry), 4100000);
@@ -4292,6 +4310,14 @@ int __fastcall getSpeed_hook(void* thisptr, void* edx) {
 
 auto chainLightning_Hook = (int(__thiscall*)(SKILLENTRY*, int, int, int*, int))0x0075BF50;
 
+// Gates both halves of the extra-target trace -- the FindHitMobInRect sweep log further down and
+// the per-target damage log at the bottom of drop_off_damage_skills. Defined here because the
+// damage hook is the earlier of the two users. OFF: the sweep half sits in a function every attack
+// in the game calls. Flip to 1 to re-check the hit count; the two logs interlock per cast, one
+// [sweep] line naming the rect and how many extra mobs it found, then one [sweep] damage line per
+// target that actually took damage.
+int sweepDebugLog = 0;
+
 // Returns the original AdjustDamageDecRate's BOOL. The caller (TryDoingMeleeAttack @ 0x951e68) does
 // `test eax,eax; jnz` and SKIPS the damage-number display when this is non-zero. A void return left
 // garbage in eax -- non-zero whenever the poison/status branch ran -- so damage numbers vanished on
@@ -4378,7 +4404,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
 
         int poisonReason = *reinterpret_cast<int*>(reinterpret_cast<char*>(&mob->m_stat) + 0xB0);
         if (poisonBonusLevel > 0 && poisonReason != 0) {
-            poisonMult = 1.0 + 0.02 * poisonBonusLevel;
+            poisonMult = 1.0 + 0.015 * poisonBonusLevel;
         }
     }
 
@@ -4452,6 +4478,14 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
     for (i = 0; i < 15; i++) {
         aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult * poisonMult * air
                 * bossMult * magicSwap);
+    }
+    // Temporary, pairs with the [sweep] trace: this hook runs once per TARGET, so the nOrder values
+    // logged for one cast are exactly the mobs that received damage. nOrder 0 alone means the sweep's
+    // extra mob was found but never damaged; 0 and 1 means both were. Drop with sweepDebugLog.
+    if (sweepDebugLog && nSkillID == 3601024) {
+        LogInfo("[sweep] damage skill=%d order=%d line0=%d line1=%d mult=%.2f",
+                nSkillID, nOrder, aDamage[0], aDamage[1], dMultiplier);
+        LogFlush();
     }
     return 0; // BOOL: 0 = let the caller run the normal damage-number display path
 }
@@ -5166,10 +5200,21 @@ static bool g_bMagicPullActive = false;   // true only inside a pulling cast's T
 auto pFindHitMobInRect = (int(__thiscall*)(void*, const RECT*, void**, int, void*, int, int,
         unsigned int, int))0x00678476;
 
+// Temporary: trace of the extra-target sweep MobSweepCave routes 3601024 into. That call is the
+// only FindHitMobInRect in TryDoingShootAttack that passes an exclude-mob, so pExclude tells the
+// sweep apart from the ~dozen other callers without needing the skill id here.
+// sweepDebugLog is defined up by chainLightning_Hook -- see the note there.
 int __fastcall FindHitMobInRect_hook(void* pPool, void* edx, const RECT* pRect, void** apMob,
         int nMax, void* pExclude, int a6, int a7, unsigned int a8, int a9) {
     const int nRet = pFindHitMobInRect(pPool, pRect, apMob, nMax, pExclude, a6, a7, a8, a9);
     const int nCount = nRet & 0xFFFF;
+    if (sweepDebugLog && pExclude && pRect && !IsBadReadPtr(pRect, sizeof(RECT))) {
+        LogInfo("[sweep] rect=(%d,%d)-(%d,%d) %dx%d max=%d exclude=%p -> found=%d",
+                pRect->left, pRect->top, pRect->right, pRect->bottom,
+                pRect->right - pRect->left, pRect->bottom - pRect->top,
+                nMax, pExclude, nCount);
+        LogFlush();
+    }
     if (!g_bMagicPullActive || !apMob || nCount <= 0) {
         return nRet;
     }
@@ -5228,10 +5273,19 @@ struct FinalAttackEntry {
 //
 // 45 = bow, 46 = crossbow. "Mini Inferno" is described in String.wz as a bow final attack.
 static const FinalAttackEntry g_finalAttacks[] = {
-    { 3111003, { 45, 46, 0 } },   // Data/Skill/360.img 3601024/skillType = 3
+    { 3601024, { 45, 46, 0 } },   // Data/Skill/360.img 3601024/skillType = 3
 };
 
 int finalAttackDelayMs = 0;   // 0 = fire on the next Update tick
+
+static bool IsOurFinalAttack(int nSkillID) {
+    for (const FinalAttackEntry& fa : g_finalAttacks) {
+        if (fa.nSkillID == nSkillID) {
+            return true;
+        }
+    }
+    return false;
+}
 
 auto faGetUpdateTime = reinterpret_cast<int(__cdecl*)()>(0x00987257);
 
@@ -5301,6 +5355,13 @@ void ScheduleFinalAttack(void* pUser, int nDelayMs) {
 // have its pass first, and only if it scheduled nothing (the pending slot at +0x2AF8 is still 0)
 // run ours.
 //
+// ...except when the client scheduled a DIFFERENT final attack out of a candidate table that also
+// names one of ours. Arrow Rain and Strafe both carry `finalAttack = {3100001, 3601024}`, and
+// sub_957830 walks that table in order and keeps the LAST entry whose roll passed -- so vanilla
+// Final Attack: Bow won most casts and 3601024 looked broken. When the client's pick is not one of
+// ours, ours gets to roll on top of it and replaces the whole pending block on success. A pick that
+// IS one of ours is already right and is left alone.
+//
 // The client's own `nDelayMs` (0x00955509 computes it as `flightTime + (avatarDelay - flightTime)/3`,
 // ~423ms on a bow) is deliberately IGNORED in favour of finalAttackDelayMs. At 0 the fire routine
 // picks the cast up on the very next CUserLocal::Update tick, which is still inside the attack
@@ -5314,24 +5375,151 @@ void ScheduleFinalAttack(void* pUser, int nDelayMs) {
 auto pFinalAttackSchedule = reinterpret_cast<int(__thiscall*)(void*, const void*, int**, int,
         int)>(0x00957830);
 
+// Traces what the CLIENT'S OWN scheduler decided, which the [finalattack] lines say nothing about
+// -- those only cover our fallback. A skill whose WZ carries a `finalAttack` node (Strafe does:
+// {3601024: weapon 45, 3100001: weapon 45}) is handled entirely by the client, so when its final
+// attack stops firing the answer is in this pass, not ours. Set to 0 once diagnosed.
+int finalAttackDebugLog = 1;
+
 int __fastcall FinalAttackSchedule_hook(void* pUser, void* edx, const void* pCharData,
         int** ppTable, int nSourceSkillID, int nDelayMs) {
     const int nRet = pFinalAttackSchedule(pUser, pCharData, ppTable, nSourceSkillID, nDelayMs);
-    if (!pUser || IsBadReadPtr(pUser, 0x2B04)
-            || *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x2AF8) != 0) {
-        return nRet;   // the client scheduled something of its own -- leave it alone
+    if (!pUser || IsBadReadPtr(pUser, 0x2B04)) {
+        return nRet;
+    }
+    const int nPending = *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x2AF8);
+    if (finalAttackDebugLog) {
+        // Once per (source skill, outcome). The first candidate id in the table is logged too:
+        // the table is SKILLENTRY+0x40, an array of [faSkillId, weaponType...] entries, so a null
+        // or empty one means the skill's WZ has no `finalAttack` node at all.
+        static int s_nLastSource = -1;
+        static int s_nLastPending = -1;
+        int nFirstCandidate = 0;
+        if (ppTable && !IsBadReadPtr(ppTable, sizeof(void*)) && *ppTable
+                && !IsBadReadPtr(*ppTable, sizeof(int))) {
+            int* pFirst = reinterpret_cast<int*>(**reinterpret_cast<int**>(ppTable));
+            if (pFirst && !IsBadReadPtr(pFirst, sizeof(int))) {
+                nFirstCandidate = *pFirst;
+            }
+        }
+        if (s_nLastSource != nSourceSkillID || s_nLastPending != nPending) {
+            s_nLastSource = nSourceSkillID;
+            s_nLastPending = nPending;
+            LogInfo("[faclient] cast %d -> client scheduled %d (table=%p first=%d delay=%d)",
+                    nSourceSkillID, nPending, ppTable ? *ppTable : nullptr, nFirstCandidate,
+                    nDelayMs);
+            LogFlush();
+        }
     }
     // A final attack fires by re-entering TryDoingShootAttack, which calls this scheduler again.
     // The client is safe from the resulting loop only because a final-attack skill's own candidate
     // table (SKILLENTRY+0x40) is empty; ours is a flat list and would happily chain forever at the
     // WZ prop. Refuse to roll when the cast that is asking IS one of our final attacks.
-    for (const FinalAttackEntry& fa : g_finalAttacks) {
-        if (fa.nSkillID == nSourceSkillID) {
-            return nRet;
-        }
+    if (IsOurFinalAttack(nSourceSkillID)) {
+        return nRet;
     }
+    // The client already picked one of ours -- its choice, its delay, nothing to improve on.
+    if (nPending != 0 && IsOurFinalAttack(nPending)) {
+        return nRet;
+    }
+    // Either the client scheduled nothing, or it scheduled a skill that is not ours. Both are cases
+    // where ours should get its roll; ScheduleFinalAttack writes all four fields (+0x2AF4..+0x2B00)
+    // or none, so a failed roll leaves the client's pending block exactly as it was.
     ScheduleFinalAttack(pUser, finalAttackDelayMs);
     return nRet;
+}
+
+// ===== 3601024 skill art =====================================================================
+//
+// 3601024's WZ carries `ball` (3 frames), `tile` (3 + effectDistance) and `special` (7), and the
+// client drew none of them: every path to that art inside CUserLocal::TryDoingShootAttack is gated
+// on a hardcoded skill id. Four id gates in that function now name 3601024, giving it the same
+// treatment Arrow Rain (3111003) gets -- ball, tile, special, and the extra-target sweep.
+//
+// None of this is final-attack specific. The final attack fires by re-entering
+// TryDoingShootAttack -- the very same function a key press reaches through
+// DoActiveSkill_ShootAttack -- so a manual cast picks the art up too. That is also why the art was
+// missing from BOTH: nothing about the final-attack route was suppressing it.
+//
+// `mob` (8 frames + pos/repeat) is deliberately NOT wired here. That node is drawn by CMob for a
+// skill the mob is currently AFFECTED by, off the temporary-stat list the server sends -- there is
+// no attack-time client path to it at all, so it needs a mob status applied server-side.
+static constexpr int kArtSkillID = 3601024;
+
+// Only ONE new cave lives here, for `tile`. The other two gates already belong to code elsewhere
+// in this file, and adding a second cave over either of them is what produced the 0xC000001D
+// "crash on every skill":
+//
+//   ball     0x009545C4 is claimed by InstallWindArcherHurricaneAlias ->
+//            InstallSkillIdAlias(0x009545C4, 5, ...). 3601024 is added to THAT call's id list
+//            instead; the alias machinery exists precisely so one compare can match several ids.
+//
+//   dispatch 0x00954972 is claimed by fixAR (installed from AttachSkillEdits, well after this
+//            file's other caves), which already routes 3111003 -> 0x00954B3B. 3601024 is added to
+//            fixAR's own id chain. A cave at 0x0095496F straddles it: 8 NOPed bytes wipe the
+//            first five of fixAR's jmp, fixAR's later install then drops its `E9` in the middle
+//            of ours, and the resulting rel32 is two bytes of one jump glued to three of another.
+//
+// The lesson generalises: before caving anything in TryDoingShootAttack, grep this file for the
+// address first -- several of these id chains are already spoken for.
+
+// ---- tile: the ground animation inside the Arrow Rain branch --------------------------------
+// 0x00954B71  cmp [ebp-10h], 2F785Bh
+// 0x00954B78  jnz short loc_954BD1   ; skip straight to the `special` draw
+// The branch fixAR sends us to is shared with Arrow Eruption (3211003), which has no tile, so it
+// re-tests the REAL skill id here. Without this 3601024 gets `special` but no `tile`.
+// Unclaimed address -- nothing else in this file writes 0x00954B71..0x00954B77.
+static constexpr DWORD kArtTileHead = 0x00954B71;
+static DWORD pArtTileBack = 0x00954B78;
+
+void __declspec(naked) ArtTileCave() {
+    __asm {
+        mov     eax, [ebp - 0x10]       // eax is dead across this cmp on both exits
+        cmp     eax, 3601024
+        je      art_tile_ours
+        cmp     eax, 0x2F785B
+        jmp     [pArtTileBack]
+    art_tile_ours:
+        cmp     eax, eax                // ZF=1 -> fall into the tile draw
+        jmp     [pArtTileBack]
+    }
+}
+
+// ---- mob sweep: the extra targets around the first one --------------------------------------
+// 0x009540A5  mov eax, [ebp-10h]
+// 0x009540A8  cmp eax, 2F514Dh       ; 3101005, then 3211003 and 3111003 below it
+// 0x009540AD  jz  short loc_9540F0   ; -> the sweep block
+// Reached only once a bullet has actually connected (v171 non-null, a4 already 1). The block it
+// guards re-runs CMobPool::FindHitMobInRect over the level's lt/rb rect centred on that first mob
+// and sets a4 = extras + 1, so `mobCount` finally means something for this skill -- 4 per level in
+// 3601024's WZ, i.e. the primary plus three.
+//
+// This is the one edit in this section that is NOT cosmetic: a4 drives the damage loop AND the
+// outgoing attack packet (`Encode1(v202, v212 | (16 * a4))` at 0x00955187 plus one block per mob),
+// so the server now receives up to four targets for this skill and has to accept that count.
+// Unclaimed address -- nothing else in this file writes 0x009540A5..0x009540AC.
+static constexpr DWORD kSweepHead = 0x009540A5;
+static DWORD pSweepBack = 0x009540AD;   // the `jz`, entered with flags from our own cmp
+static DWORD pSweepDo   = 0x009540F0;
+
+void __declspec(naked) MobSweepCave() {
+    __asm {
+        mov     eax, [ebp - 0x10]
+        cmp     eax, 3601024
+        je      art_sweep_ours
+        cmp     eax, 0x2F514D
+        jmp     [pSweepBack]
+    art_sweep_ours:
+        jmp     [pSweepDo]
+    }
+}
+
+void AttachSkillArtCaves() {
+    CodeCave(reinterpret_cast<void*>(ArtTileCave), kArtTileHead, 7);
+    CodeCave(reinterpret_cast<void*>(MobSweepCave), kSweepHead, 8);
+    LogInfo("AttachSkillArtCaves: skill %d -- tile gate @0x%08X, mob sweep @0x%08X (ball via the"
+            " Hurricane alias list @0x009545C4, branch via fixAR @0x00954972)",
+            kArtSkillID, kArtTileHead, kSweepHead);
 }
 
 // 0x0095571F is the FUNCTION ENTRY (mov eax, imm32 / call __EH_prolog). 0x009557BD, which is where
@@ -6183,7 +6371,12 @@ void InstallWindArcherHurricaneAlias() {
     InstallSkillIdAlias(0x009510CA, 5, alias); // CUserLocal::TryDoingMeleeAttack
     InstallSkillIdAliasMovReg(0x0095416B, 3421002); // TryDoingShootAttack -- `mov esi, id`; also
                                                     // covers `cmp [ebp+var_10], esi` @0x009541DA
-    InstallSkillIdAlias(0x009545C4, 5, alias); // CUserLocal::TryDoingShootAttack
+    // This one compare is ALSO the gate that decides whether a shoot skill draws its own WZ `ball`
+    // or the equipped arrow (its `jz` @0x009545C9 goes to the skill-art branch at 0x009546AC), so
+    // 3601024 rides along here to get its projectile. Both ids go in one call on purpose:
+    // InstallSkillIdAlias snapshots the ORIGINAL bytes at cmpAddr, so calling it twice on the same
+    // address would capture the first call's jmp as the "original compare".
+    InstallSkillIdAlias(0x009545C4, 5, { 3421002, 3601024 }); // CUserLocal::TryDoingShootAttack
     InstallSkillIdAliasMovReg(0x0095BFB2, 3421002); // OnKeyDownSkillEnd -- `mov ebx, id`
     InstallSkillIdAlias(0x009692DC, 6, alias); // CUserLocal::DoActiveSkill
     InstallSkillIdAlias(0x0096AA54, 5, alias); // DoActiveSkill_Prepare -- the ranged-family gate
@@ -6432,6 +6625,10 @@ void _declspec(naked)fixAR() {
         je arrowr
         cmp eax, 3411006
         je rarrowr
+        // 3601024 takes Arrow Rain's branch for its `tile` + `special` art. The second half of the
+        // job is the tile re-test at 0x00954B71, which ArtTileCave answers.
+        cmp eax, 3601024
+        je arrowr
         sub eax, 300002
         jmp arJBack
 
@@ -6473,6 +6670,10 @@ void AttachSkillEdits() {
     // Final attack for melee and shoot skills: the client's scheduler finds no candidates
     // for our skills, so ours runs when its pass came up empty.
     ATTACH_HOOK(pFinalAttackSchedule, FinalAttackSchedule_hook);
+    // `tile` art for 3601024. The ball and branch gates are NOT caved here -- they are owned by
+    // InstallSkillIdAlias(0x009545C4) and fixAR(0x00954972) respectively, and both already carry
+    // 3601024 in their own id lists.
+    AttachSkillArtCaves();
     ATTACH_HOOK(pFindHitMobInRect, FindHitMobInRect_hook);
 
     // Rising Toss for arbitrary skills, two caves in CMob::OnHit:

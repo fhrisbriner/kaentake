@@ -10,24 +10,50 @@
 // The table
 // ---------------------------------------------------------------------------------------------
 
+enum class UpgradeMode {
+    // target field += nFlat + nPerLevel * <points in the source skill>, capped by nMaxBonus.
+    // The bonus is spelled out in this table.
+    Add,
+    // target field += the SOURCE skill's same field, read at the SOURCE's own learned level. The
+    // bonus lives in the source skill's WZ table, one entry per point spent in it, which is how a
+    // passive carries a full per-level curve without duplicating it here.
+    //
+    // Indexing by the source's level and not the target's is what makes points in the passive
+    // matter: at 3120010 level 1 Strafe gains +1 damage and +1 bullet, at level 60 it gains +90
+    // and +3, whatever level Strafe itself happens to be.
+    AddFromSource,
+};
+
 struct SkillUpgrade {
     int nSourceSkillID;   // the skill whose points grant the boost (usually a passive)
     int nTargetSkillID;   // the skill whose level data gets raised
     int nFieldOff;        // which SKILLLEVELDATA field (SkillField::*)
-    int nFlat;            // added once the source skill has at least one point
-    int nPerLevel;        // added per point in the source skill
-    int nMaxBonus;        // cap on the total added; 0 = uncapped
+    UpgradeMode eMode;
+    int nFlat;            // Add: added once the source skill has at least one point
+    int nPerLevel;        // Add: added per point in the source skill
+    int nMaxBonus;        // Add: cap on the total added; 0 = uncapped
+    int nSourceMaxLevel;  // AddFromSource: highest level the source's table has; 0 = no clamp
 };
 
-// One row per (source, target, field). Several rows may target the same field -- they add up.
+// One row per (source, target, field). Rows targeting the same field add up, whichever mode they
+// use -- both modes contribute a delta, so they compose rather than fight.
 //
 // nFlat vs nPerLevel: a field like bulletCount wants a flat step (one extra arrow while the
 // passive is learned at all), whereas prop or mobCount usually wants to scale. Both can be set on
 // the same row; the total is nFlat + nPerLevel * sourceLevel, clamped to nMaxBonus.
 static const SkillUpgrade g_skillUpgrades[] = {
-        // 3120010 -> 3111006 Strafe: +1 bullet. Flat, so any point in the passive is the whole
-        // upgrade; to make it scale instead, move the 1 into nPerLevel and cap it with nMaxBonus.
-        { 3120010, 3111006, SkillField::kBulletCount, 1, 0, 0 },
+        // 3120010 Ultimate Strafe -> 3111006 Strafe. Ultimate Strafe's WZ holds the BONUS at each
+        // of its own 60 levels, and that is the level this reads -- so the passive's point total
+        // is what scales the upgrade, independently of Strafe's level:
+        //     3120010 lv 1    Strafe gains  +1 damage,  +1 bullet
+        //     3120010 lv 30   Strafe gains +44 damage,  +2 bullets
+        //     3120010 lv 60   Strafe gains +90 damage,  +3 bullets
+        { 3120010, 3111006, SkillField::kDamage,      UpgradeMode::AddFromSource, 0, 0, 0, 60 },
+        { 1220026, 1211012, SkillField::kDamage,      UpgradeMode::AddFromSource, 0, 0, 0,  60 },
+        { 1220026, 1211012, SkillField::kAttackCount, UpgradeMode::AddFromSource, 0, 0, 0,  60 },
+        { 3600006, 1211013, SkillField::kAttackCount, UpgradeMode::AddFromSource, 0, 0, 0,  60 },
+        { 3600006, 1211013, SkillField::kDamage,      UpgradeMode::AddFromSource, 0, 0, 0,  60 },
+        { 3120010, 3111006, SkillField::kBulletCount, UpgradeMode::AddFromSource, 0, 0, 0, 60 },
 };
 
 static constexpr size_t kUpgradeCount = sizeof(g_skillUpgrades) / sizeof(g_skillUpgrades[0]);
@@ -84,17 +110,86 @@ struct BaseValue {
     int nLevel;
     int nFieldOff;
     int nBase;
+    int nLastWritten;   // what WE last stored, so a value we did not write is recognisable
 };
 
 static std::vector<BaseValue> g_baseValues;
 
-static int* FindBase(int nSkillID, int nLevel, int nFieldOff) {
+static BaseValue* FindBase(int nSkillID, int nLevel, int nFieldOff) {
     for (BaseValue& bv : g_baseValues) {
         if (bv.nSkillID == nSkillID && bv.nLevel == nLevel && bv.nFieldOff == nFieldOff) {
-            return &bv.nBase;
+            return &bv;
         }
     }
     return nullptr;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reading a source skill's level data
+// ---------------------------------------------------------------------------------------------
+
+// Same shape as g_targets below, but for the skills a Replace row reads FROM.
+struct SourceEntry {
+    int nSkillID;
+    void* pSkill;
+};
+
+static std::vector<SourceEntry> g_sources;
+
+static void* SourceSkillEntry(int nSkillID) {
+    for (const SourceEntry& se : g_sources) {
+        if (se.nSkillID == nSkillID) {
+            return se.pSkill;
+        }
+    }
+    void* pInfo = *kppSkillInfo;
+    if (!pInfo) {
+        return nullptr;
+    }
+    void* pSkill = pCSkillInfo_GetSkill(pInfo, nullptr, nSkillID);
+    if (pSkill) {
+        g_sources.push_back({ nSkillID, pSkill });   // only cache a hit; misses stay retryable
+    }
+    return pSkill;
+}
+
+// The source skill's `nFieldOff` at `nLevel`. False when the skill or its level data is not up
+// yet, which the caller must treat as "leave the target alone" rather than "the value is 0".
+//
+// Calls pGetLevelData -- the trampoline to the ORIGINAL, not GetLevelData_hook. The source skill is
+// not itself a target here, so either would work, but going straight to the original keeps this
+// off the re-entry path entirely.
+static bool ReadSourceField(int nSourceSkillID, int nLevel, int nSourceMaxLevel, int nFieldOff,
+        int* pnOut) {
+    void* pSkill = SourceSkillEntry(nSourceSkillID);
+    if (!pSkill) {
+        return false;
+    }
+    int nUse = nLevel;
+    if (nSourceMaxLevel > 0 && nUse > nSourceMaxLevel) {
+        nUse = nSourceMaxLevel;
+    }
+    if (nUse < 1) {
+        nUse = 1;   // same reason as the clamp in GetLevelData_hook: level 0 reads base-484
+    }
+    void* pLevelData = pGetLevelData(pSkill, nUse);
+    if (!pLevelData) {
+        return false;
+    }
+    auto* pField = reinterpret_cast<ZtlSecure<int>*>(
+            reinterpret_cast<char*>(pLevelData) + nFieldOff);
+    if (IsBadReadPtr(pField, sizeof(ZtlSecure<int>))) {
+        return false;
+    }
+    const int nValue = pField->Fuse();
+    // 0 is never a legitimate damage or bullet count. The first level-data reads happen while
+    // Data/Skill is still being parsed, and a zero here is that window, not the WZ's answer --
+    // caching it would pin the target at the wrong number for the rest of the session.
+    if (nValue <= 0) {
+        return false;
+    }
+    *pnOut = nValue;
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -105,7 +200,8 @@ int GetSkillUpgradeBonus(int nTargetSkillID, int nFieldOff) {
     int nBonus = 0;
     for (size_t i = 0; i < kUpgradeCount; ++i) {
         const SkillUpgrade& up = g_skillUpgrades[i];
-        if (up.nTargetSkillID != nTargetSkillID || up.nFieldOff != nFieldOff) {
+        if (up.nTargetSkillID != nTargetSkillID || up.nFieldOff != nFieldOff
+                || up.eMode != UpgradeMode::Add) {
             continue;
         }
         const int nSourceLevel = GetLearnedSkillLevelSafe(up.nSourceSkillID);
@@ -121,12 +217,62 @@ int GetSkillUpgradeBonus(int nTargetSkillID, int nFieldOff) {
     return nBonus;
 }
 
+// Says, once per row per change of outcome, why a row did or did not contribute. A row that never
+// fires is otherwise completely silent -- SyncField only logs when it actually writes -- so
+// "source not learned" and "source WZ not loaded" and "row never even matched" all look identical
+// from the log. OFF; flip to 1 when adding a row and it does not seem to take.
+int skillUpgradeDebugLog = 0;
+
+int GetSkillUpgradeValue(int nTargetSkillID, int nLevel, int nFieldOff, int nBase) {
+    int nTotal = nBase + GetSkillUpgradeBonus(nTargetSkillID, nFieldOff);
+    for (size_t i = 0; i < kUpgradeCount; ++i) {
+        const SkillUpgrade& up = g_skillUpgrades[i];
+        if (up.nTargetSkillID != nTargetSkillID || up.nFieldOff != nFieldOff
+                || up.eMode != UpgradeMode::AddFromSource) {
+            continue;
+        }
+        // The source's own learned level is both the gate AND the index into its table -- see the
+        // note on UpgradeMode::AddFromSource. nLevel (the TARGET's level) is deliberately unused
+        // here: the two skills level independently.
+        const int nSourceLevel = GetLearnedSkillLevelSafe(up.nSourceSkillID);
+        int nValue = 0;
+        bool bRead = false;
+        if (nSourceLevel > 0) {
+            // A failed read means the source's WZ is not parsed yet. Contributing nothing is the
+            // right answer for a row that only ever adds, and the base cache re-baselines once it
+            // loads.
+            bRead = ReadSourceField(up.nSourceSkillID, nSourceLevel, up.nSourceMaxLevel, nFieldOff,
+                    &nValue);
+            if (bRead) {
+                nTotal += nValue;
+            }
+        }
+        if (skillUpgradeDebugLog) {
+            // Keyed on the outcome, not the call, so a row that is asked thousands of times a
+            // minute logs once and then only again when something actually changes.
+            static int s_anLastLevel[kUpgradeCount] = {};
+            static int s_anLastValue[kUpgradeCount] = {};
+            const int nSeen = bRead ? nValue : -1;
+            if (s_anLastLevel[i] != nSourceLevel + 1 || s_anLastValue[i] != nSeen + 1) {
+                s_anLastLevel[i] = nSourceLevel + 1;
+                s_anLastValue[i] = nSeen + 1;
+                LogInfo("[skillupgrade] row %d: src %d lv %d -> tgt %d field +0x%X : %s",
+                        (int)i, up.nSourceSkillID, nSourceLevel, up.nTargetSkillID, nFieldOff,
+                        nSourceLevel <= 0 ? "SOURCE NOT LEARNED"
+                                          : (bRead ? "ok" : "SOURCE WZ READ FAILED"));
+                LogFlush();
+            }
+        }
+    }
+    return nTotal;
+}
+
 // Reads and writes with our own copies of the client's codec rather than calling the client's
 // _ZtlSecureFuse<long> (0x00416563): that one throws ZException(5) on a checksum mismatch, which
 // surfaces as the client's "Access is denied" box. ZtlSecure<int> in wvs/secure.h is the same
 // algorithm -- value = at[0] ^ rotl(at[1], 5), checksum = at[1] + rotr(at[0] ^ 0xBAADF00D, 5) --
 // so a field written here fuses cleanly when the client reads it back.
-static void SyncField(void* pLevelData, int nSkillID, int nLevel, int nFieldOff, int nBonus) {
+static void SyncField(void* pLevelData, int nSkillID, int nLevel, int nFieldOff) {
     if (!pLevelData) {
         return;
     }
@@ -135,18 +281,28 @@ static void SyncField(void* pLevelData, int nSkillID, int nLevel, int nFieldOff,
         return;
     }
 
-    int* pBase = FindBase(nSkillID, nLevel, nFieldOff);
-    if (!pBase) {
-        g_baseValues.push_back({ nSkillID, nLevel, nFieldOff, pField->Fuse() });
-        pBase = &g_baseValues.back().nBase;
+    const int nCur = pField->Fuse();
+    BaseValue* pBV = FindBase(nSkillID, nLevel, nFieldOff);
+    if (!pBV) {
+        g_baseValues.push_back({ nSkillID, nLevel, nFieldOff, nCur, nCur });
+        pBV = &g_baseValues.back();
+    } else if (nCur != pBV->nLastWritten) {
+        // Somebody other than us put this here, so it is a fresh WZ value and the old base is
+        // stale. This is what makes the cache self-healing: the very first level-data reads land
+        // while Data/Skill is still loading and every field reads 0, so without this the base
+        // latched at 0 forever -- bulletCount became 0 + 1 = 1, and the client's own
+        // `if (n < 1) n = 1` clamp at 0x009547B0 turned Strafe into a ONE arrow skill instead of
+        // five. Re-baselining on any value we did not write fixes it on the next read.
+        pBV->nBase = nCur;
     }
 
-    const int nWant = *pBase + nBonus;
-    if (pField->Fuse() != nWant) {
+    const int nWant = GetSkillUpgradeValue(nSkillID, nLevel, nFieldOff, pBV->nBase);
+    if (nCur != nWant) {
         pField->Tear(nWant);
         LogInfo("[skillupgrade] %d level %d field +0x%X: %d -> %d", nSkillID, nLevel, nFieldOff,
-                *pBase, nWant);
+                pBV->nBase, nWant);
     }
+    pBV->nLastWritten = nWant;
 }
 
 // Which rows target this skill, as a set of (field, bonus) pairs -- rows sharing a field are
@@ -168,8 +324,7 @@ static void ApplyUpgrades(void* pLevelData, int nSkillID, int nLevel) {
         if (bAlreadyDone) {
             continue;
         }
-        SyncField(pLevelData, nSkillID, nLevel, up.nFieldOff,
-                GetSkillUpgradeBonus(nSkillID, up.nFieldOff));
+        SyncField(pLevelData, nSkillID, nLevel, up.nFieldOff);
     }
 }
 

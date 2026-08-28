@@ -225,8 +225,78 @@ static const HANGINGSWAY kHangingSway[] = {
     { L"Tdungeon3",      L"shopPart2",     L"sideSign",  nullptr },
 };
 
+// ART THAT MUST NEVER BEND, whatever else says it should.
+//
+// The classifiers in weather.cpp are name-driven and therefore generous by construction:
+// `nature` catches every plant in the game including the ones carved out of stone, and the
+// rope/ladder substring test catches 1682 objects across every region. Both are right far
+// more often than not, which is why they are written that way -- but neither can be told
+// "except this one sprite" without an exception list, and this is it.
+//
+// Checked BEFORE every other test in Weather_NoteObjProp, including the extra-foliage and
+// hanging whitelists, so a row here beats anything that would otherwise promote the object.
+// A blacklist that only won some of the arguments would be worse than none: the whole point
+// is that adding a line here is a guarantee.
+//
+// WILDCARDS: nullptr in a field matches anything, exactly as it does in kHangingSway. So
+//   { L"acc1", L"grassySoil", L"nature", L"13" }   one sprite
+//   { L"acc1", L"grassySoil", L"nature", nullptr } every numbered variant of that family
+//   { L"acc1", nullptr,       nullptr,   nullptr } every object in that art bank
+// An all-nullptr row would silence the entire game. Nothing stops you writing one; do not.
+//
+// This is a per-SPRITE list and has no idea which map it is on. Art that should bend in one
+// region and not in another is a FIELD question -- see IsNoRopeSwayField and the indoor map
+// list in weather.cpp -- because the sprite really is the same sprite in both places.
+// WORKED EXAMPLE: acc1gray/dryRock/nature, which is Perion.
+//
+// `nature` is one of kFoliageCats and it is matched EXACTLY, so every numbered child of
+// that node is classified SWAY_FOLIAGE. In Perion that node is not a planting bed. Its 24
+// entries, at the sizes the client reports:
+//
+//     nature/0    150x143   a stand of dark stone spires
+//     nature/4     71x77    a dead tree, bare branches
+//     nature/8     47x41    an animal SKULL with horns
+//     nature/9    178x78    a heap of boulders
+//     nature/13   176x86    a dead bramble
+//     nature/16    58x16    a scatter of small rocks
+//     nature/18   153x63    another boulder pile
+//     nature/21    49x69    a bare branch
+//
+// Every one of those is inside FOL_MIN_PX..FOL_MAX_W/H, so the size backstop does not
+// catch them, and they sit on Perion's platforms so the foothold test passes too. Nothing
+// upstream of this list has any reason to doubt them: the rocks and the skull reach the
+// shear and bend like grass.
+//
+// SO THE ROWS ARE PER SPRITE, and that is the point of the example rather than an accident
+// of it. The obvious move is one wildcard row -- { L"acc1gray", L"dryRock", L"nature",
+// nullptr } -- and it would be wrong, because 4, 13 and 21 are real dead wood that should
+// keep bending. The wildcard is for a family that is uniformly wrong, and this family is
+// mixed. Reach for it when the whole node is furniture, not to save four lines.
+//
+// Commented out because it has not been looked at in game yet; uncomment to take it.
+struct NOSWAY { const wchar_t* sOS; const wchar_t* sL0; const wchar_t* sL1; const wchar_t* sL2; };
+static const NOSWAY kNoSway[] = {
+    // { L"acc1gray", L"dryRock", L"nature", L"0"  },   // stone spires
+    // { L"acc1gray", L"dryRock", L"nature", L"8"  },   // horned skull
+    // { L"acc1gray", L"dryRock", L"nature", L"9"  },   // boulder heap
+    // { L"acc1gray", L"dryRock", L"nature", L"16" },   // loose rocks
+    // { L"acc1gray", L"dryRock", L"nature", L"18" },   // boulder pile
+    { nullptr, nullptr, nullptr, L"\x01" },   // sentinel: never matches, keeps the array legal
+};
+
 static bool PartEqualsI(const wchar_t* actual, const wchar_t* expected) {
     return expected == nullptr || (actual && _wcsicmp(actual, expected) == 0);
+}
+
+bool WeatherSway_IsBlacklisted(const wchar_t* sOS, const wchar_t* sL0,
+                               const wchar_t* sL1, const wchar_t* sL2) {
+    for (const NOSWAY& entry : kNoSway) {
+        if (PartEqualsI(sOS, entry.sOS) && PartEqualsI(sL0, entry.sL0)
+            && PartEqualsI(sL1, entry.sL1) && PartEqualsI(sL2, entry.sL2)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool WeatherSway_IsHangingObject(const wchar_t* sOS, const wchar_t* sL0,

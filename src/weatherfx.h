@@ -210,6 +210,12 @@ void WeatherSway_ReplaceLeafreBack(const IWzGr2DLayerPtr& pLayer);
 bool WeatherSway_IsHangingObject(const wchar_t* sOS, const wchar_t* sL0,
                                  const wchar_t* sL1, const wchar_t* sL2);
 
+// Map art that must never bend, overriding every classifier and every whitelist.
+// Same wildcard convention as WeatherSway_IsHangingObject: nullptr matches anything,
+// so a row can name one sprite, a family, or a whole art bank. See kNoSway.
+bool WeatherSway_IsBlacklisted(const wchar_t* sOS, const wchar_t* sL0,
+                               const wchar_t* sL1, const wchar_t* sL2);
+
 // Is a sprite whose bottom row is at (x, y) standing on a platform, and far enough in
 // from its ends to bend? Called with the sprite's BASE, which only the sway planner
 // knows: the obj entry's y is the canvas origin and is often somewhere else entirely.

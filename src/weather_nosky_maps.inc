@@ -12,8 +12,15 @@
 // Square and the tree dungeons went that way, so their ids below are now redundant
 // but harmless.
 //
-// SORTED ASCENDING. FieldHasSky binary-searches it, so the order is load bearing.
-// Add ids in place; do not append.
+// SORTED ASCENDING, and no longer load bearing. It used to be: FieldHasSky binary
+// searched this array in place, so an id appended out of order silently made some
+// unrelated map unsearchable rather than failing. ExcludedMapIndex() now merges this
+// file with weather_indoor_maps.inc and sorts the result once, so order here is a
+// courtesy to the next reader. Keep it sorted anyway; nothing depends on it.
+//
+// This list takes the SKY, the tint and the lamps. It does NOT stop foliage and ropes
+// bending -- the tree dungeons and the shop fronts on it still have art that should
+// move. Use weather_indoor_maps.inc for a map that should also go still.
 
     101000001,    // Victoria Road : Ellinia Weapon Store
     101000002,    // Victoria Road : Ellinia Department Store
