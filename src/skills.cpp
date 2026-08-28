@@ -62,6 +62,7 @@ int luk = 0;
 int pirateCrit;
 int speed = 100;
 int critSkillID = 0;
+int afterburn = 0;
 int combat1 = 0x0096DABE;
 int combat2 = 0x0096DACE;
 int comba = 0x00967982;
@@ -81,6 +82,7 @@ bool isLeftH = false;
 DWORD newformulaaddr = 0x00BED58C;
 DWORD taxeaddr = 0x00BED90C;
 DWORD oaxeaddr = 0x00BED984;
+DWORD bowaddr = 0x00AFE868;
 DWORD ohsword = 0x00AFE858;
 int LastMapID = 777777777;
 int MapID = 0;
@@ -209,21 +211,34 @@ int get_weapon_type() {
     return (weapon / 10000) % 100;
 }
 
+// INT multiplier by equipped weapon, the magic counterpart of the mastery multipliers: staff (38)
+// hits hardest, then the one-handed mace (31), then the wand (37). Anything else is not a magic
+// weapon, so it gets the wand value rather than a silent 1.0 that would read as "no damage".
+//
+// Shared by setMAD and by the magic-formula conversion in drop_off_damage_skills, so the two can
+// never disagree about what a staff is worth.
+double MagicIntMultiplier() {
+    switch (get_weapon_type()) {
+    case 38: return 5.2;   // staff
+    case 37: return 4.0;   // wand
+    case 31: return 4.3;   // one-handed mace
+    default: return 4.0;
+    }
+}
+
 void setMAD() {
     switch (get_weapon_type()) {
     case 32:
         int_multiplier = 4.2;
+        break;   // was falling through into case 37 and always ending up at 4.0
+    case 31:
+        int_multiplier = 4.3;
+        break;
     case 37:
         int_multiplier = 4.0;
         break;
     case 38:
         int_multiplier = 5.2;
-        break;
-    case 43:
-        str_multiplier = 4.6;
-        break;
-    case 44:
-        str_multiplier = 4.0;
         break;
     default:
         int_multiplier = 1.0;
@@ -595,11 +610,13 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je summons
 
-            // Magic: it has to run on the MDamage formula. The mob-pull is not Snatch's (that one
-            // is melee-only) -- see g_magicPullSkills.
+            // MELEE, on purpose. The pull is the engine's own Snatch branch (g_pullSkills), which
+            // only exists on this path -- every attempt to reproduce it from the magic path failed
+            // (see the notes on g_magicPullSkills). The damage is converted to a magic formula
+            // instead, in drop_off_damage_skills.
             mov eax, 2421003
             cmp esi, eax
-            je magic
+            je melee
 
             mov eax, 2421006
             cmp esi, eax
@@ -1329,6 +1346,18 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je magic
 
+            mov eax, 3221017
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3221028
+            cmp esi, eax
+            je shoot
+
+            mov eax, 3601027
+            cmp esi, eax
+            je shoot
+
             mov eax, 2301005
             jmp doActiveJmpBack
 
@@ -1793,7 +1822,7 @@ void comboStuff() {
 
 auto sparkThing = (int(__cdecl*)(int))0x7668B7;
 int(__cdecl sparkThingHook)(int skillId) {
-    if (skillId == 1201016 || skillId == 4111010 || skillId == 3411006 || skillId == 4121017 || skillId == 4421015 || skillId == 5521003 || skillId == 5511017) {
+    if (skillId == 1201016 || skillId == 4111010 || skillId == 3411006 || skillId == 4121017 || skillId == 4421015 || skillId == 5521003 || skillId == 5511017 ||  skillId == 3601024) {
         return 1;
     }
     return sparkThing(skillId);
@@ -1816,22 +1845,34 @@ int(__cdecl sparkThingHook)(int skillId) {
 // dispatch side, so a listed skill pulls with its own attack animation rather than Snatch's.
 std::vector<int> g_pullSkills = {
     1101016,
+    2421003,   // magic-flavoured skill on the melee path; damage is converted, see below
     // 5121005,   // vanilla Snatch -- the old Patch4 took its pull away; add it back if wanted
-    // 2421003 is NOT here: it is a magic skill and never reaches TryDoingMeleeAttack. Its pull is
-    // g_magicPullSkills, further down.
 };
 
 // Result handed back across popad, same as the magic-attack cave above.
 static int g_bPullSkillMatch = 0;
 
+// Trace window. The Snatch branch is the only thing that makes a melee cast pull, so opening a
+// window right when it is taken means the hooks below log the handful of engine calls that follow
+// -- and nothing else the client does all frame.
+DWORD g_pullTraceUntil = 0;
+
 int __cdecl IsPullSkill(int nSkillID) {
     for (int id : g_pullSkills) {
         if (id == nSkillID) {
+            // Wide enough to still be open when the server's damage echo comes back and the hit
+            // reaction runs -- the 250ms first cut expired before anything interesting happened.
+            g_pullTraceUntil = GetTickCount() + 3000;
+            LogInfo("[pulltrace] --- Snatch branch taken for skill %d ---", nSkillID);
+            LogFlush();
             return 1;
         }
     }
     return 0;
 }
+
+
+
 
 static constexpr DWORD kPullChainHead = 0x00952360;   // cmp eax, 4E23EDh (5121005)
 static constexpr DWORD kPullMatch     = 0x00952367;   // the drag-to-caster branch
@@ -2081,6 +2122,8 @@ bool isSkillIDMatched(int nSkillID) {
         3211031,
         3221007,
         3221018,
+        3221017,
+        3221028,
 
         3601000,
         3601001,
@@ -2102,6 +2145,7 @@ bool isSkillIDMatched(int nSkillID) {
         3601021,
         3601022,
         3601023,
+        3601024,
 
 
         // ===== Thief =====
@@ -2274,10 +2318,21 @@ constexpr int kCustomEnergyCharge = 2420000;
 constexpr unsigned int kEnergyChargeMask = 0xFF3EF0FC;   // + 15100004 == 2420000
 
 void PatchCustomEnergyCharge() {
-    // SecondaryStat::GetIncPAD and its two siblings -- the stat bonus a full bar grants.
-    Patch4(0x0077DDE2 + 1, kEnergyChargeMask);
-    Patch4(0x0077DE78 + 1, kEnergyChargeMask);
-    Patch4(0x0077DF0E + 1, kEnergyChargeMask);
+    // SecondaryStat::GetIncPAD and its two siblings (0x0077DDE2 / 0x0077DE78 / 0x0077DF0E) are the
+    // stat bonus a full bar grants, and they are deliberately LEFT ALONE, still naming 5110001.
+    //
+    // Pointing them at 2420000 crashes on being hit. They are reached from SetDamaged via
+    // CalcDamage, and they null-check the SKILLENTRY but never the LEVEL:
+    //     0x0077DF24  jz  <skip>                 ; entry == 0 -> skip. No level test.
+    //     0x0077DF27  call SKILLENTRY::GetLevelData
+    //     0x0077DF2C  push [eax+60h]             ; faults here
+    // GetLevelData returns `base + 484 * (level - 1)`, so a level of 0 hands back a pointer 484
+    // bytes BEFORE the array and the read walks off into nothing (0x0077DF2C, EAX=30FA0E34).
+    //
+    // Left at 5110001 the lookup returns NULL in this client -- the skill has no WZ node -- and the
+    // entry null-check skips the whole block cleanly, which is the vanilla-safe path. Nothing is
+    // lost: the Static Charge buff grants its own stats server-side through StatEffect.applyTo, so
+    // this bonus would have been duplicate anyway.
     // The aura sites take the SKILLENTRY only to pull an effect path out of it (GetSkill ->
     // SKILLENTRY::GetEffectUOL -> a layer under the face); no level lookup, no gate on owning the
     // skill. All they need is a skill whose WZ carries the art, and 2420000 now does:
@@ -2303,12 +2358,8 @@ void PatchCustomEnergyCharge() {
     Patch4(0x00958C6D + 2, kCustomEnergyCharge);
     // Read the imm32 back out of the two sites that matter for the aura. If these do not say
     // FF3EF0FC the patch never landed, and no amount of WZ art will help.
-    LogInfo("PatchCustomEnergyCharge: skill -> %d | aura mask @0x0093E138=%08X @0x00931515=%08X"
-            " | gauge mask @0x0094B45D=%08X",
-            kCustomEnergyCharge,
-            *reinterpret_cast<unsigned int*>(REBASE(0x0093E138 + 1)),
-            *reinterpret_cast<unsigned int*>(REBASE(0x00931515 + 1)),
-            *reinterpret_cast<unsigned int*>(REBASE(0x0094B45D + 1)));
+    LogInfo("PatchCustomEnergyCharge: skill -> %d (aura/gauge/on-hit; stat-bonus sites left vanilla)",
+            kCustomEnergyCharge);
 }
 
 
@@ -2513,6 +2564,9 @@ void __fastcall ChatLogAdd_Hook(int _this, void* edx, const char* sMsg, int lTyp
 }
 
 bool isCorrectWeapon(int nSkillID) {
+    if (job == 360 || job == 900 || job == 910) {
+        return true;
+    }
     if (nSkillID >= 4 && nSkillID <= 999999) {
         if (get_weapon_type() >= 30) {
             return true;
@@ -2671,9 +2725,9 @@ void doSpearPA() {
         Patch4(0x008C2D2C + 2, ohsword);
         break;
     case 45:
-        Patch4(0x0078F042 + 2, ohsword);
-        Patch4(0x008C2AEC + 2, ohsword);
-        Patch4(0x008C2B35 + 2, ohsword);
+        Patch4(0x0078F042 + 2, bowaddr);
+        Patch4(0x008C2AEC + 2, bowaddr);
+        Patch4(0x008C2B35 + 2, bowaddr);
         break;
     case 46:
         Patch4(0x0078F0EF + 2, newformulaaddr);
@@ -2837,6 +2891,8 @@ const char* __cdecl get_job_name(int nJob) {
         return "Captain";
     case 552:
         return "Admiral";
+    case 360:
+        return "test";
     default:
         return get_job_name_hook(nJob);
     }
@@ -2994,7 +3050,7 @@ void(__fastcall SetDamaged)(void* _this, void* edx,
 auto missileSpeed = (int(__cdecl*)(int, int, int))0x00942831;
 
 int(__cdecl missileSpeed_Hook)(int a1, int a2, int a3) {
-    if (a2 == 3211016 || a2 == 3601000 || a2 == 3411007) {
+    if (a2 == 3211016 || a2 == 3601000 || a2 == 3411007 || a2 == 3601027) {
         return 60;
     }
     if (a2 == 3511003 || a2 == 5211017) {
@@ -3113,7 +3169,7 @@ bool isCopyCatSkill(int skillId) {
     // 2421006 is deliberately NOT here: it no longer borrows another skill's id, it carries its
     // own and gets 2221006's behavior through InstallIceDemonAlias instead.
     if (skillId == 3411004 || skillId == 4101008 || skillId == 2211013 ||
-        skillId == 5521009 || skillId == 5421007) {
+        skillId == 5521009 || skillId == 5421007 ) {
         return true;
     }
     if (thirdDigit == 0) {
@@ -3900,11 +3956,11 @@ int(__cdecl GetAttackSpeedDegree)(int nDegree, int nSkillID, int nWeaponBooster,
 
 auto octHook = (int(__cdecl*)(int))0x00766612;
 int(__cdecl ltrbOcto)(int nSKillID) {
-    return nSKillID == 3211012 || nSKillID == 3411010 || nSKillID == 4111017 || nSKillID == 5511015|| nSKillID == 5511014;
+    return nSKillID == 3211012 || nSKillID == 3411010 || nSKillID == 4111017 || nSKillID == 5511015|| nSKillID == 5511014 || nSKillID == 3601014;
 }
 
 int(__cdecl octopus)(int nSkillID) {
-    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010 || nSkillID == 3211012) {
+    if (nSkillID == 3121013 || nSkillID == 5511015 || nSkillID == 5511014 || nSkillID == 5521016 || nSkillID == 5111015 || nSkillID == 4111017 || nSkillID == 3411010 || nSkillID == 3211012 || nSkillID == 3601014) {
         return 1;
     }
     return octHook(nSkillID);
@@ -4326,7 +4382,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         }
     }
 
-    // Master Skies: +2% damage vs mobs per skill level, but only while the player is airborne.
+    // Master Skies: +1.5% damage vs mobs per skill level, but only while the player is airborne.
     // Read the local player's CVecCtrl off ms_pInstance (0x00BEBF98) and gate on IsFalling /
     // IsFreeFalling (covers the rise of a jump and the fall). No mob deref needed -- applies on
     // every path. masterSkies is the learned level of 3410000, read in GetSkillLevel.
@@ -4335,7 +4391,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         if (localUser) {
             CVecCtrl* pCv = CVecCtrl::FromInterface(localUser->m_pvc);
             if (pCv && (IsFalling(pCv) || IsFreeFalling(pCv))) {
-                air = 1.0 + 0.02 * masterSkies;
+                air = 1.0 + 0.015 * masterSkies;
             }
         }
     }
@@ -4351,11 +4407,51 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
         dMultiplier = 0;
     }
 
+    // Magic-formula conversion for melee-path skills that are magic in everything but their code
+    // path. 2421003 runs as a melee attack because that is the only place the engine's Snatch pull
+    // exists, so CalcDamage::PDamage has already scaled this hit by the player's WEAPON attack and
+    // STR/DEX -- which on a wand is nearly nothing. Re-base it on the magic side instead:
+    //
+    //     physical term  ~ (4*STR + DEX) * total PAD      <- what PDamage used
+    //     magic term     ~ (4.5 * INT)   * total MAD      <- what a magic skill should use
+    //
+    // The 4.5*INT shape is the one summonMDamage_hook already uses in this file. Everything else
+    // the hook computes (level difference, mob defence, boss, poison) still applies on top, and the
+    // per-line structure -- misses as 0, criticals already scaled -- is preserved because this is a
+    // multiplier rather than a replacement.
+    //
+    // Approximate by construction: it is a re-basing of PDamage's output, not a call into
+    // CalcDamage::MDamage. Tune kMagicSwapScale if the numbers land high or low.
+    double magicSwap = 1.0;
+    if (nSkillID == 2421003) {
+        constexpr double kMagicSwapScale = 1.0;
+        BasicStat& bs = CWvsContext::GetInstance()->get_m_basicStat();
+        SecondaryStat& ss = CWvsContext::GetInstance()->get_m_secondaryStat();
+        const double dInt = bs.nINT.Fuse();
+        const double dStr = bs.nSTR.Fuse();
+        const double dDex = bs.nDEX.Fuse();
+        const double dMad = ss.m_magic.Fuse() + ss.m_bonusMagic.Fuse();
+        const double dPad = pad;   // total physical attack, captured by getPAD_hook
+        // Magic attack enters the formula as MAD - INT, not raw MAD -- that is what setMAD above
+        // does (`effectiveMagic = (magic + bonusMagic) - int_`, falling back to the raw sum when
+        // that goes non-positive), and using raw MAD here is what made this 4.2x instead of 1.2x.
+        double dEffMagic = dMad - dInt;
+        if (dEffMagic <= 0.0) {
+            dEffMagic = dMad;
+        }
+        const double physTerm = (4.0 * dStr + dDex) * (dPad > 0.0 ? dPad : 1.0);
+        const double magicTerm = MagicIntMultiplier() * dInt * (dEffMagic > 0.0 ? dEffMagic : 1.0);
+        if (physTerm > 0.0 && magicTerm > 0.0) {
+            magicSwap = (magicTerm / physTerm) * kMagicSwapScale;
+        }
+    }
+
     // Apply to ALL 15 lines. Do NOT early-out on a zero line: a missed hit is 0 in the middle of the
     // array, and bailing there left every later line at full damage (no reduction). Unused trailing
     // slots are already 0 and stay 0 (0 * mult == 0), so scanning the whole array is harmless.
     for (i = 0; i < 15; i++) {
-        aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult * poisonMult * air * bossMult);
+        aDamage[i] = (int)((double)aDamage[i] * dMultiplier * levelMult * defMult * poisonMult * air
+                * bossMult * magicSwap);
     }
     return 0; // BOOL: 0 = let the caller run the normal damage-number display path
 }
@@ -4916,7 +5012,7 @@ void SummonPull_OnHit(MobStat* pStat) {
 // Set to 0 once the pull is behaving. Separate from debugCombatLog because that one is off by
 // default and turning it on floods the log from the damage hooks; this fires only on a cast that
 // actually pulls, a few lines a time.
-int pullDebugLog = 0;
+int pullDebugLog = 1;   // on for the magic-pull verification run; set back to 0 once confirmed
 #define PULL_LOG(...) do { if (pullDebugLog) { LogInfo(__VA_ARGS__); } } while (0)
 
 // Drags every mob collected in g_pullTargets toward `summonPos`. Named for its first caller, but
@@ -5039,17 +5135,21 @@ void __fastcall summonTryDoingAttackManual_hook(void* pSummon, void* edx, int tC
 // TryDoingMagicAttack once it has the skill's rect. Collecting there rather than from a damage
 // hook matters: on the magic path CalcDamage::MDamage is invoked with no usable per-target mob
 // (see the note in drop_off_damage_skills), so the damage hooks cannot name the targets.
-// EMPTY, and it should stay that way unless something changes. 2421003's pull lives on the server
-// now (AbstractDealDamageHandler.pullStandoffFor -> Monster.shove -> resetMobPosition).
-//
-// Why the client cannot do it: reseating CVecCtrl moves the mob locally but leaves its CMovePath
-// describing the old route, so the move packet that follows carries no movement entries. The
-// server's MoveLifeHandler wraps updatePosition in `catch (EmptyMovementException)` and silently
-// drops it, keeps its own position, and wins the next time anything refreshes -- the mob springs
-// back. Flushing the path by hand (CMob::GenerateMovePath with a negative action) does not help
-// for the same reason: there are no entries to flush.
+// EMPTY, and the notes below are why. Three separate attempts to pull from the magic path all
+// failed against the client's design:
+//   1. Writing the mob's CVecCtrl by hand moves it locally, but leaves its CMovePath describing the
+//      old route, so the move packet carries no movement entries and MoveLifeHandler discards it.
+//   2. Calling CMob::GenerateMovePath ourselves with byte-identical arguments to the melee drag
+//      (traced: action=6, mode=3, caster x/y) does nothing -- the engine only acts on it while the
+//      mob is inside its hit reaction.
+//   3. Caving that call inside CMob::OnHit does not help either: the displacement block is gated
+//      Aran-only at 0x00668D8C, and the slot the Rising Toss comment calls the hit's skill id
+//      ([ebp+0x70]) reads 0 on this path, so the gate cannot be opened for one skill.
+// 2421003 is therefore routed to melee, where the pull is the engine's own, and its damage is
+// converted to a magic formula in drop_off_damage_skills.
 static const std::vector<int> g_magicPullSkills = {
 };
+
 
 static bool g_bMagicPullActive = false;   // true only inside a pulling cast's TryDoingMagicAttack
 
@@ -5085,6 +5185,155 @@ int __fastcall FindHitMobInRect_hook(void* pPool, void* edx, const RECT* pRect, 
     return nRet;   // packed -- hand the caller back exactly what the client returned
 }
 
+// ===== Final attack, extended to every attacking skill =======================================
+//
+// How the client does it, start to finish:
+//
+//   MARKER   A final-attack skill is `skillType = 3` in its WZ (Data/Skill/310.img 3100001 has it),
+//            with a `req` node naming the mastery it needs and per-level `prop` for the chance.
+//
+//   SCHEDULE sub_957830 (0x00957830) picks one. It walks the candidate table at SKILLENTRY+0x40 of
+//            the skill being cast; each entry is [faSkillId, weaponType, weaponType, ...]. For an
+//            entry the player has learned whose weapon type matches the equipped weapon, it rolls
+//                CRand32::Random() % 101 <= prop        (prop = SKILLLEVELDATA + 0xF4)
+//            and on success stores the pending attack on CUserLocal:
+//                +0x2AF4 source   +0x2AF8 fa skill id   +0x2AFC weapon type   +0x2B00 fire time
+//            Called from TryDoingMeleeAttack (0x00952C17) and TryDoingShootAttack (0x00955509)
+//            ONLY -- which is why a magic cast never procs one.
+//
+//   FIRE     sub_96CD3E (0x0096CD3E), driven from CUserLocal::Update (0x0094B9CB). Once the fire
+//            time passes it re-checks that the weapon has not changed and the skill is still
+//            learned, then re-enters TryDoingMeleeAttack (weapon types 30-33, 40-44) or
+//            TryDoingShootAttack (45-47, 49). Note the gap: 34-39 is dropped, so wand (37) and
+//            staff (38) can never fire a final attack at all.
+//
+// This scheduler mirrors sub_957830 rather than calling it, because the client's version reads its
+// candidates from SKILLENTRY+0x40 and that table is empty for skills nobody wired a final attack
+// to. Driving it from our own list means any skill can proc one.
+struct FinalAttackEntry {
+    int nSkillID;
+    int aWeaponTypes[8];   // 0-terminated; matched against get_weapon_type()
+};
+
+// EVERY skill listed here MUST carry `skillType = 3` in its WZ. Scheduling is ours, but the FIRE
+// path is the client's, and TryDoingShootAttack reads the marker straight off the entry:
+//     0x009541A2  cmp dword ptr [eax+0Ch], 3   ; SKILLENTRY+0x0C == skillType
+//     0x009541A6  jnz <bail, return 0>
+// It is reached whenever CAvatar::GetOneTimeAction() > -1 -- i.e. the player is still inside the
+// attack animation that procced this, which is exactly when a final attack fires. Without the
+// marker the re-entry is scheduled, logged, and then silently dropped every single time: the
+// skill never shoots and nothing complains. get_random_shoot_attack_action (0x00766282) reads the
+// same field to pick the final-attack action row (2*n-1) instead of the plain shoot row (2*n-2),
+// so the animation is wrong without it too.
+//
+// 45 = bow, 46 = crossbow. "Mini Inferno" is described in String.wz as a bow final attack.
+static const FinalAttackEntry g_finalAttacks[] = {
+    { 3111003, { 45, 46, 0 } },   // Data/Skill/360.img 3601024/skillType = 3
+};
+
+int finalAttackDelayMs = 0;   // 0 = fire on the next Update tick
+
+auto faGetUpdateTime = reinterpret_cast<int(__cdecl*)()>(0x00987257);
+
+// Runs the same check the melee and shoot paths get for free. Safe to call after any attack: it
+// does nothing unless the player owns a listed skill, the weapon matches, and the roll passes.
+void ScheduleFinalAttack(void* pUser, int nDelayMs) {
+    if (!pUser || IsBadWritePtr(pUser, 0x2B04)) {
+        return;
+    }
+    const int nWeaponType = get_weapon_type();
+    // Rate-limited trace of the REJECTIONS as well. The first cut only logged a successful
+    // schedule, so a skill that never procced looked identical to one that was never checked.
+    static DWORD tLastMiss = 0;
+    const bool bTrace = GetTickCount() - tLastMiss > 1000;
+    for (const FinalAttackEntry& fa : g_finalAttacks) {
+        const int nLevel = GetLearnedSkillLevelSafe(fa.nSkillID);
+        if (nLevel <= 0) {
+            if (bTrace) {
+                tLastMiss = GetTickCount();
+                LogInfo("[finalattack] %d not learned (level %d)", fa.nSkillID, nLevel);
+            }
+            continue;
+        }
+        bool bWeaponOk = false;
+        for (int nType : fa.aWeaponTypes) {
+            if (nType == 0) {
+                break;
+            }
+            if (nType == nWeaponType) {
+                bWeaponOk = true;
+                break;
+            }
+        }
+        if (!bWeaponOk) {
+            if (bTrace) {
+                tLastMiss = GetTickCount();
+                LogInfo("[finalattack] %d skipped: weapon type %d not in its list", fa.nSkillID,
+                        nWeaponType);
+            }
+            continue;
+        }
+        const int nProp = GetSkillLevelDataLong(fa.nSkillID, SkillField::kProp);
+        const int nRoll = static_cast<int>(rand() % 101);
+        if (nProp <= 0 || nRoll > nProp) {
+            if (bTrace) {
+                tLastMiss = GetTickCount();
+                LogInfo("[finalattack] %d no proc: roll %d vs prop %d (level %d)", fa.nSkillID,
+                        nRoll, nProp, nLevel);
+            }
+            continue;
+        }
+        char* u = reinterpret_cast<char*>(pUser);
+        *reinterpret_cast<int*>(u + 0x2AF4) = 0;
+        *reinterpret_cast<int*>(u + 0x2AF8) = fa.nSkillID;
+        *reinterpret_cast<int*>(u + 0x2AFC) = nWeaponType;
+        *reinterpret_cast<int*>(u + 0x2B00) = faGetUpdateTime() + nDelayMs;
+        LogInfo("[finalattack] scheduled %d (weapon %d, prop %d, roll %d, delay %d)", fa.nSkillID,
+                nWeaponType, nProp, nRoll, nDelayMs);
+        LogFlush();
+        return;   // one per attack, same as the client
+    }
+}
+
+// Hooking the client's own scheduler is what makes this work for MELEE and SHOOT skills. Both call
+// it (0x00952C17 and 0x00955509), but it only ever finds candidates in SKILLENTRY+0x40, which is
+// empty for skills nobody wired a final attack to -- so a bow skill rolled nothing. Let the client
+// have its pass first, and only if it scheduled nothing (the pending slot at +0x2AF8 is still 0)
+// run ours.
+//
+// The client's own `nDelayMs` (0x00955509 computes it as `flightTime + (avatarDelay - flightTime)/3`,
+// ~423ms on a bow) is deliberately IGNORED in favour of finalAttackDelayMs. At 0 the fire routine
+// picks the cast up on the very next CUserLocal::Update tick, which is still inside the attack
+// animation -- that is fine, and is exactly the case skillType == 3 exists for: TryDoingShootAttack
+// at 0x009541A8 calls the user's vtbl+0x44 and forces avatar action 6 to cut the current animation
+// short before firing. Raise finalAttackDelayMs if a visible gap is wanted instead.
+//
+// __thiscall, `retn 10h` at 0x00957974: four stack args (charData, candidate table, source, delay).
+// `nSourceSkillID` is the skill whose cast is asking for a roll -- pushed at 0x00955509 as the
+// shoot path's own skill id, and stored by the client into +0x2AF4.
+auto pFinalAttackSchedule = reinterpret_cast<int(__thiscall*)(void*, const void*, int**, int,
+        int)>(0x00957830);
+
+int __fastcall FinalAttackSchedule_hook(void* pUser, void* edx, const void* pCharData,
+        int** ppTable, int nSourceSkillID, int nDelayMs) {
+    const int nRet = pFinalAttackSchedule(pUser, pCharData, ppTable, nSourceSkillID, nDelayMs);
+    if (!pUser || IsBadReadPtr(pUser, 0x2B04)
+            || *reinterpret_cast<int*>(reinterpret_cast<char*>(pUser) + 0x2AF8) != 0) {
+        return nRet;   // the client scheduled something of its own -- leave it alone
+    }
+    // A final attack fires by re-entering TryDoingShootAttack, which calls this scheduler again.
+    // The client is safe from the resulting loop only because a final-attack skill's own candidate
+    // table (SKILLENTRY+0x40) is empty; ours is a flat list and would happily chain forever at the
+    // WZ prop. Refuse to roll when the cast that is asking IS one of our final attacks.
+    for (const FinalAttackEntry& fa : g_finalAttacks) {
+        if (fa.nSkillID == nSourceSkillID) {
+            return nRet;
+        }
+    }
+    ScheduleFinalAttack(pUser, finalAttackDelayMs);
+    return nRet;
+}
+
 // 0x0095571F is the FUNCTION ENTRY (mov eax, imm32 / call __EH_prolog). 0x009557BD, which is where
 // its body happens to be readable from, is mid-function -- hooking that address writes the detour
 // jmp over live instructions and every magic cast dies on a corrupt stack.
@@ -5096,18 +5345,26 @@ int __fastcall TryDoingMagicAttack_hook(void* pUser, void* edx, SKILLENTRY* pSki
     const bool bPull = std::find(g_magicPullSkills.begin(), g_magicPullSkills.end(), nSkillID)
             != g_magicPullSkills.end();
     if (!bPull) {
-        return pTryDoingMagicAttack(pUser, pSkill, a2, a3, a4);
+        const int nRet = pTryDoingMagicAttack(pUser, pSkill, a2, a3, a4);
+        // The final-attack roll the melee and shoot paths do natively (sub_957830) -- magic never
+        // calls it, so a magic cast could not proc one. nRet > 0 means the cast actually happened.
+        if (nRet > 0) {
+            ScheduleFinalAttack(pUser, finalAttackDelayMs);
+        }
+        return nRet;
     }
 
     g_pullTargets.clear();
     g_bMagicPullActive = true;
     const int nRet = pTryDoingMagicAttack(pUser, pSkill, a2, a3, a4);
     g_bMagicPullActive = false;
-    const POINT* casterPos = gobjPos(pUser);
-    PULL_LOG("[pull] magic skill=%d gathered=%d casterPos=%s ret=%d", nSkillID,
-            (int)g_pullTargets.size(), casterPos ? "ok" : "NULL", nRet);
-    applyPullToPos(casterPos);
+    // No pull from here: the drag is applied inside CMob::OnHit by OnHitPullCave, which is the only
+    // context the engine honours it in. This bracket stays only for the gathered-count logging.
+    PULL_LOG("[pull] magic skill=%d gathered=%d ret=%d", nSkillID, (int)g_pullTargets.size(), nRet);
     g_pullTargets.clear();
+    if (nRet > 0) {
+        ScheduleFinalAttack(pUser, finalAttackDelayMs);   // same roll as the branch above
+    }
     return nRet;
 }
 
@@ -6213,6 +6470,9 @@ void AttachSkillEdits() {
     // Same vacuum on the magic path, for g_magicPullSkills. The FindHitMobInRect hook only
     // collects while a pulling cast is in flight, so every other caller is untouched.
     ATTACH_HOOK(pTryDoingMagicAttack, TryDoingMagicAttack_hook);
+    // Final attack for melee and shoot skills: the client's scheduler finds no candidates
+    // for our skills, so ours runs when its pass came up empty.
+    ATTACH_HOOK(pFinalAttackSchedule, FinalAttackSchedule_hook);
     ATTACH_HOOK(pFindHitMobInRect, FindHitMobInRect_hook);
 
     // Rising Toss for arbitrary skills, two caves in CMob::OnHit:

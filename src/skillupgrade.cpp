@@ -235,6 +235,23 @@ static int TargetSkillIDOf(void* pSkill) {
 static bool g_inApply = false;
 
 void* __fastcall GetLevelData_hook(void* pSkill, void* edx, int nLevel) {
+    // Level 0 is an out-of-bounds read, not a no-op. GetLevelData ends with
+    //     return 484 * level + base - 484;
+    // so level 0 hands back a pointer 484 bytes BEFORE the array, and callers that read a field
+    // off it walk into unmapped memory. Several client sites invite exactly that: they check the
+    // SKILLENTRY for null and then pass the level straight through without checking it, e.g.
+    // SecondaryStat::GetIncPAD and its two siblings (0x0077DF24 tests the entry, 0x0077DF27 calls
+    // this, 0x0077DF2C faults). Those run only while the energy-charge stat is set, which vanilla
+    // only ever did for a pirate holding the skill -- a character who is charged WITHOUT the skill
+    // learned reads level 0 and dies. Ours is exactly that character.
+    //
+    // Clamping to 1 turns the fault into reading the level-1 record. For a caller that should not
+    // have got a bonus at all this is a small wrong number instead of a crash, and it protects
+    // every such site at once rather than caving each one.
+    if (nLevel < 1) {
+        LOG_ONCE("[skillupgrade] GetLevelData level %d clamped to 1 (would read base-484)", nLevel);
+        nLevel = 1;
+    }
     void* pLevelData = pGetLevelData(pSkill, nLevel);
     if (g_inApply) {
         return pLevelData;
@@ -249,8 +266,7 @@ void* __fastcall GetLevelData_hook(void* pSkill, void* edx, int nLevel) {
 }
 
 void AttachSkillUpgrades() {
-    if (kUpgradeCount == 0) {
-        return;
-    }
+    // Always attached, even with an empty upgrade table: the hook also carries the level-0 clamp
+    // above, which is a crash fix and must not depend on whether anyone has added an upgrade row.
     ATTACH_HOOK(pGetLevelData, GetLevelData_hook);
 }
