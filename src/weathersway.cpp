@@ -281,6 +281,43 @@ static const NOSWAY kNoSway[] = {
     // { L"acc1gray", L"dryRock", L"nature", L"9"  },   // boulder heap
     // { L"acc1gray", L"dryRock", L"nature", L"16" },   // loose rocks
     // { L"acc1gray", L"dryRock", L"nature", L"18" },   // boulder pile
+    { L"acc4", L"omegaSector", L"nature", L"5"  },
+    { L"acc4", L"omegaSector", L"nature", L"8"  },
+    { L"acc4", L"omegaSector", L"nature", L"9"  },
+    { L"acc4", L"omegaSector", L"nature", L"10"  },
+    { L"acc4", L"omegaSector", L"nature", L"11"  },
+    { L"acc4", L"omegaSector", L"nature", L"12"  },
+    { L"acc4", L"omegaSector", L"nature", L"13"  },
+    { L"acc4", L"omegaSector", L"nature", L"15"  },
+    { L"acc4", L"omegaSector", L"nature", L"23"  },
+    { L"acc4", L"omegaSector", L"nature", L"26"  },
+    { L"acc4", L"omegaSector", L"nature", L"29"  },
+    { L"acc4", L"omegaSector", L"nature", L"30"  },
+
+    { L"dungeon2", L"deepSee", L"nature", L"0"  },
+    { L"dungeon2", L"deepSee", L"nature", L"1"  },
+    { L"dungeon2", L"deepSee", L"nature", L"2"  },
+    { L"dungeon2", L"deepSee", L"nature", L"3"  },
+    { L"dungeon2", L"deepSee", L"nature", L"15"  },
+    { L"dungeon2", L"deepSee", L"nature", L"16"  },
+    { L"dungeon2", L"deepSee", L"nature", L"17"  },
+    { L"dungeon2", L"deepSee", L"nature", L"18"  },
+    { L"dungeon2", L"deepSee", L"nature", L"19"  },
+    { L"dungeon2", L"deepSee", L"nature", L"20"  },
+    { L"dungeon2", L"deepSee", L"nature", L"21"  },
+    { L"dungeon2", L"deepSee", L"nature", L"22"  },
+
+
+    { L"acc6", L"darkmountain", L"nature", L"15"  },
+    { L"acc6", L"darkmountain", L"nature", L"16"  },
+    { L"acc6", L"darkmountain", L"nature", L"17"  },
+    { L"acc6", L"darkmountain", L"nature", L"18"  },
+    { L"acc6", L"darkmountain", L"nature", L"19"  },
+    { L"acc6", L"darkmountain", L"nature", L"20"  },
+    { L"acc6", L"darkmountain", L"nature", L"21"  },
+    { L"acc6", L"darkmountain", L"nature", L"22"  },
+    { L"acc6", L"darkmountain", L"nature", L"23"  },
+
     { nullptr, nullptr, nullptr, L"\x01" },   // sentinel: never matches, keeps the array legal
 };
 
