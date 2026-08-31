@@ -768,7 +768,7 @@ void __declspec(naked) doActiveSkills() {
 
             mov eax, 3421009
             cmp esi, eax
-            je prepare
+            je shoot
 
             mov eax, 3421002
             cmp esi, eax
@@ -3225,9 +3225,17 @@ int(__fastcall setInput_hook)(void* _this, void* edx, int XInput, int YInput) {
 // ctor (0x009B0F71), which zeroes 94/95.
 static const unsigned int kVecVx = 0x50;
 static const unsigned int kVecWingsNow = 0x17C;
+// The WALK flag: non-zero while the player is standing on something. WorkUpdateActive branches on
+// it (CalcWalk when set, CalcFloat when clear), and it is the same dword TryDoingWings @0x00957AF0
+// and DoActiveSkill_Prepare @0x0096A942 both test to mean "on the ground".
+static const unsigned int kVecWalk = 0x110;
 
 static int& vecWingsNow(CVecCtrl* vc) {
     return *reinterpret_cast<int*>(reinterpret_cast<char*>(vc) + kVecWingsNow);
+}
+
+static int vecWalking(CVecCtrl* vc) {
+    return *reinterpret_cast<int*>(reinterpret_cast<char*>(vc) + kVecWalk);
 }
 
 auto SetImpactNext = (void(__thiscall*)(CVecCtrl*, double, double))0x7a6353;
@@ -3322,6 +3330,7 @@ bool isMovementSkill(int skillid) {
         5101009,
         5101010,
         1511009,
+        3421009,
     };
     return std::find(std::begin(skillIDs), std::end(skillIDs), skillid) != std::end(skillIDs);
 }
@@ -3571,6 +3580,9 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             } else {
                 return 0;
             }
+        }
+        if (nSkillID == 3421009) {
+            vy = -600.0;
         }
         if (nSkillID == 1421003) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
@@ -3996,10 +4008,27 @@ void __fastcall SetChaseTargetAll_hook(void* pMobPool, void* edx, int bSet, void
 
 auto ltrbshoothook = (int(__cdecl*)(int))0x00766722;
 
+// A WZ rect takes BOTH of these lists, and they are not the same question.
+//
+//   is_attack_area_set_by_data (0x007666CB) decides whether the rect is COPIED out of the skill's
+//   own level data. TryDoingShootAttack @0x00953E67 tests it, then reads SKILLLEVELDATA+0x16C --
+//   the lt/rb pair -- into the local rect at 0x00953E85.
+//
+//   is_rect_attack_shoot_skill (0x00766722), this hook, decides whether that rect is USED. At
+//   0x00953F32 a false answer jumps to the single-target bullet path and the rect just built is
+//   discarded; a true one reaches the FindHitMobInRect at 0x00953F52, which gathers up to the
+//   level's `mobCount` out of it.
+//
+// So a skill named in only the first list has its lt/rb read and then thrown away, which on screen
+// is indistinguishable from having no rect at all. Every id below is in both.
+//
+// NOT in `vertical` below, and that is deliberate: a non-zero
+// get_vertical_adjust_of_attack_range sends 0x00953E2A down the other branch entirely, which
+// inflates a DEFAULT box and never reaches the lt/rb copy. The two are alternatives, not layers.
 int(__cdecl ltrb)(int nSkillID) {
     // 3211031 Driving Bolt is in this list because 3221003 is (natively, at 0x0076672F): the
     // knockback special-cases in TryDoingShootAttack are only reached on the rect-attack path.
-    if (nSkillID == 3211031 || nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017) {
+    if (nSkillID == 3211031 || nSkillID == 3211015 || nSkillID == 3411006 || nSkillID == 3001004 || nSkillID == 3601007 || nSkillID == 5111017 || nSkillID == 3511003 || nSkillID == 4121017 || nSkillID == 4421015 || nSkillID == 5521003 || nSkillID == 5511017 || nSkillID == 3421009) {
         return 1;
     }
     return ltrbshoothook(nSkillID);
@@ -6022,6 +6051,46 @@ static CVecCtrl* GetLocalVecCtrl() {
     return localUser ? CVecCtrl::FromInterface(localUser->m_pvc) : nullptr;
 }
 
+// ---- the air-time budget -------------------------------------------------------------------
+//
+// A glide is allowed kWingsMaxAirMs of ACTIVE flight per trip off the ground. Landing refills it
+// in full; nothing else does.
+//
+// Counted while the wings flag is actually set, not for the whole time airborne, because "you can
+// only use it for 15 seconds" is about the skill and not about the fall. So cancelling with DOWN
+// pauses the clock and re-pressing resumes on what is left, rather than either resetting it (which
+// would make the limit free to dodge) or continuing to drain while merely falling.
+//
+// Two consumers, and they need different places to live:
+//   SPEND   CVecCtrl__CalcFloat_hook, which the engine runs every frame the player is airborne and
+//           which already has the frame's elapsed ms in hand.
+//   REFILL  WorkUpdateActive_hook. It has to be a second hook: CalcFloat is only called on the
+//           AIRBORNE branch of WorkUpdateActive, so it cannot see the landing that ends the trip.
+static const int kWingsMaxAirMs = 15000;
+static int  s_wingsAirMs = 0;      // active glide time since the last time we stood on something
+static bool s_wingsSpent = false;  // budget gone: no glide, and no re-arm, until we land
+
+// Asked by WingsStartGateCave before it lets TryDoingWings past the ground check. __cdecl and
+// argument-free so the cave needs no stack cleanup.
+int __cdecl WingsAirBudgetLeft() {
+    return s_wingsSpent ? 0 : 1;
+}
+
+// Runs for EVERY CVecCtrl every tick, so it does as little as possible and filters to the local
+// player first. The refill is deliberately keyed on the walk flag rather than on a landing event:
+// there is no landing callback here, and "currently standing" is the same condition by the next
+// frame anyway.
+auto pWorkUpdateActive = (int(__thiscall*)(void*, int))0x009B19D0;
+
+int __fastcall WorkUpdateActive_hook(void* this_, void* edx, int tElapse) {
+    CVecCtrl* pvc = reinterpret_cast<CVecCtrl*>(this_);
+    if (pvc && pvc == GetLocalVecCtrl() && vecWalking(pvc)) {
+        s_wingsAirMs = 0;
+        s_wingsSpent = false;
+    }
+    return pWorkUpdateActive(this_, tElapse);
+}
+
 // Measured on this client (CalcFloat telemetry, 30ms frames):
 //   * m_vx at 0x50 is what actually moves the player and our post-call write sticks -- a forced
 //     300.0 came back as 299.970 on the next frame, so float drag is only ~0.03/frame.
@@ -6049,6 +6118,17 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
     // Wings only. CalcFloat also runs for an ordinary jump or fall (WorkUpdateActive calls it
     // whenever the walk flag at 0x110 is clear), and those should keep stock physics.
     if (!vecWingsNow(pvc)) {
+        s_wingsOwner = nullptr;
+        return;
+    }
+
+    // Spend the budget, and end the glide when it runs out. Clearing the wings flag is exactly what
+    // the DOWN-key cancel below does -- the float's slow-fall goes and normal gravity takes over --
+    // so running out reads as the wings giving up rather than as the player being frozen.
+    s_wingsAirMs += tElapse;
+    if (s_wingsAirMs >= kWingsMaxAirMs) {
+        vecWingsNow(pvc) = 0;
+        s_wingsSpent = true;   // stays set until WorkUpdateActive_hook sees us standing again
         s_wingsOwner = nullptr;
         return;
     }
@@ -6109,10 +6189,142 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
 }
 
 
+// ===== keydown skills during a glide ==========================================================
+//
+// CUserLocal::DoActiveSkill_Prepare refuses a skill outright unless the player is STANDING or
+// swimming:
+//
+//   0x0096A92F  mov ebx, 4F5C6Ah              ; 5201002, Recoil Shot
+//   0x0096A934  cmp [ebp+var_10], ebx
+//   0x0096A937  jz  short loc_96A968          ; exempt
+//   0x0096A939  cmp [ebp+var_10], 0D7511Eh    ; 14111006
+//   0x0096A940  jz  short loc_96A95A          ; exempt
+//   0x0096A942  cmp dword ptr [edi+110h], 0   ; edi = CVecCtrl; +110h is the WALK flag
+//   0x0096A949  jnz short loc_96A95A          ; on the ground -> allowed
+//   0x0096A94B  ...IsSwimming... jz -> return 0
+//
+// So the two ids the client already lets you use in mid-air are hardcoded, and everything else
+// needs both feet down. 3421002 and 3421009 are keydown skills, so this is the gate they die at
+// the moment the glide lifts the walk flag -- the press does nothing and nothing is logged.
+//
+// The SECOND gate this needs is already open and was not touched: TryDoingShootAttack has the same
+// walk-flag test for bow and crossbow at 0x009539F4, and the "jump move" patch further down
+// (Patch1(0x009539FA, 0xE9)) has rewritten its `jnz` into an unconditional jump past it for every
+// skill in the game. Only the prepare half was still shut.
+//
+// GATED ON WINGS, not on being airborne generally. Adding the two ids to the 0x0096A939 compare
+// would have been shorter and would also have made them usable out of an ordinary jump; this is
+// the narrower reading of the request, and the wings flag is right there at +17Ch. Flip the
+// [edi+17Ch] test out of the cave below to widen it to any airborne state.
+static constexpr DWORD kWingsPrepHead = 0x0096A942;   // cmp dword ptr [edi+110h], 0 -- 7 bytes
+static DWORD pWingsPrepBack = 0x0096A949;             // the site's own `jnz short loc_96A95A`
+
+// Exits through the site's `jnz`, so "allowed" means leaving ZF CLEAR -- the opposite of the
+// InstallSkillIdAlias caves in this file, which feed a `jz`. `test esp, esp` is the one-instruction
+// way to say that: esp is never 0, and it writes no register and no memory.
+//
+// eax is dead across this gate on every path. The fall-through calls IsSwimming, which returns in
+// eax; the taken branch reaches 0x0096A95A and does not read eax before 0x0096A9AB reloads it.
+void __declspec(naked) WingsPrepareCave() {
+    __asm {
+        mov     eax, [ebp - 0x10]           // the skill id being prepared
+        cmp     eax, 3421002
+        je      wings_prep_check
+        jne     wings_prep_orig
+    wings_prep_check:
+        mov     eax, [edi + 0x17C]          // CVecCtrl m_bWingsNow -- gliding right now?
+        test    eax, eax
+        jz      wings_prep_orig             // not gliding: the ground rule still applies
+        test    esp, esp                    // ZF=0 -> the site's jnz takes the allowed path
+        jmp     [pWingsPrepBack]
+    wings_prep_orig:
+        cmp     dword ptr [edi + 0x110], 0
+        jmp     [pWingsPrepBack]
+    }
+}
+
+// ===== starting a glide in mid-air ============================================================
+//
+// Vanilla will only start the wings skill from a standing start, and it says so in TWO places. Both
+// have to go; opening either alone changes nothing you can see.
+//
+//   GATE 1  CUserLocal::TryDoingWings (0x00957A1F), the skill's own entry point:
+//               0x00957AF0  cmp [esi+110h], ebx      ; esi = CVecCtrl, ebx = 0, +110h = WALK flag
+//               0x00957AF6  jnz short loc_957B10     ; standing -> proceed
+//               0x00957AF8  ...on a ladder or rope?  ; the only other way through
+//               0x00957B0E  jz  short loc_957B6B     ; neither -> return 0
+//           Airborne it returns before SendSkillUseRequest, so the press produces nothing at all --
+//           no packet, no effect, no state. WingsStartGateCave replaces the compare so that being
+//           airborne passes too, but ONLY while the air-time budget has something left in it. When
+//           it does not, the cave leaves ZF set and the site falls into its own ladder/rope test,
+//           which is the vanilla refusal -- so a spent player is turned away by the client's own
+//           code path rather than by anything new.
+//
+//   GATE 2  CVecCtrl::Wings (0x009B21DA), which WorkUpdateActive runs on the next tick once
+//           TryDoingWings has set the request flag at +178h:
+//               0x009B21DD  and dword ptr [esi+178h], 0   ; consume the request
+//               0x009B21E4  call CVecCtrl::JustJump
+//               0x009B21E9  test eax, eax
+//               0x009B21EB  jz  short loc_9B2200          ; <- no jump happened, so no glide
+//               0x009B21F1  mov dword ptr [esi+17Ch], 1   ; the glide flag CalcFloat watches
+//               0x009B21FB  call CVecCtrl::SetMovePathAttribute(16)
+//           JustJump returns 0 for exactly our case: not walking, not on a rope, and sub_9B214A
+//           false. It is a pure query on that path -- it reaches `return 0` having touched nothing
+//           -- so NOPing the `jz` costs no side effect and just lets the glide arm itself without a
+//           jump to hang off. On the ground JustJump still returns 1 and still performs the real
+//           jump, so a normal wings launch is untouched.
+//
+// The server still gets a plain SendSkillUseRequest and can refuse it on its own terms; this is the
+// client half only.
+static constexpr DWORD kWingsStartHead = 0x00957AF0;   // cmp [esi+110h], ebx -- 6 bytes
+static DWORD pWingsStartBack = 0x00957AF6;             // the site's own `jnz short loc_957B10`
+
+// Result carried across popad, which would otherwise restore the register holding the answer.
+// Same device as MagicAttackChainCave; see the note there.
+static int g_bWingsMayStart = 0;
+
+// ebx is 0 here and stays 0 for the rest of the function, esi is the CVecCtrl and edi the user, so
+// nothing may be clobbered -- hence pushad around the call rather than trusting the ABI.
+void __declspec(naked) WingsStartGateCave() {
+    __asm {
+        cmp     dword ptr [esi + 0x110], 0   // the original compare, against a literal 0 for ebx
+        jne     wings_start_ok               // standing: vanilla, and the budget does not apply
+        pushad
+        call    WingsAirBudgetLeft
+        mov     [g_bWingsMayStart], eax
+        popad
+        cmp     [g_bWingsMayStart], 0
+        je      wings_start_deny             // spent: ZF=1, fall into the ladder/rope test
+    wings_start_ok:
+        test    esp, esp                     // ZF=0 -> the site's jnz proceeds
+        jmp     [pWingsStartBack]
+    wings_start_deny:
+        cmp     esp, esp                     // ZF=1
+        jmp     [pWingsStartBack]
+    }
+}
+
+void AttachWingsInAir() {
+    CodeCave(reinterpret_cast<void*>(WingsStartGateCave), kWingsStartHead, 6);
+    PatchNop(0x009B21EB, 2);    // CVecCtrl::Wings: drop the `jz` on JustJump's result
+    ATTACH_HOOK(pWorkUpdateActive, WorkUpdateActive_hook);   // the budget's refill on landing
+    LogInfo("AttachWingsInAir: wings may start in mid-air for up to %d ms per trip off the ground"
+            " -- TryDoingWings gate @0x%08X caved, CVecCtrl::Wings JustJump gate @0x009B21EB"
+            " removed", kWingsMaxAirMs, kWingsStartHead);
+}
+
+void AttachWingsSkillCaves() {
+    CodeCave(reinterpret_cast<void*>(WingsPrepareCave), kWingsPrepHead, 7);
+    LogInfo("AttachWingsSkillCaves: 3421002/3421009 may prepare while gliding -- walk-flag gate"
+            " @0x%08X caved (shoot-side gate @0x009539F4 already open via the jump-move patch)",
+            kWingsPrepHead);
+    AttachWingsInAir();
+}
+
 auto isMoveableSkill = (int(__cdecl*)(int))0x0095F96F;
 
 int(__cdecl isMoveableSkillt)(int nSkillID) {
-    if (nSkillID == 3421009 || nSkillID == 3421002 || nSkillID == 5221004) {
+    if (nSkillID == 3421002 || nSkillID == 5221004) {
         return 1;
     }
     return isMoveableSkill(nSkillID);
@@ -6309,25 +6521,54 @@ static void InstallSkillIdAlias(DWORD cmpAddr, int cmpLen, const std::vector<int
 //
 // Exit flags differ from vanilla, which left them alone. Both call sites follow the mov immediately
 // with `cmp eax, reg`, which overwrites them, so nothing observes the difference.
-static void InstallSkillIdAliasMovReg(DWORD movAddr, int aliasSkill) {
+//
+// Takes ALL of a site's aliases at once, for the same reason InstallSkillIdAlias does: the cave
+// snapshots the original `mov` out of the live binary, so a second install over the same address
+// would capture the first cave's `jmp` and emit it as the fallback.
+//
+// Cave layout: mov reg, <original id> / for each alias [cmp eax, alias / je set] /
+//              jmp back / set: mov reg, eax / jmp back.
+static void InstallSkillIdAliasMovReg(DWORD movAddr, const std::vector<int>& aliasSkills) {
+    if (aliasSkills.empty())
+        return;
+
     BYTE orig[5] = {};
     memcpy(orig, (void*)movAddr, sizeof(orig));
     if ((orig[0] & 0xF8) != 0xB8) // not `mov r32, imm32` -- refuse rather than emit nonsense
         return;
     const BYTE reg = orig[0] & 0x07;
 
-    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    const SIZE_T caveSize = aliasSkills.size() * 11 + 32;
+    BYTE* cave = (BYTE*)VirtualAlloc(nullptr, caveSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!cave)
         return;
 
     BYTE* p = cave;
     memcpy(p, orig, sizeof(orig)); p += sizeof(orig); // mov reg, <original id>
-    *p++ = 0x3D; memcpy(p, &aliasSkill, 4); p += 4;   // cmp eax, alias
-    *p++ = 0x75; *p++ = 0x02;                         // jne +2 (over the mov below)
-    *p++ = 0x89; *p++ = 0xC0 | reg;                   // mov reg, eax
+
+    // Near `je` rather than short, so the chain stays correct however many aliases a site collects.
+    std::vector<DWORD*> matchRels;
+    for (int nAliasSkill : aliasSkills) {
+        *p++ = 0x3D; memcpy(p, &nAliasSkill, 4); p += 4;   // cmp eax, alias
+        *p++ = 0x0F; *p++ = 0x84;                          // je set -- target patched below
+        matchRels.push_back(reinterpret_cast<DWORD*>(p));
+        p += 4;
+    }
+
+    // no alias matched: the register keeps the original id, exactly as vanilla left it
     *p++ = 0xE9;                                      // jmp back, to the instruction after the mov
     DWORD rel = (movAddr + sizeof(orig)) - ((DWORD)p + 4);
-    memcpy(p, &rel, 4);
+    memcpy(p, &rel, 4); p += 4;
+
+    BYTE* matched = p;
+    *p++ = 0x89; *p++ = 0xC0 | reg;                   // mov reg, eax
+    *p++ = 0xE9;
+    rel = (movAddr + sizeof(orig)) - ((DWORD)p + 4);
+    memcpy(p, &rel, 4); p += 4;
+
+    for (DWORD* relPtr : matchRels) {
+        *relPtr = (DWORD)matched - (reinterpret_cast<DWORD>(relPtr) + 4);
+    }
 
     BYTE patch[5];
     patch[0] = 0xE9;
@@ -6364,20 +6605,25 @@ void InstallIceDemonAlias() {
 // Miss any one of these and the skill half-works in a way that is genuinely hard to read: it clears
 // whichever gate you did patch and then behaves like a generic attack from there on.
 void InstallWindArcherHurricaneAlias() {
+    // 3421009 rides the whole set alongside 3421002. Its WZ is the same shape -- prepare, keydown,
+    // keydownend, ball, hit -- so it is a Hurricane in every respect the client tests for, and
+    // giving it only some of these gates is exactly the half-working failure the note above warns
+    // about. is_keydown_skill @0x004FB08F stays off this list for both ids: is_keydown_skill_t
+    // already answers for 3421002 AND 3421009, and the two mechanisms would fight over one compare.
     const std::vector<int> alias = { 3421002 };
 
     // --- the local cast path: what the caster's own client does ---
     InstallSkillIdAlias(0x0094BA70, 5, alias); // CUserLocal::Update -- the keydown repeat itself
     InstallSkillIdAlias(0x009510CA, 5, alias); // CUserLocal::TryDoingMeleeAttack
-    InstallSkillIdAliasMovReg(0x0095416B, 3421002); // TryDoingShootAttack -- `mov esi, id`; also
-                                                    // covers `cmp [ebp+var_10], esi` @0x009541DA
+    InstallSkillIdAliasMovReg(0x0095416B, alias); // TryDoingShootAttack -- `mov esi, id`; also
+                                                  // covers `cmp [ebp+var_10], esi` @0x009541DA
     // This one compare is ALSO the gate that decides whether a shoot skill draws its own WZ `ball`
     // or the equipped arrow (its `jz` @0x009545C9 goes to the skill-art branch at 0x009546AC), so
-    // 3601024 rides along here to get its projectile. Both ids go in one call on purpose:
+    // 3601024 rides along here to get its projectile. All THREE ids go in one call on purpose:
     // InstallSkillIdAlias snapshots the ORIGINAL bytes at cmpAddr, so calling it twice on the same
     // address would capture the first call's jmp as the "original compare".
-    InstallSkillIdAlias(0x009545C4, 5, { 3421002, 3601024 }); // CUserLocal::TryDoingShootAttack
-    InstallSkillIdAliasMovReg(0x0095BFB2, 3421002); // OnKeyDownSkillEnd -- `mov ebx, id`
+    InstallSkillIdAlias(0x009545C4, 5, { 3421002, 3601024 }); // TryDoingShootAttack
+    InstallSkillIdAliasMovReg(0x0095BFB2, alias); // OnKeyDownSkillEnd -- `mov ebx, id`
     InstallSkillIdAlias(0x009692DC, 6, alias); // CUserLocal::DoActiveSkill
     InstallSkillIdAlias(0x0096AA54, 5, alias); // DoActiveSkill_Prepare -- the ranged-family gate
     InstallSkillIdAlias(0x0096AE26, 7, alias); // DoActiveSkill_Prepare -- the melee retry
@@ -6674,6 +6920,9 @@ void AttachSkillEdits() {
     // InstallSkillIdAlias(0x009545C4) and fixAR(0x00954972) respectively, and both already carry
     // 3601024 in their own id lists.
     AttachSkillArtCaves();
+    // Lets 3421002 and 3421009 be pressed mid-glide. Independent of the "jump move" patch in
+    // AttachSkillPatches, which opens the shoot-side half of the same rule for every skill.
+    AttachWingsSkillCaves();
     ATTACH_HOOK(pFindHitMobInRect, FindHitMobInRect_hook);
 
     // Rising Toss for arbitrary skills, two caves in CMob::OnHit:
