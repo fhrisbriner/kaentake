@@ -124,6 +124,8 @@ int galeShot = 0;
 int masterSkies = 0;
 int hermitBoss = 0;
 int stone = 0;
+int waBoss = 0;
+int maelstrom = 0;
 constexpr int POISON_PASSIVE_SKILLID = 2110009;
 
 // NOT A SKILL
@@ -2548,6 +2550,8 @@ int(__fastcall GetSkillLevel)(int _this, void* edx, void* charData, int skillID,
     masterSkies = pGetSkillLevel(_this, charData, 3410000, skillEntry);
     hermitBoss = pGetSkillLevel(_this, charData, 4110031, skillEntry);
     stone = pGetSkillLevel(_this, charData, 1510005, skillEntry);
+    maelstrom = pGetSkillLevel(_this, charData, 3421009, skillEntry);
+    waBoss = pGetSkillLevel(_this, charData, 3421008, skillEntry);
     if ((int)_ReturnAddress() == 0x0095855D) {
         return pGetSkillLevel(_this, charData, 3410002, skillEntry);
     }
@@ -3213,7 +3217,7 @@ int(__fastcall siegeModePacket)(void* _cuser, void* edx, CInPacket* a2) {
 auto setInput = (int(__thiscall*)(void*, int, int))0x009B7B4A;
 
 int(__fastcall setInput_hook)(void* _this, void* edx, int XInput, int YInput) {
-    if (siegeMode && (int)_ReturnAddress() == 0x009CC0DF)
+    if (siegeMode && (int)_ReturnAddress() == 0x009CC0DF && job < 330)
         return (setInput(_this, 0, 0));
     return setInput(_this, XInput, YInput);
 }
@@ -3582,7 +3586,7 @@ int(__fastcall CUserLocal__DoActiveSkill_Hook)(CUserLocal* _This, void* edx, int
             }
         }
         if (nSkillID == 3421009) {
-            vy = -600.0;
+            vy = -600.0 - (5 * maelstrom);
         }
         if (nSkillID == 1421003) {
             if (!IsFreeFalling(pCv) && !IsFalling(pCv)) {
@@ -4411,7 +4415,7 @@ int __fastcall drop_off_damage_skills(SKILLENTRY* a1, void* edx, int a3, int nOr
             // Boss flag lives in the template at +0x64 (0/1). EDIT bossMult below to taste.
             isBoss = (mob->m_pTemplate->bIsBoss.Fuse() != 0);
             if (isBoss) {
-                bossMult = 1.0 + (0.015 * hermitBoss) ; // <-- set your boss damage modifier here
+                bossMult = 1.0 + (0.015 * hermitBoss) + (0.01 * waBoss); // <-- set your boss damage modifier here
             }
             int wt = get_weapon_type();
             bool magic = (wt == 32 || wt == 37 || wt == 38);
@@ -6125,12 +6129,18 @@ void __fastcall CVecCtrl__CalcFloat_hook(void* this_, void* _EDX, int tElapse) {
     // Spend the budget, and end the glide when it runs out. Clearing the wings flag is exactly what
     // the DOWN-key cancel below does -- the float's slow-fall goes and normal gravity takes over --
     // so running out reads as the wings giving up rather than as the player being frozen.
-    s_wingsAirMs += tElapse;
-    if (s_wingsAirMs >= kWingsMaxAirMs) {
-        vecWingsNow(pvc) = 0;
-        s_wingsSpent = true;   // stays set until WorkUpdateActive_hook sees us standing again
-        s_wingsOwner = nullptr;
-        return;
+    //
+    // Siege mode is the one thing that pauses the clock without ending the glide: the player is
+    // rooted while it is up (setInput_hook feeds the engine 0/0, and CUserLocal_Jump refuses to
+    // jump), so the budget would otherwise drain on time the glide is not being used for.
+    if (!siegeMode) {
+        s_wingsAirMs += tElapse;
+        if (s_wingsAirMs >= kWingsMaxAirMs) {
+            vecWingsNow(pvc) = 0;
+            s_wingsSpent = true;   // stays set until WorkUpdateActive_hook sees us standing again
+            s_wingsOwner = nullptr;
+            return;
+        }
     }
 
     const double vx = vecCtrlGetSecure(pvc, kVecVx);
