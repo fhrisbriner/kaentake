@@ -1360,6 +1360,107 @@ void __declspec(naked) doActiveSkills() {
             cmp esi, eax
             je shoot
 
+            mov eax, 3601201
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601202
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601203
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601204
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601205
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601206
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601207
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601208
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601209
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601210
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601211
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601212
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601213
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601214
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601215
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601216
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601217
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601218
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601219
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601220
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601221
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601222
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601223
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601224
+            cmp esi, eax
+            je buff
+
+            mov eax, 3601225
+            cmp esi, eax
+            je buff
+
+
             mov eax, 2301005
             jmp doActiveJmpBack
 
@@ -2148,6 +2249,35 @@ bool isSkillIDMatched(int nSkillID) {
         3601022,
         3601023,
         3601024,
+
+
+
+        3601201,
+        3601202,
+        3601203,
+        3601204,
+        3601205,
+        3601206,
+        3601207,
+        3601208,
+        3601209,
+        3601210,
+        3601211,
+        3601212,
+        3601213,
+        3601214,
+        3601215,
+        3601216,
+        3601217,
+        3601218,
+        3601219,
+        3601220,
+        3601221,
+        3601222,
+        3601223,
+        3601224,
+        3601225,
+
 
 
         // ===== Thief =====
